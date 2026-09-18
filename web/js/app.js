@@ -97,6 +97,7 @@ let pollTicks = 0;
 
 function boot() {
   load();
+  seedParc();
   Printers.refresh();
   Printers.push();
 

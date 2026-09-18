@@ -19,6 +19,22 @@ const errors = [];
   page.on('console', m => { if (m.type() === 'error') errors.push('CONSOLE: ' + m.text()); });
   page.on('pageerror', e => errors.push('PAGEERROR: ' + e.message));
 
+  /* le parc pré-rempli est testé à part : ici on part d'une base neutre
+     pour que les comptages portent sur ce que le test crée lui-même */
+  await page.addInitScript(() => {
+    try {
+      /* uniquement au tout premier chargement : ce script est rejoué
+         à chaque navigation, et il ne doit pas effacer les données
+         que le test vient d'écrire quand il recharge la page */
+      if (!localStorage.getItem('nmt_atelier_v1')) {
+        localStorage.setItem('nmt_atelier_v1', JSON.stringify({
+          machines: [], spools: [], profiles: [], orders: [], weights: {},
+          settings: { parcSeeded: 1 }
+        }));
+      }
+    } catch (e) {}
+  });
+
   await page.goto(WEB);
   await page.waitForTimeout(300);
 

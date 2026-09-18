@@ -50,8 +50,8 @@ jobs:
           path: out/atelier-nmt.apk
           if-no-files-found: error
 
-      # Publie l'APK en « release » : c'est ce que l'app interroge
-      # pour se mettre à jour toute seule. Le nom porte le numéro de version.
+      # Publie aussi l'APK en « release », ce qui donne un lien direct
+      # téléchargeable depuis le téléphone sans dézipper quoi que ce soit.
       - name: Publier la release
         if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2

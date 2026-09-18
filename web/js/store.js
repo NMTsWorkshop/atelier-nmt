@@ -41,7 +41,8 @@ const DEFAULT_DB = {
     notifyBefore: 0,
     lowThreshold: 15,
     lastSync: 0,
-    lastUpdateCheck: 0
+    lastUpdateCheck: 0,
+    parcSeeded: 0
   }
 };
 
@@ -273,6 +274,54 @@ function fmtRemaining(min) {
   if (min < 60) return min + ' min';
   const h = Math.floor(min / 60), m = min % 60;
   return h + ' h ' + String(m).padStart(2, '0');
+}
+
+/* ---------- parc de l'atelier, pré-rempli ----------
+   Les adresses sont privées (10.x) et sans valeur hors du réseau.
+   Les codes d'accès Bambu, eux, sont des mots de passe : ils ne
+   figurent pas ici et se saisissent une fois sur le téléphone. */
+
+const PARC = [
+  { name: 'K2 Plus',    model: 'Creality K2 Plus',
+    printer: { kind: 'moonraker', host: '10.1.3.3' } },
+  { name: 'Creality 2', model: 'Creality',
+    printer: { kind: 'moonraker', host: '10.1.3.2' } },
+  { name: 'Bambu 1',    model: 'Bambu Lab P1S',
+    printer: { kind: 'bambu', host: '10.1.3.11', serial: '01P00C462500170', code: '' } },
+  { name: 'Bambu 2',    model: 'Bambu Lab P1S',
+    printer: { kind: 'bambu', host: '10.1.3.10', serial: '01P09C510800409', code: '' } }
+];
+
+/* Posé une seule fois. Complète les machines déjà créées plutôt que
+   d'en ajouter en double, et ne touche jamais à un code déjà saisi. */
+function seedParc() {
+  if (DB.settings.parcSeeded) return;
+  DB.settings.parcSeeded = Date.now();
+
+  PARC.forEach(def => {
+    const existing =
+      DB.machines.find(m => m.printer && m.printer.host === def.printer.host) ||
+      DB.machines.find(m => (m.name || '').trim().toLowerCase() === def.name.toLowerCase());
+
+    if (existing) {
+      /* un code déjà saisi ne se perd pas — mais seulement s'il a
+         encore un sens, c'est-à-dire sur une Bambu */
+      const kept = (def.printer.kind === 'bambu' && existing.printer)
+        ? (existing.printer.code || '') : '';
+      existing.printer = Object.assign({}, def.printer);
+      if (kept) existing.printer.code = kept;
+      if (!existing.model) existing.model = def.model;
+    } else {
+      DB.machines.push({
+        id: uid(), name: def.name, model: def.model,
+        profileId: '', filamentId: '', status: 'idle',
+        timer: null, job: null,
+        printer: Object.assign({}, def.printer)
+      });
+    }
+  });
+
+  save();
 }
 
 /* ---------- helpers modèle ---------- */
