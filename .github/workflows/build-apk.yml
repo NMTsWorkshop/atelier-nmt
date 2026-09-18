@@ -1,0 +1,61 @@
+name: APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: SDK Android
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+
+      - name: Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Compiler l'APK
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Renommer
+        run: |
+          mkdir -p out
+          cp app/build/outputs/apk/debug/app-debug.apk out/atelier-nmt.apk
+
+      - name: Déposer l'APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: atelier-nmt-apk
+          path: out/atelier-nmt.apk
+          if-no-files-found: error
+
+      # Publie aussi l'APK en « release », ce qui donne un lien direct
+      # téléchargeable depuis le téléphone sans dézipper quoi que ce soit.
+      - name: Publier la release
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: derniere-version
+          name: Atelier NMT — dernière version
+          files: out/atelier-nmt.apk
+          body: |
+            APK compilé automatiquement depuis la branche ${{ github.ref_name }}.
+            Commit ${{ github.sha }}.

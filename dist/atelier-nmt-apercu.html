@@ -1,0 +1,2247 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#14161a">
+<title>Atelier NMT</title>
+<style>
+:root{
+  --bg:#101216;
+  --bg-2:#171a20;
+  --card:#1c2027;
+  --card-2:#232831;
+  --line:#2c323d;
+  --line-soft:#242932;
+  --txt:#e8ebf0;
+  --txt-2:#9aa3b2;
+  --txt-3:#6b7382;
+  --acc:#ff8a2b;
+  --acc-dim:#3a2415;
+  --ok:#3ecf8e;
+  --ok-dim:#14312a;
+  --warn:#ffc043;
+  --warn-dim:#3a2f12;
+  --bad:#ff5f56;
+  --bad-dim:#3a1c1c;
+  --info:#4aa8ff;
+  --info-dim:#14283d;
+  --r:14px;
+  --r-s:10px;
+  --safe-b:env(safe-area-inset-bottom,0px);
+  --safe-t:env(safe-area-inset-top,0px);
+}
+
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0}
+body{
+  background:var(--bg);color:var(--txt);
+  font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  padding-bottom:calc(66px + var(--safe-b));
+  overscroll-behavior-y:none;
+  -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3,h4{margin:0;font-weight:650;letter-spacing:-.01em}
+button{font:inherit;color:inherit;background:none;border:none;padding:0;cursor:pointer}
+input,select,textarea{font:inherit}
+
+/* ---------- topbar ---------- */
+#topbar{
+  position:sticky;top:0;z-index:40;
+  padding:calc(var(--safe-t) + 14px) 16px 12px;
+  background:linear-gradient(180deg,var(--bg) 72%,rgba(16,18,22,0));
+  display:flex;align-items:flex-start;gap:12px;
+}
+#tb-title{font-size:24px}
+.tb-sub{font-size:12.5px;color:var(--txt-3);margin-top:3px}
+.tb-left{flex:1;min-width:0}
+.tb-right{display:flex;gap:8px;align-items:center;padding-top:2px}
+.tb-btn{
+  display:inline-flex;align-items:center;gap:6px;
+  background:var(--card);border:1px solid var(--line);
+  border-radius:99px;padding:7px 13px;font-size:13px;font-weight:600;color:var(--txt-2);
+}
+.tb-btn.accent{background:var(--acc);border-color:var(--acc);color:#1a1005}
+.tb-btn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+
+/* ---------- layout ---------- */
+#view{padding:0 16px 28px;max-width:720px;margin:0 auto}
+.stack{display:flex;flex-direction:column;gap:12px}
+.row{display:flex;align-items:center;gap:10px}
+.row.wrap{flex-wrap:wrap}
+.spread{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.grow{flex:1;min-width:0}
+.sec-title{
+  font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--txt-3);margin:20px 2px 9px;
+}
+.sec-title:first-child{margin-top:4px}
+.sec-title .norm{text-transform:none;letter-spacing:0;color:var(--txt-3)}
+
+/* ---------- card ---------- */
+.card{
+  background:var(--card);border:1px solid var(--line-soft);
+  border-radius:var(--r);padding:14px;
+}
+.card.tight{padding:12px}
+.card.click{transition:transform .08s}
+.card.click:active{transform:scale(.988)}
+.card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.card-head.tap{cursor:pointer}
+.card-name{font-size:16.5px;font-weight:650;line-height:1.25}
+.card-meta{font-size:12.5px;color:var(--txt-3);margin-top:2px}
+
+/* ---------- badge / pill ---------- */
+.badge{
+  display:inline-flex;align-items:center;gap:5px;flex-shrink:0;
+  font-size:11.5px;font-weight:700;letter-spacing:.02em;
+  padding:4px 9px;border-radius:99px;
+  background:var(--card-2);color:var(--txt-2);
+}
+.badge.ok{background:var(--ok-dim);color:var(--ok)}
+.badge.warn{background:var(--warn-dim);color:var(--warn)}
+.badge.bad{background:var(--bad-dim);color:var(--bad)}
+.badge.acc{background:var(--acc-dim);color:var(--acc)}
+.badge.info{background:var(--info-dim);color:var(--info)}
+.dot{width:9px;height:9px;border-radius:99px;flex-shrink:0;
+  border:1px solid rgba(255,255,255,.3);box-shadow:0 0 0 1px rgba(0,0,0,.35)}
+.dot.lg{width:14px;height:14px}
+
+/* ---------- buttons ---------- */
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:7px;
+  background:var(--card-2);border:1px solid var(--line);
+  border-radius:var(--r-s);padding:10px 14px;
+  font-size:14px;font-weight:600;color:var(--txt);
+  transition:transform .08s,opacity .15s;
+}
+.btn:active{transform:scale(.97)}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:#1a1005}
+.btn.ghost{background:transparent}
+.btn.danger{background:var(--bad-dim);border-color:#4d2626;color:var(--bad)}
+.btn.sm{padding:7px 11px;font-size:13px;border-radius:9px}
+.btn.wide{width:100%}
+.btn[disabled]{opacity:.42;pointer-events:none}
+.btn svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.btn-row{display:flex;gap:8px}
+.btn-row .btn{flex:1}
+
+/* ---------- forms ---------- */
+.field{display:block;margin-bottom:13px}
+.field > span{display:block;font-size:12.5px;font-weight:600;color:var(--txt-2);margin-bottom:6px}
+.field .hint{font-size:11.5px;color:var(--txt-3);font-weight:400;margin-top:5px;line-height:1.35}
+input[type=text],input[type=number],input[type=password],input[type=time],select,textarea{
+  width:100%;background:var(--bg-2);border:1px solid var(--line);
+  border-radius:var(--r-s);padding:11px 12px;color:var(--txt);
+  appearance:none;-webkit-appearance:none;
+}
+select{background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239aa3b2' stroke-width='2.2' stroke-linecap='round'><path d='M6 9l6 6 6-6'/></svg>");
+  background-repeat:no-repeat;background-position:right 10px center;background-size:17px;padding-right:34px}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--acc)}
+textarea{resize:vertical;min-height:70px}
+.field-2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.chips{display:flex;flex-wrap:wrap;gap:7px}
+.chip{
+  background:var(--bg-2);border:1px solid var(--line);border-radius:99px;
+  padding:7px 13px;font-size:13px;font-weight:600;color:var(--txt-2);
+}
+.chip.on{background:var(--acc);border-color:var(--acc);color:#1a1005}
+.chip.sw{padding:6px;width:34px;height:34px;border-radius:99px;display:inline-flex;align-items:center;justify-content:center}
+.chip.sw.on{box-shadow:0 0 0 2px var(--acc);border-color:transparent}
+.chip.sw i{display:block;width:100%;height:100%;border-radius:99px;border:1px solid rgba(255,255,255,.2)}
+
+/* ---------- gauge ---------- */
+.gauge{height:7px;border-radius:99px;background:var(--bg-2);overflow:hidden;margin-top:9px}
+.gauge > i{display:block;height:100%;border-radius:99px;background:var(--ok);transition:width .3s}
+.gauge > i.warn{background:var(--warn)}
+.gauge > i.bad{background:var(--bad)}
+
+/* ---------- machine card ---------- */
+.mach{border-left:3px solid var(--line)}
+.mach.running{border-left-color:var(--acc)}
+.mach.done{border-left-color:var(--ok)}
+.mach.paused{border-left-color:var(--warn)}
+.clock{
+  font-variant-numeric:tabular-nums;font-feature-settings:"tnum";
+  font-size:30px;font-weight:600;letter-spacing:-.02em;line-height:1.1;
+}
+.clock.done{color:var(--ok)}
+.clock-sub{font-size:12px;color:var(--txt-3);margin-top:3px}
+.fil-line{
+  display:flex;align-items:center;gap:8px;margin-top:11px;padding-top:11px;
+  border-top:1px solid var(--line-soft);font-size:13px;color:var(--txt-2);
+}
+
+/* ---------- list rows ---------- */
+.rowitem{
+  display:flex;align-items:center;gap:11px;padding:12px 0;
+  border-bottom:1px solid var(--line-soft);
+}
+.rowitem:last-child{border-bottom:none}
+.rowitem .t{font-size:14.5px;font-weight:600}
+.rowitem .s{font-size:12px;color:var(--txt-3);margin-top:1px}
+
+/* ---------- empty ---------- */
+.empty{
+  text-align:center;padding:42px 20px;color:var(--txt-3);
+  border:1px dashed var(--line);border-radius:var(--r);
+}
+.empty h3{font-size:15px;color:var(--txt-2);margin-bottom:5px}
+.empty p{font-size:13px;margin:0 0 14px;line-height:1.5}
+
+/* ---------- tabbar ---------- */
+#tabbar{
+  position:fixed;left:0;right:0;bottom:0;z-index:50;
+  display:flex;background:rgba(20,22,27,.94);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  border-top:1px solid var(--line-soft);
+  padding-bottom:var(--safe-b);
+}
+.tab{
+  flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;
+  padding:9px 2px 7px;color:var(--txt-3);font-size:10px;font-weight:600;
+}
+.tab svg{width:21px;height:21px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.tab.on{color:var(--acc)}
+.tab .badge-n{
+  position:absolute;transform:translate(13px,-4px);
+  background:var(--acc);color:#1a1005;font-size:9.5px;font-weight:800;
+  min-width:15px;height:15px;border-radius:99px;display:flex;align-items:center;justify-content:center;padding:0 3px;
+}
+
+/* ---------- sheet (modal) ---------- */
+.sheet-bg{
+  position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.6);
+  display:flex;align-items:flex-end;justify-content:center;
+  animation:fade .18s ease;
+}
+.sheet{
+  width:100%;max-width:560px;max-height:90vh;overflow-y:auto;
+  background:var(--bg-2);border:1px solid var(--line);border-bottom:none;
+  border-radius:20px 20px 0 0;padding:8px 16px calc(20px + var(--safe-b));
+  animation:up .22s cubic-bezier(.2,.8,.3,1);
+}
+.sheet-grip{width:38px;height:4px;border-radius:99px;background:var(--line);margin:6px auto 14px}
+.sheet h2{font-size:18px;margin-bottom:4px}
+.sheet .sub{font-size:13px;color:var(--txt-3);margin-bottom:16px;line-height:1.4}
+.sheet-actions{display:flex;gap:9px;margin-top:18px}
+.sheet-actions .btn{flex:1}
+@keyframes fade{from{opacity:0}}
+@keyframes up{from{transform:translateY(22px);opacity:.4}}
+
+/* ---------- toast ---------- */
+#toast-host{position:fixed;left:0;right:0;bottom:calc(76px + var(--safe-b));z-index:200;pointer-events:none;
+  display:flex;flex-direction:column;align-items:center;gap:8px}
+.toast{
+  background:#2b3039;border:1px solid var(--line);color:var(--txt);
+  padding:10px 16px;border-radius:99px;font-size:13.5px;font-weight:600;
+  box-shadow:0 8px 26px rgba(0,0,0,.45);animation:up .2s;max-width:90vw;
+}
+.toast.ok{border-color:#2d5c48;color:var(--ok)}
+.toast.bad{border-color:#5c2d2d;color:var(--bad)}
+
+/* ---------- misc ---------- */
+.kv{display:flex;justify-content:space-between;gap:12px;padding:7px 0;font-size:13.5px;border-bottom:1px solid var(--line-soft)}
+.kv:last-child{border-bottom:none}
+.kv b{font-weight:600}
+.kv span{color:var(--txt-3)}
+.mono{font-variant-numeric:tabular-nums}
+.muted{color:var(--txt-3)}
+.small{font-size:12.5px}
+.nowrap{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sp{height:4px}
+.warn-box{background:var(--warn-dim);border:1px solid #4a3c18;color:#f0d08a;
+  border-radius:var(--r-s);padding:11px 13px;font-size:13px;line-height:1.45}
+.info-box{background:var(--info-dim);border:1px solid #1e3c5c;color:#a8cff5;
+  border-radius:var(--r-s);padding:11px 13px;font-size:13px;line-height:1.45}
+</style>
+</head>
+<body>
+
+<header id="topbar">
+  <div class="tb-left">
+    <h1 id="tb-title">Machines</h1>
+    <div id="tb-sub" class="tb-sub"></div>
+  </div>
+  <div class="tb-right" id="tb-actions"></div>
+</header>
+
+<main id="view"></main>
+
+<nav id="tabbar">
+  <button class="tab" data-tab="machines">
+    <svg viewBox="0 0 24 24"><path d="M4 7h16v10H4z"/><path d="M7 7V4h10v3"/><path d="M8 17v3h8v-3"/></svg>
+    <span>Machines</span>
+  </button>
+  <button class="tab" data-tab="stock">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg>
+    <span>Stock</span>
+  </button>
+  <button class="tab" data-tab="orders">
+    <svg viewBox="0 0 24 24"><path d="M5 7h14l-1 13H6L5 7z"/><path d="M9 7V5a3 3 0 0 1 6 0v2"/></svg>
+    <span>Commandes</span>
+  </button>
+  <button class="tab" data-tab="profiles">
+    <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/><circle cx="17" cy="18" r="2"/></svg>
+    <span>Profils</span>
+  </button>
+  <button class="tab" data-tab="settings">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg>
+    <span>Réglages</span>
+  </button>
+</nav>
+
+<div id="sheet-host"></div>
+<div id="toast-host"></div>
+
+<script>
+/* ============================================================
+   store.js — état, persistance, modèle métier
+   ============================================================ */
+
+const KEY = 'nmt_atelier_v1';
+
+const MATERIALS = ['PLA', 'PETG', 'ABS', 'ASA', 'TPU', 'PA-CF', 'Autre'];
+
+const COLORS = [
+  { n: 'Noir',      h: '#1b1b1d' },
+  { n: 'Blanc',     h: '#f2f2f0' },
+  { n: 'Gris',      h: '#8a8f96' },
+  { n: 'Argent',    h: '#c7ccd2' },
+  { n: 'Rouge',     h: '#c8362f' },
+  { n: 'Bordeaux',  h: '#6d1f28' },
+  { n: 'Orange',    h: '#e0761f' },
+  { n: 'Jaune',     h: '#e3b724' },
+  { n: 'Vert',      h: '#3d8a4f' },
+  { n: 'Kaki',      h: '#6a6b45' },
+  { n: 'Bleu',      h: '#2f5fa8' },
+  { n: 'Bleu clair',h: '#6fa8dc' },
+  { n: 'Violet',    h: '#6b4a9e' },
+  { n: 'Rose',      h: '#d06a92' },
+  { n: 'Marron',    h: '#6b4a32' },
+  { n: 'Beige',     h: '#cbb994' },
+  { n: 'Or',        h: '#b8913c' },
+  { n: 'Transparent', h: '#9fb3bf' }
+];
+
+const DEFAULT_DB = {
+  v: 1,
+  machines: [],
+  spools: [],
+  profiles: [],
+  orders: [],
+  weights: {},
+  settings: {
+    shop: '',
+    token: '',
+    apiVersion: '2025-07',
+    notifyBefore: 0,
+    lowThreshold: 15,
+    lastSync: 0
+  }
+};
+
+let DB = null;
+
+/* ---------- persistance ---------- */
+
+let memFallback = null;
+
+function load() {
+  let raw = null;
+  try { raw = localStorage.getItem(KEY); } catch (e) { raw = memFallback; }
+  if (!raw) { DB = JSON.parse(JSON.stringify(DEFAULT_DB)); return; }
+  try {
+    const parsed = JSON.parse(raw);
+    DB = Object.assign(JSON.parse(JSON.stringify(DEFAULT_DB)), parsed);
+    DB.settings = Object.assign({}, DEFAULT_DB.settings, parsed.settings || {});
+  } catch (e) {
+    DB = JSON.parse(JSON.stringify(DEFAULT_DB));
+  }
+  migrate();
+}
+
+/* ancien format : une fiche = une bobine ({initial, left}) */
+function migrate() {
+  (DB.spools || []).forEach(s => {
+    if (s.spoolSize === undefined) {
+      s.spoolSize = s.initial || 1000;
+      s.open = s.left === undefined ? s.spoolSize : s.left;
+      s.sealed = 0;
+      delete s.initial;
+      delete s.left;
+    }
+  });
+}
+
+function save() {
+  const raw = JSON.stringify(DB);
+  memFallback = raw;
+  try { localStorage.setItem(KEY, raw); } catch (e) { /* mode privé / aperçu */ }
+}
+
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+
+/* ---------- pont natif (APK) ---------- */
+
+const Native = {
+  ok() { return typeof window.NMT !== 'undefined'; },
+
+  scheduleTimer(id, title, text, endAt) {
+    if (!this.ok()) return false;
+    try { window.NMT.scheduleTimer(String(id), String(title), String(text), Number(endAt)); return true; }
+    catch (e) { return false; }
+  },
+
+  cancelTimer(id) {
+    if (!this.ok()) return false;
+    try { window.NMT.cancelTimer(String(id)); return true; } catch (e) { return false; }
+  },
+
+  notifyNow(title, text) {
+    if (!this.ok()) return false;
+    try { window.NMT.notifyNow(String(title), String(text)); return true; } catch (e) { return false; }
+  },
+
+  saveFile(name, content) {
+    if (!this.ok()) return null;
+    try { return window.NMT.saveFile(String(name), String(content)); } catch (e) { return null; }
+  },
+
+  exactAlarmsOk() {
+    if (!this.ok()) return true;
+    try { return !!window.NMT.exactAlarmsAllowed(); } catch (e) { return true; }
+  },
+
+  openExactAlarmSettings() {
+    if (!this.ok()) return;
+    try { window.NMT.openExactAlarmSettings(); } catch (e) {}
+  },
+
+  notificationsOk() {
+    if (!this.ok()) return true;
+    try { return !!window.NMT.notificationsAllowed(); } catch (e) { return true; }
+  },
+
+  askNotifications() {
+    if (!this.ok()) return;
+    try { window.NMT.requestNotifications(); } catch (e) {}
+  },
+
+  openBatterySettings() {
+    if (!this.ok()) return;
+    try { window.NMT.openBatterySettings(); } catch (e) {}
+  }
+};
+
+/* ---------- requêtes HTTP via la coque native ----------
+   La WebView ne peut pas appeler l'API Shopify directement (CORS) :
+   la couche Java fait la requête et rappelle window.NMTcb. */
+
+let cbSeq = 0;
+const cbMap = {};
+
+window.NMTcb = function (id, json) {
+  const fn = cbMap[id];
+  delete cbMap[id];
+  if (!fn) return;
+  let res;
+  try { res = JSON.parse(json); } catch (e) { res = { ok: false, error: 'réponse illisible' }; }
+  fn(res);
+};
+
+function nativeHttp(method, url, headers, body) {
+  return new Promise((resolve, reject) => {
+    if (!Native.ok()) { reject(new Error('coque native absente')); return; }
+    const id = 'c' + (++cbSeq);
+    cbMap[id] = resolve;
+    setTimeout(() => {
+      if (cbMap[id]) { delete cbMap[id]; reject(new Error('délai dépassé')); }
+    }, 30000);
+    try {
+      window.NMT.httpAsync(method, url, JSON.stringify(headers || {}), body || '', id);
+    } catch (e) {
+      delete cbMap[id];
+      reject(new Error(String(e)));
+    }
+  });
+}
+
+/* ---------- helpers modèle ---------- */
+
+function machineById(id) { return DB.machines.find(m => m.id === id) || null; }
+function spoolById(id) { return DB.spools.find(s => s.id === id) || null; }
+function profileById(id) { return DB.profiles.find(p => p.id === id) || null; }
+function orderById(id) { return DB.orders.find(o => o.id === id) || null; }
+
+function activeSpools() { return DB.spools.filter(s => !s.archived); }
+
+/* Une entrée de stock = une référence de filament, pas une bobine physique :
+   - sealed : le nombre de bobines encore sous vide
+   - open   : ce qui reste, en grammes, sur celle qui est entamée
+   C'est ce qui permet d'enregistrer « 10 kg de noir » d'un coup. */
+
+function spoolTotal(s) {
+  return Math.max(0, s.sealed || 0) * (s.spoolSize || 1000) + Math.max(0, s.open || 0);
+}
+
+function spoolCount(s) {
+  return (s.sealed || 0) + ((s.open || 0) > 0 ? 1 : 0);
+}
+
+/* niveau de la bobine entamée : on raisonne en paliers, pas au gramme près */
+function spoolLevel(s) {
+  const size = s.spoolSize || 1000;
+  const open = s.open || 0;
+  const sealed = s.sealed || 0;
+
+  if (spoolTotal(s) <= 0) return { key: 'empty', label: 'Vide', cls: 'bad', pct: 0 };
+  if (open <= 0) return { key: 'sealed', label: 'Neuve', cls: 'ok', pct: 100 };
+
+  const pct = (open / size) * 100;
+  /* avec des bobines d'avance, une fin de bobine n'a rien d'alarmant */
+  const soft = sealed > 0;
+  if (pct < DB.settings.lowThreshold)
+    return { key: 'low', label: 'Bientôt vide', cls: soft ? 'warn' : 'bad', pct };
+  if (pct < 40) return { key: 'quarter', label: 'Faible', cls: soft ? 'ok' : 'warn', pct };
+  if (pct < 75) return { key: 'half', label: 'Entamée', cls: 'ok', pct };
+  return { key: 'full', label: 'Pleine', cls: 'ok', pct };
+}
+
+/* à racheter : plus de bobine d'avance et l'entamée touche à sa fin */
+function needsRestock(s) {
+  return (s.sealed || 0) === 0 &&
+         (s.open || 0) < (s.spoolSize || 1000) * (DB.settings.lowThreshold / 100);
+}
+
+/* ouvre une bobine neuve si besoin, puis retire les grammes demandés.
+   Renvoie ce qu'on n'a pas pu couvrir et le nombre de bobines ouvertes. */
+function consumeSpool(s, grams) {
+  const size = s.spoolSize || 1000;
+  let left = grams, opened = 0;
+
+  while (left > 0) {
+    if ((s.open || 0) <= 0) {
+      if ((s.sealed || 0) <= 0) break;
+      s.sealed--;
+      s.open = size;
+      opened++;
+    }
+    const take = Math.min(s.open, left);
+    s.open -= take;
+    left -= take;
+  }
+  if (s.open < 0) s.open = 0;
+  return { missing: left, opened: opened };
+}
+
+function spoolLabel(s) {
+  if (!s) return 'Aucun filament';
+  return [s.brand, s.material, s.color].filter(Boolean).join(' · ');
+}
+
+function colorHexOf(name) {
+  const c = COLORS.find(c => c.n.toLowerCase() === String(name || '').toLowerCase());
+  return c ? c.h : '#8a8f96';
+}
+
+/* stock disponible pour un couple matière + couleur (en g, approximatif) */
+function stockFor(material, color) {
+  return activeSpools()
+    .filter(s => s.material === material && (!color || s.color === color))
+    .reduce((t, s) => t + spoolTotal(s), 0);
+}
+
+/* clé de mémorisation des poids : produit + variante */
+function weightKey(line) {
+  return (line.title || '') + '||' + (line.variant || '');
+}
+
+function rememberedWeight(line) {
+  const w = DB.weights[weightKey(line)];
+  return typeof w === 'number' ? w : null;
+}
+
+function rememberWeight(line, grams) {
+  if (grams > 0) { DB.weights[weightKey(line)] = grams; }
+}
+
+/* besoins matière d'une commande, regroupés par matière + couleur */
+function orderNeeds(order) {
+  const map = {};
+  (order.lines || []).forEach(l => {
+    if (l.done) return;
+    const g = (l.grams || 0) * (l.qty || 1);
+    if (!g) return;
+    const k = (l.material || '?') + '|' + (l.color || '');
+    if (!map[k]) map[k] = { material: l.material || '?', color: l.color || '', grams: 0 };
+    map[k].grams += g;
+  });
+  return Object.values(map);
+}
+
+/* verdict stock d'une commande */
+function orderStockVerdict(order) {
+  const needs = orderNeeds(order);
+  if (!needs.length) return { cls: '', label: 'Poids à saisir', short: 'Poids ?' };
+  let worst = 'ok', missing = 0;
+  needs.forEach(n => {
+    const have = stockFor(n.material, n.color);
+    if (have < n.grams) { worst = 'bad'; missing += n.grams - have; }
+    else if (have < n.grams * 1.25 && worst !== 'bad') { worst = 'warn'; }
+  });
+  if (worst === 'bad') return { cls: 'bad', label: 'Manque ~' + fmtG(missing), short: 'Manque ' + fmtG(missing) };
+  if (worst === 'warn') return { cls: 'warn', label: 'Stock juste', short: 'Juste' };
+  return { cls: 'ok', label: 'Stock OK', short: 'OK' };
+}
+
+/* besoins de TOUTES les commandes à produire */
+function globalNeeds() {
+  const map = {};
+  DB.orders.forEach(o => {
+    if (o.status === 'done' || o.status === 'shipped') return;
+    orderNeeds(o).forEach(n => {
+      const k = n.material + '|' + n.color;
+      if (!map[k]) map[k] = { material: n.material, color: n.color, grams: 0 };
+      map[k].grams += n.grams;
+    });
+  });
+  return Object.values(map).sort((a, b) => b.grams - a.grams);
+}
+
+/* ---------- formats ---------- */
+
+function fmtG(g) {
+  g = Math.round(g);
+  if (g >= 1000) {
+    const kg = g / 1000;
+    return (kg >= 10 ? kg.toFixed(1) : kg.toFixed(2))
+      .replace(/\.?0+$/, '')
+      .replace('.', ',') + ' kg';
+  }
+  return g + ' g';
+}
+
+function fmtDur(ms) {
+  if (ms < 0) ms = 0;
+  const t = Math.floor(ms / 1000);
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+  if (h > 0) return h + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  return m + ':' + String(s).padStart(2, '0');
+}
+
+function fmtDurShort(ms) {
+  const t = Math.floor(ms / 60000);
+  const h = Math.floor(t / 60), m = t % 60;
+  if (h > 0) return h + ' h ' + (m ? String(m).padStart(2, '0') : '00');
+  return m + ' min';
+}
+
+function fmtClock(ts) {
+  const d = new Date(ts);
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+
+function fmtDate(ts) {
+  const d = new Date(ts);
+  return d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' });
+}
+
+function fmtDayClock(ts) {
+  const d = new Date(ts), now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  const tomorrow = new Date(now.getTime() + 86400000).toDateString() === d.toDateString();
+  if (sameDay) return fmtClock(ts);
+  if (tomorrow) return 'demain ' + fmtClock(ts);
+  return fmtDate(ts) + ' ' + fmtClock(ts);
+}
+
+/* détecte la matière dans un titre de variante Shopify
+   ex. "Covert / Without Visor / PLA" · "DC-15s / PETG / Yes" */
+function materialFromVariant(variantTitle) {
+  const parts = String(variantTitle || '').split('/').map(p => p.trim());
+  for (const p of parts) {
+    const up = p.toUpperCase().replace(/\s+/g, '');
+    const hit = MATERIALS.find(m => m !== 'Autre' && m.replace('-', '') === up.replace('-', ''));
+    if (hit) return hit;
+  }
+  return '';
+}
+</script>
+<script>
+/* ============================================================
+   ui.js — briques d'interface : feuilles, toasts, sélecteurs
+   ============================================================ */
+
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function $(sel, root) { return (root || document).querySelector(sel); }
+function $$(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
+
+/* ---------- toast ---------- */
+
+function toast(msg, kind) {
+  const host = $('#toast-host');
+  const el = document.createElement('div');
+  el.className = 'toast' + (kind ? ' ' + kind : '');
+  el.textContent = msg;
+  host.appendChild(el);
+  setTimeout(() => {
+    el.style.transition = 'opacity .25s';
+    el.style.opacity = '0';
+    setTimeout(() => el.remove(), 260);
+  }, 2100);
+}
+
+/* ---------- feuille modale ---------- */
+
+let sheetCloser = null;
+
+function sheet(html, onMount) {
+  closeSheet();
+  const bg = document.createElement('div');
+  bg.className = 'sheet-bg';
+  bg.innerHTML = '<div class="sheet"><div class="sheet-grip"></div>' + html + '</div>';
+  bg.addEventListener('click', e => { if (e.target === bg) closeSheet(); });
+  $('#sheet-host').appendChild(bg);
+  sheetCloser = () => bg.remove();
+  if (onMount) onMount($('.sheet', bg));
+  return bg;
+}
+
+function closeSheet() {
+  if (sheetCloser) { sheetCloser(); sheetCloser = null; }
+}
+
+function confirmSheet(title, sub, okLabel, onOk, danger) {
+  sheet(
+    '<h2>' + esc(title) + '</h2>' +
+    (sub ? '<div class="sub">' + esc(sub) + '</div>' : '<div class="sp"></div>') +
+    '<div class="sheet-actions">' +
+      '<button class="btn ghost" data-x="no">Annuler</button>' +
+      '<button class="btn ' + (danger ? 'danger' : 'primary') + '" data-x="yes">' + esc(okLabel) + '</button>' +
+    '</div>',
+    root => {
+      $('[data-x=no]', root).onclick = closeSheet;
+      $('[data-x=yes]', root).onclick = () => { closeSheet(); onOk(); };
+    }
+  );
+}
+
+/* ---------- sélecteurs réutilisables ---------- */
+
+function materialChips(name, current) {
+  return '<div class="chips" data-chips="' + name + '">' +
+    MATERIALS.map(m =>
+      '<button type="button" class="chip' + (m === current ? ' on' : '') + '" data-v="' + esc(m) + '">' + esc(m) + '</button>'
+    ).join('') + '</div>';
+}
+
+function colorChips(name, current) {
+  return '<div class="chips" data-chips="' + name + '">' +
+    COLORS.map(c =>
+      '<button type="button" class="chip sw' + (c.n === current ? ' on' : '') + '" data-v="' + esc(c.n) + '" title="' + esc(c.n) + '">' +
+      '<i style="background:' + c.h + '"></i></button>'
+    ).join('') + '</div>' +
+    '<div class="hint" data-colorname="' + name + '">' + esc(current || 'Aucune couleur choisie') + '</div>';
+}
+
+/* branche les groupes de chips d'une feuille : renvoie un getter de valeurs */
+function bindChips(root) {
+  const vals = {};
+  $$('[data-chips]', root).forEach(group => {
+    const key = group.getAttribute('data-chips');
+    const on = $('.chip.on', group);
+    vals[key] = on ? on.getAttribute('data-v') : '';
+    group.addEventListener('click', e => {
+      const btn = e.target.closest('.chip');
+      if (!btn) return;
+      $$('.chip', group).forEach(c => c.classList.remove('on'));
+      btn.classList.add('on');
+      vals[key] = btn.getAttribute('data-v');
+      const label = $('[data-colorname=' + key + ']', root);
+      if (label) label.textContent = vals[key];
+    });
+  });
+  return () => vals;
+}
+
+function selectOpts(items, current, labelFn, valFn, placeholder) {
+  let out = placeholder ? '<option value="">' + esc(placeholder) + '</option>' : '';
+  items.forEach(it => {
+    const v = valFn(it);
+    out += '<option value="' + esc(v) + '"' + (v === current ? ' selected' : '') + '>' + esc(labelFn(it)) + '</option>';
+  });
+  return out;
+}
+
+function spoolSelect(name, current, material) {
+  let list = activeSpools().filter(s => spoolTotal(s) > 0);
+  if (material) {
+    const same = list.filter(s => s.material === material);
+    if (same.length) list = same;
+  }
+  return '<select name="' + name + '">' +
+    selectOpts(list, current, s => spoolLabel(s) + ' — ' + fmtG(spoolTotal(s)), s => s.id, 'Aucun') +
+    '</select>';
+}
+
+/* ---------- blocs d'affichage ---------- */
+
+function badge(cls, text) {
+  return '<span class="badge ' + cls + '">' + esc(text) + '</span>';
+}
+
+function dot(hex, big) {
+  return '<span class="dot' + (big ? ' lg' : '') + '" style="background:' + esc(hex || '#8a8f96') + '"></span>';
+}
+
+function emptyState(title, text, btnLabel, btnAction) {
+  return '<div class="empty"><h3>' + esc(title) + '</h3><p>' + esc(text) + '</p>' +
+    (btnLabel ? '<button class="btn primary" onclick="' + btnAction + '">' + esc(btnLabel) + '</button>' : '') +
+    '</div>';
+}
+
+function gauge(pct, cls) {
+  const w = Math.max(0, Math.min(100, pct));
+  return '<div class="gauge"><i class="' + (cls === 'ok' ? '' : cls) + '" style="width:' + w + '%"></i></div>';
+}
+
+/* lit les champs nommés d'une feuille */
+function formValues(root) {
+  const o = {};
+  $$('[name]', root).forEach(i => {
+    o[i.getAttribute('name')] = i.type === 'checkbox' ? i.checked : i.value;
+  });
+  return o;
+}
+
+function num(v, def) {
+  const n = parseFloat(String(v).replace(',', '.'));
+  return isNaN(n) ? (def || 0) : n;
+}
+</script>
+<script>
+/* ============================================================
+   machines.js — parc machines, timers, changement de filament
+   ============================================================ */
+
+function renderMachines() {
+  const running = DB.machines.filter(m => m.status === 'running').length;
+  const done = DB.machines.filter(m => m.status === 'done').length;
+  setTop('Machines',
+    DB.machines.length
+      ? running + ' en cours · ' + done + ' terminée' + (done > 1 ? 's' : '') + ' · ' + DB.machines.length + ' machine' + (DB.machines.length > 1 ? 's' : '')
+      : 'Aucune machine pour l\'instant',
+    '<button class="tb-btn accent" onclick="editMachine()">' + iconPlus() + 'Machine</button>'
+  );
+
+  if (!DB.machines.length) {
+    return emptyState(
+      'Ton parc est vide',
+      'Ajoute tes imprimantes une par une : nom, modèle, et le filament actuellement chargé.',
+      'Ajouter une machine', 'editMachine()'
+    );
+  }
+
+  const warn = nativeWarningBanner();
+
+  return warn + '<div class="stack">' + DB.machines.map(machineCard).join('') + '</div>';
+}
+
+function machineCard(m) {
+  const sp = spoolById(m.filamentId);
+  const pr = profileById(m.profileId);
+  const now = Date.now();
+  let cls = 'card mach', clock = '', sub = '', actions = '';
+
+  if (m.status === 'running' && m.timer) {
+    const left = m.timer.endAt - now;
+    cls += ' running';
+    clock = '<div class="clock" id="clk-' + m.id + '">' + fmtDur(left) + '</div>' +
+            '<div class="clock-sub">fin vers ' + fmtDayClock(m.timer.endAt) + '</div>';
+    actions =
+      '<button class="btn sm" onclick="addTime(\'' + m.id + '\',15)">+15 min</button>' +
+      '<button class="btn sm" onclick="addTime(\'' + m.id + '\',60)">+1 h</button>' +
+      '<button class="btn sm ghost" onclick="stopTimer(\'' + m.id + '\')">Arrêter</button>' +
+      '<button class="btn sm primary" onclick="finishJob(\'' + m.id + '\')">Terminer</button>';
+  } else if (m.status === 'done') {
+    cls += ' done';
+    clock = '<div class="clock done" id="clk-' + m.id + '">Terminé</div>' +
+            '<div class="clock-sub">' + (m.timer ? 'à ' + fmtDayClock(m.timer.endAt) : '') + '</div>';
+    actions =
+      '<button class="btn sm primary" onclick="finishJob(\'' + m.id + '\')">Décharger</button>' +
+      '<button class="btn sm" onclick="startTimer(\'' + m.id + '\')">Relancer</button>';
+  } else if (m.status === 'paused') {
+    cls += ' paused';
+    clock = '<div class="clock">En pause</div>';
+    actions =
+      '<button class="btn sm primary" onclick="startTimer(\'' + m.id + '\')">Reprendre</button>' +
+      '<button class="btn sm ghost" onclick="setStatus(\'' + m.id + '\',\'idle\')">Libérer</button>';
+  } else {
+    clock = '<div class="clock muted" style="font-size:22px">Libre</div>';
+    actions =
+      '<button class="btn sm primary" onclick="startTimer(\'' + m.id + '\')">Lancer une impression</button>' +
+      '<button class="btn sm" onclick="setStatus(\'' + m.id + '\',\'paused\')">Pause</button>';
+  }
+
+  if (m.job && m.job.label && m.status !== 'idle') {
+    sub = '<div class="card-meta nowrap" style="margin-top:6px;color:var(--txt-2)">' + esc(m.job.label) + '</div>';
+  }
+
+  const lvl = sp ? spoolLevel(sp) : null;
+
+  return '<div class="' + cls + '">' +
+    '<div class="card-head tap" onclick="editMachine(\'' + m.id + '\')">' +
+      '<div class="grow">' +
+        '<div class="card-name">' + esc(m.name) + '</div>' +
+        '<div class="card-meta">' + esc(m.model || '—') + (pr ? ' · ' + esc(pr.name) : '') + '</div>' +
+        sub +
+      '</div>' +
+      '<div style="text-align:right">' + clock + '</div>' +
+    '</div>' +
+    '<div class="fil-line">' +
+      (sp
+        ? dot(sp.colorHex) + '<span class="grow nowrap">' + esc(spoolLabel(sp)) + '</span>' +
+          badge(lvl.cls, lvl.label)
+        : '<span class="grow muted">Aucun filament renseigné</span>') +
+      '<button class="btn sm ghost" onclick="loadFilament(\'' + m.id + '\')">Changer</button>' +
+    '</div>' +
+    '<div class="row wrap" style="margin-top:12px">' + actions + '</div>' +
+  '</div>';
+}
+
+/* ---------- actions ---------- */
+
+function setStatus(id, st) {
+  const m = machineById(id);
+  if (!m) return;
+  if (st === 'idle' || st === 'paused') {
+    Native.cancelTimer(m.id);
+    m.timer = null;
+  }
+  m.status = st;
+  save(); render();
+}
+
+function editMachine(id) {
+  const m = id ? machineById(id) : null;
+  sheet(
+    '<h2>' + (m ? 'Modifier la machine' : 'Nouvelle machine') + '</h2>' +
+    '<div class="sub">Le filament chargé se change directement depuis la fiche machine.</div>' +
+    '<label class="field"><span>Nom</span><input type="text" name="name" placeholder="K2 Plus" value="' + esc(m ? m.name : '') + '"></label>' +
+    '<label class="field"><span>Modèle</span><input type="text" name="model" placeholder="Creality K2 Plus" value="' + esc(m ? m.model : '') + '"></label>' +
+    '<label class="field"><span>Profil d\'impression par défaut</span>' +
+      '<select name="profileId">' + selectOpts(DB.profiles, m ? m.profileId : '', p => p.name, p => p.id, 'Aucun') + '</select>' +
+    '</label>' +
+    '<div class="sheet-actions">' +
+      (m ? '<button class="btn danger" data-x="del">Supprimer</button>' : '') +
+      '<button class="btn ghost" data-x="no">Annuler</button>' +
+      '<button class="btn primary" data-x="ok">Enregistrer</button>' +
+    '</div>',
+    root => {
+      $('[data-x=no]', root).onclick = closeSheet;
+      const del = $('[data-x=del]', root);
+      if (del) del.onclick = () => {
+        closeSheet();
+        confirmSheet('Supprimer ' + m.name + ' ?', 'La machine disparaît du parc. Le stock n\'est pas touché.', 'Supprimer', () => {
+          Native.cancelTimer(m.id);
+          DB.machines = DB.machines.filter(x => x.id !== m.id);
+          save(); render(); toast('Machine supprimée');
+        }, true);
+      };
+      $('[data-x=ok]', root).onclick = () => {
+        const v = formValues(root);
+        if (!v.name.trim()) { toast('Il faut un nom', 'bad'); return; }
+        if (m) {
+          m.name = v.name.trim(); m.model = v.model.trim(); m.profileId = v.profileId;
+        } else {
+          DB.machines.push({
+            id: uid(), name: v.name.trim(), model: v.model.trim(),
+            profileId: v.profileId, filamentId: '', status: 'idle', timer: null, job: null
+          });
+        }
+        save(); closeSheet(); render(); toast('Enregistré', 'ok');
+      };
+    }
+  );
+}
+
+function loadFilament(id) {
+  const m = machineById(id);
+  if (!m) return;
+  const list = activeSpools().filter(s => spoolTotal(s) > 0);
+  if (!list.length) {
+    confirmSheet('Aucun filament en stock', 'Ajoute d\'abord une référence dans l\'onglet Stock.', 'Ajouter du filament', () => {
+      go('stock'); editSpool();
+    });
+    return;
+  }
+  sheet(
+    '<h2>Filament sur ' + esc(m.name) + '</h2>' +
+    '<div class="sub">Ce que tu renseignes ici sert au calcul de stock quand l\'impression est terminée.</div>' +
+    '<label class="field"><span>Bobine chargée</span>' + spoolSelect('filamentId', m.filamentId) + '</label>' +
+    '<div class="sheet-actions">' +
+      '<button class="btn ghost" data-x="no">Annuler</button>' +
+      '<button class="btn primary" data-x="ok">Valider</button>' +
+    '</div>',
+    root => {
+      $('[data-x=no]', root).onclick = closeSheet;
+      $('[data-x=ok]', root).onclick = () => {
+        m.filamentId = formValues(root).filamentId;
+        save(); closeSheet(); render(); toast('Filament mis à jour', 'ok');
+      };
+    }
+  );
+}
+
+/* ---------- timer ---------- */
+
+function startTimer(id) {
+  const m = machineById(id);
+  if (!m) return;
+  const sp = spoolById(m.filamentId);
+  const openLines = pendingLines();
+
+  sheet(
+    '<h2>Lancer sur ' + esc(m.name) + '</h2>' +
+    '<div class="sub">' + (sp ? 'Filament : ' + esc(spoolLabel(sp)) : 'Aucun filament renseigné sur cette machine.') + '</div>' +
+
+    '<label class="field"><span>Durée</span>' +
+      '<div class="chips" data-chips="preset">' +
+        [30, 60, 120, 240, 480, 720].map(min =>
+          '<button type="button" class="chip" data-v="' + min + '">' + (min < 60 ? min + ' min' : (min / 60) + ' h') + '</button>'
+        ).join('') +
+      '</div>' +
+    '</label>' +
+
+    '<div class="field-2">' +
+      '<label class="field"><span>Heures</span><input type="number" name="h" inputmode="numeric" placeholder="0" min="0"></label>' +
+      '<label class="field"><span>Minutes</span><input type="number" name="min" inputmode="numeric" placeholder="0" min="0"></label>' +
+    '</div>' +
+
+    '<label class="field"><span>Pièce en cours</span>' +
+      '<input type="text" name="label" placeholder="Casque Mando — coque" value="' + esc(m.job ? m.job.label : '') + '">' +
+    '</label>' +
+
+    (openLines.length
+      ? '<label class="field"><span>Rattacher à une commande</span>' +
+          '<select name="lineRef">' +
+          '<option value="">Aucune</option>' +
+          openLines.map(x =>
+            '<option value="' + x.ref + '">' + esc(x.order.name + ' · ' + x.line.title + (x.line.variant ? ' (' + x.line.variant + ')' : '')) + '</option>'
+          ).join('') +
+          '</select>' +
+          '<div class="hint">Le poids et la matière de la ligne seront repris automatiquement.</div>' +
+        '</label>'
+      : '') +
+
+    '<div class="sheet-actions">' +
+      '<button class="btn ghost" data-x="no">Annuler</button>' +
+      '<button class="btn primary" data-x="ok">Démarrer</button>' +
+    '</div>',
+
+    root => {
+      const getChips = bindChips(root);
+      $$('.chip', root).forEach(c => c.addEventListener('click', () => {
+        const min = parseInt(c.getAttribute('data-v'), 10);
+        $('[name=h]', root).value = Math.floor(min / 60) || '';
+        $('[name=min]', root).value = min % 60 || '';
+      }));
+      $('[data-x=no]', root).onclick = closeSheet;
+      $('[data-x=ok]', root).onclick = () => {
+        const v = formValues(root);
+        const mins = num(v.h) * 60 + num(v.min);
+        if (mins <= 0) { toast('Indique une durée', 'bad'); return; }
+        const endAt = Date.now() + mins * 60000;
+
+        let job = { label: v.label.trim(), orderId: '', lineId: '', grams: 0 };
+        if (v.lineRef) {
+          const cut = v.lineRef.indexOf('::');
+          const o = orderById(v.lineRef.slice(0, cut));
+          const lid = v.lineRef.slice(cut + 2);
+          const l = o && (o.lines || []).find(x => x.id === lid);
+          if (l) {
+            job.orderId = o.id; job.lineId = l.id; job.grams = l.grams || 0;
+            if (!job.label) job.label = l.title + (l.variant ? ' — ' + l.variant : '');
+            if (o.status === 'todo') o.status = 'printing';
+          }
+        }
+
+        m.job = job;
+        m.timer = { startedAt: Date.now(), endAt: endAt, dur: mins * 60000 };
+        m.status = 'running';
+
+        scheduleFor(m);
+        save(); closeSheet(); render();
+        toast('Fin prévue à ' + fmtClock(endAt), 'ok');
+      };
+    }
+  );
+}
+
+function scheduleFor(m) {
+  if (!m.timer) return;
+  const title = m.name + ' — impression terminée';
+  const text = (m.job && m.job.label) ? m.job.label : 'Le timer est arrivé à son terme.';
+  Native.scheduleTimer(m.id, title, text, m.timer.endAt);
+  const before = DB.settings.notifyBefore;
+  if (before > 0) {
+    const pre = m.timer.endAt - before * 60000;
+    if (pre > Date.now() + 5000) {
+      Native.scheduleTimer(m.id + '-pre', m.name + ' — bientôt fini', 'Fin dans ' + before + ' min · ' + text, pre);
+    }
+  }
+}
+
+function addTime(id, mins) {
+  const m = machineById(id);
+  if (!m || !m.timer) return;
+  m.timer.endAt += mins * 60000;
+  if (m.status === 'done') m.status = 'running';
+  scheduleFor(m);
+  save(); render();
+  toast('+' + mins + ' min — fin à ' + fmtClock(m.timer.endAt));
+}
+
+function stopTimer(id) {
+  const m = machineById(id);
+  if (!m) return;
+  Native.cancelTimer(m.id);
+  Native.cancelTimer(m.id + '-pre');
+  m.timer = null; m.status = 'idle'; m.job = null;
+  save(); render(); toast('Timer arrêté');
+}
+
+/* fin d'impression : on décompte le filament et on solde la ligne de commande */
+function finishJob(id) {
+  const m = machineById(id);
+  if (!m) return;
+  const sp = spoolById(m.filamentId);
+  const guess = (m.job && m.job.grams) ? m.job.grams : '';
+
+  sheet(
+    '<h2>Impression terminée</h2>' +
+    '<div class="sub">' + esc(m.name) + (m.job && m.job.label ? ' · ' + esc(m.job.label) : '') + '</div>' +
+
+    (sp
+      ? '<label class="field"><span>Filament consommé</span>' +
+          '<input type="number" name="grams" inputmode="numeric" placeholder="0" value="' + esc(guess) + '">' +
+          '<div class="hint">Déduit de ' + esc(spoolLabel(sp)) + ' — il reste ' + fmtG(spoolTotal(sp)) + '. Laisse vide si tu ne veux rien déduire.</div>' +
+        '</label>'
+      : '<div class="warn-box">Aucun filament n\'est associé à cette machine, rien ne sera déduit du stock.</div><div class="sp"></div>'
+    ) +
+
+    (m.job && m.job.lineId
+      ? '<label class="field row" style="gap:9px;align-items:center">' +
+          '<input type="checkbox" name="lineDone" checked style="width:auto">' +
+          '<span style="margin:0">Marquer la pièce comme faite dans la commande</span>' +
+        '</label>'
+      : '') +
+
+    '<div class="sheet-actions">' +
+      '<button class="btn ghost" data-x="no">Annuler</button>' +
+      '<button class="btn primary" data-x="ok">Valider</button>' +
+    '</div>',
+
+    root => {
+      $('[data-x=no]', root).onclick = closeSheet;
+      $('[data-x=ok]', root).onclick = () => {
+        const v = formValues(root);
+        const g = num(v.grams);
+        if (sp && g > 0) {
+          const r = consumeSpool(sp, g);
+          if (r.missing > 0) {
+            toast('Il manquait ' + fmtG(r.missing) + ' de ' + spoolLabel(sp), 'bad');
+          } else if (r.opened > 0) {
+            toast(r.opened > 1 ? r.opened + ' bobines entamées' : 'Nouvelle bobine entamée');
+          }
+          if (spoolTotal(sp) <= 0) toast(spoolLabel(sp) + ' est épuisé', 'bad');
+          else if (needsRestock(sp)) toast(spoolLabel(sp) + ' : à racheter', 'bad');
+        }
+        if (m.job && m.job.lineId && v.lineDone) {
+          const o = orderById(m.job.orderId);
+          const l = o && (o.lines || []).find(x => x.id === m.job.lineId);
+          if (l) {
+            l.done = true;
+            if ((o.lines || []).every(x => x.done)) o.status = 'done';
+          }
+        }
+        Native.cancelTimer(m.id);
+        Native.cancelTimer(m.id + '-pre');
+        m.timer = null; m.job = null; m.status = 'idle';
+        save(); closeSheet(); render(); toast('Machine libérée', 'ok');
+      };
+    }
+  );
+}
+
+/* lignes de commande encore à imprimer, pour le rattachement */
+function pendingLines() {
+  const out = [];
+  DB.orders.forEach(o => {
+    if (o.status === 'done' || o.status === 'shipped') return;
+    (o.lines || []).forEach(l => {
+      if (!l.done) out.push({ ref: o.id + '::' + l.id, order: o, line: l });
+    });
+  });
+  return out;
+}
+
+/* ---------- bandeau d'avertissement natif ---------- */
+
+function nativeWarningBanner() {
+  if (!Native.ok()) return '';
+  let out = '';
+  if (!Native.notificationsOk()) {
+    out += '<div class="warn-box" style="margin-bottom:12px">Les notifications sont bloquées : tu ne seras pas prévenu en fin d\'impression. ' +
+      '<button class="btn sm" style="margin-top:8px" onclick="Native.askNotifications()">Autoriser</button></div>';
+  }
+  if (!Native.exactAlarmsOk()) {
+    out += '<div class="warn-box" style="margin-bottom:12px">Android n\'autorise pas encore les alarmes précises pour cette app, les notifications risquent d\'être en retard. ' +
+      '<button class="btn sm" style="margin-top:8px" onclick="Native.openExactAlarmSettings()">Régler</button></div>';
+  }
+  return out;
+}
+
+function iconPlus() { return '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>'; }
+function iconGear() { return '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 4v2M12 18v2M4 12h2M18 12h2M6.3 6.3l1.4 1.4M16.3 16.3l1.4 1.4M17.7 6.3l-1.4 1.4M7.7 16.3l-1.4 1.4"/></svg>'; }
+function iconSync() { return '<svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 1-15.5 6.2M3 12A9 9 0 0 1 18.5 5.8"/><path d="M3 4v5h5M21 20v-5h-5"/></svg>'; }
+</script>
+<script>
+/* ============================================================
+   stock.js — références de filament, niveaux, besoins matière
+
+   Une fiche = une référence (marque + matière + couleur), avec le
+   nombre de bobines neuves d'un côté et la bobine entamée de l'autre.
+   Enregistrer 10 kg de noir prend donc dix secondes, pas dix fiches.
+   ============================================================ */
+
+function renderStock() {
+  const list = activeSpools();
+  const total = list.reduce((t, s) => t + spoolTotal(s), 0);
+  const spools = list.reduce((t, s) => t + spoolCount(s), 0);
+  const restock = list.filter(needsRestock).length;
+
+  setTop('Stock',
+    list.length
+      ? fmtG(total) + ' · ' + spools + ' bobine' + (spools > 1 ? 's' : '') +
+        (restock ? ' · ' + restock + ' à racheter' : '')
+      : 'Aucun filament enregistré',
+    '<button class="tb-btn accent" onclick="editSpool()">' + iconPlus() + 'Filament</button>'
+  );
+
+  if (!list.length) {
+    return emptyState(
+      'Pas encore de filament',
+      'Une fiche par référence : marque, matière, couleur, et le nombre de bobines que tu as en réserve.',
+      'Ajouter du filament', 'editSpool()'
+    );
+  }
+
+  let out = '';
+
+  /* ---- ce que réclament les commandes en cours ---- */
+  const needs = globalNeeds();
+  if (needs.length) {
+    out += '<div class="sec-title">Ce qu\'il faut pour les commandes</div><div class="card tight">';
+    needs.forEach(n => {
+      const have = stockFor(n.material, n.color);
+      const ok = have >= n.grams;
+      const tight = ok && have < n.grams * 1.25;
+      out += '<div class="rowitem">' +
+        dot(colorHexOf(n.color)) +
+        '<div class="grow"><div class="t">' + esc(n.material) + (n.color ? ' · ' + esc(n.color) : '') + '</div>' +
+        '<div class="s">' + fmtG(n.grams) + ' nécessaires · ' + fmtG(have) + ' en stock</div></div>' +
+        badge(ok ? (tight ? 'warn' : 'ok') : 'bad', ok ? (tight ? 'Juste' : 'OK') : 'Manque ' + fmtG(n.grams - have)) +
+        '</div>';
+    });
+    out += '</div>';
+  }
+
+  /* ---- références regroupées par matière ---- */
+  const byMat = {};
+  list.forEach(s => { (byMat[s.material] = byMat[s.material] || []).push(s); });
+
+  Object.keys(byMat).sort().forEach(mat => {
+    const refs = byMat[mat].sort((a, b) => spoolTotal(b) - spoolTotal(a));
+    const t = refs.reduce((x, s) => x + spoolTotal(s), 0);
+    out += '<div class="sec-title">' + esc(mat) + ' <span class="norm">— ' + fmtG(t) + '</span></div>';
+    out += '<div class="stack">' + refs.map(spoolCard).join('') + '</div>';
+  });
+
+  const arch = DB.spools.filter(s => s.archived).length;
+  if (arch) {
+    out += '<div class="sec-title">Archives</div>' +
+      '<button class="btn wide ghost" onclick="showArchived()">Voir les ' + arch +
+      ' référence' + (arch > 1 ? 's' : '') + ' épuisée' + (arch > 1 ? 's' : '') + '</button>';
+  }
+
+  return out;
+}
+
+function spoolCard(s) {
+  const lvl = spoolLevel(s);
+  const used = DB.machines.filter(m => m.filamentId === s.id).map(m => m.name);
+  const sealed = s.sealed || 0;
+  const open = s.open || 0;
+
+  /* ligne du bas : l'état réel de la réserve, en français d'atelier */
+  let detail;
+  if (open > 0 && sealed > 0) {
+    detail = '~' + fmtG(open) + ' entamés + ' + sealed + ' neuve' + (sealed > 1 ? 's' : '');
+  } else if (open > 0) {
+    detail = '~' + fmtG(open) + ' sur la bobine entamée, aucune d\'avance';
+  } else if (sealed > 0) {
+    detail = sealed + ' bobine' + (sealed > 1 ? 's' : '') + ' neuve' + (sealed > 1 ? 's' : '') + ', aucune entamée';
+  } else {
+    detail = 'Plus rien en stock';
+  }
+
+  return '<div class="card tight">' +
+    '<div class="card-head tap" onclick="editSpool(\'' + s.id + '\')">' +
+      '<div class="row grow" style="gap:9px">' + dot(s.colorHex, true) +
+        '<div class="grow">' +
+          '<div class="card-name" style="font-size:15px">' + esc(s.color || 'Sans couleur') +
+            (spoolCount(s) > 1 ? ' <span class="muted" style="font-weight:500">×' + spoolCount(s) + '</span>' : '') +
+          '</div>' +
+          '<div class="card-meta">' + esc(s.brand || 'Marque ?') + ' · ' + esc(s.material) +
+            (used.length ? ' · sur ' + esc(used.join(', ')) : '') + '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div style="text-align:right">' +
+        badge(lvl.cls, lvl.label) +
+        '<div class="card-meta mono" style="margin-top:5px">' + fmtG(spoolTotal(s)) + '</div>' +
+      '</div>' +
+    '</div>' +
+    gauge(lvl.pct, lvl.cls) +
+    '<div class="spread" style="margin-top:9px">' +
+      '<div class="small muted">' + esc(detail) + '</div>' +
+      '<button class="btn sm ghost" onclick="quickLevel(\'' + s.id + '\')">Ajuster</button>' +
+    '</div>' +
+    (needsRestock(s) ? '<div class="fil-line"><span class="grow small" style="color:var(--bad)">À racheter</span></div>' : '') +
+  '</div>';
+}
+
+/* ---------- ajustements rapides ---------- */
+
+function quickLevel(id) {
+  const s = spoolById(id);
+  if (!s) return;
+  const size = s.spoolSize || 1000;
+  const steps = [
+    { l: 'Pleine', r: 1 }, { l: '3/4', r: .75 }, { l: 'Moitié', r: .5 },
+    { l: '1/4', r: .25 }, { l: 'Bientôt vide', r: .1 }, { l: 'Vide', r: 0 }
+  ];
+
+  sheet(
+    '<h2>' + esc(spoolLabel(s)) + '</h2>' +
+    '<div class="sub">' + fmtG(spoolTotal(s)) + ' au total · ' + (s.sealed || 0) +
+      ' bobine' + ((s.sealed || 0) > 1 ? 's' : '') + ' d\'avance</div>' +
+
+    '<div class="sec-title">Bobine entamée</div>' +
+    '<div class="chips">' + steps.map(st =>
+      '<button type="button" class="chip" data-r="' + st.r + '">' + st.l + '</button>').join('') + '</div>' +
+    '<div class="sp"></div>' +
+    '<div class="chips">' + [50, 100, 250, 500].map(g =>
+      '<button type="button" class="chip" data-g="' + g + '">−' + g + ' g</button>').join('') + '</div>' +
+
+    '<div class="sec-title">Bobines neuves en réserve</div>' +
+    '<div class="row" style="gap:10px">' +
+      '<button class="btn" data-sealed="-1">−1</button>' +
+      '<div class="grow" style="text-align:center">' +
+        '<div class="clock" id="sealed-n" style="font-size:26px">' + (s.sealed || 0) + '</div>' +
+        '<div class="card-meta">soit ' + fmtG(size) + ' chacune</div>' +
+      '</div>' +
+      '<button class="btn" data-sealed="1">+1</button>' +
+    '</div>' +
+    '<div class="sp"></div>' +
+    '<div class="chips">' + [5, 10].map(n =>
+      '<button type="button" class="chip" data-sealed="' + n + '">+' + n + ' bobines</button>').join('') +
+      ((s.sealed || 0) > 0 ? '<button type="button" class="chip" data-open="1">Ouvrir une neuve</button>' : '') +
+    '</div>' +
+
+    '<div class="sheet-actions"><button class="btn primary" data-x="no">Terminé</button></div>',
+
+    root => {
+      const refresh = () => { $('#sealed-n', root).textContent = s.sealed || 0; save(); };
+      $('[data-x=no]', root).onclick = () => { closeSheet(); render(); afterLevel(s); };
+
+      $$('[data-r]', root).forEach(b => b.onclick = () => {
+        s.open = Math.round(size * parseFloat(b.getAttribute('data-r')));
+        closeSheet(); save(); render(); afterLevel(s);
+      });
+      $$('[data-g]', root).forEach(b => b.onclick = () => {
+        consumeSpool(s, parseInt(b.getAttribute('data-g'), 10));
+        closeSheet(); save(); render(); afterLevel(s);
+      });
+      $$('[data-sealed]', root).forEach(b => b.onclick = () => {
+        const d = parseInt(b.getAttribute('data-sealed'), 10);
+        s.sealed = Math.max(0, (s.sealed || 0) + d);
+        refresh();
+        toast(s.sealed + ' bobine' + (s.sealed > 1 ? 's' : '') + ' en réserve');
+      });
+      const openBtn = $('[data-open]', root);
+      if (openBtn) openBtn.onclick = () => {
+        if ((s.sealed || 0) <= 0) return;
+        s.sealed--;
+        s.open = size;
+        closeSheet(); save(); render();
+        toast('Nouvelle bobine ouverte', 'ok');
+      };
+    }
+  );
+}
+
+function afterLevel(s) {
+  if (spoolTotal(s) <= 0) {
+    confirmSheet('Référence épuisée', spoolLabel(s) + ' — la ranger dans les archives ?', 'Archiver', () => {
+      s.archived = true;
+      DB.machines.forEach(m => { if (m.filamentId === s.id) m.filamentId = ''; });
+      save(); render(); toast('Référence archivée');
+    });
+  } else if (needsRestock(s)) {
+    toast(spoolLabel(s) + ' : à racheter', 'bad');
+  }
+}
+
+/* ---------- fiche ---------- */
+
+function editSpool(id) {
+  const s = id ? spoolById(id) : null;
+  sheet(
+    '<h2>' + (s ? 'Modifier la référence' : 'Nouveau filament') + '</h2>' +
+    (s ? '' : '<div class="sub">Une seule fiche par référence : indique combien de bobines tu as, pas besoin d\'en créer une par une.</div>') +
+
+    '<label class="field"><span>Marque</span>' +
+      '<input type="text" name="brand" placeholder="Sunlu, Creality…" value="' + esc(s ? s.brand : '') + '"></label>' +
+    '<label class="field"><span>Matière</span>' + materialChips('material', s ? s.material : 'PLA') + '</label>' +
+    '<label class="field"><span>Couleur</span>' + colorChips('color', s ? s.color : '') + '</label>' +
+
+    '<div class="field-2">' +
+      '<label class="field"><span>Bobines neuves</span>' +
+        '<input type="number" name="sealed" inputmode="numeric" min="0" value="' + esc(s ? (s.sealed || 0) : 1) + '">' +
+        '<div class="hint">Celles encore sous vide.</div>' +
+      '</label>' +
+      '<label class="field"><span>Poids d\'une bobine (g)</span>' +
+        '<input type="number" name="spoolSize" inputmode="numeric" value="' + esc(s ? s.spoolSize : 1000) + '">' +
+        '<div class="hint">1000 le plus souvent.</div>' +
+      '</label>' +
+    '</div>' +
+
+    '<label class="field"><span>Restant sur la bobine entamée (g)</span>' +
+      '<input type="number" name="open" inputmode="numeric" min="0" value="' + esc(s ? (s.open || 0) : 0) + '">' +
+      '<div class="hint">Laisse à 0 si aucune n\'est ouverte. Ça s\'ajuste ensuite d\'un geste avec « Ajuster ».</div>' +
+    '</label>' +
+
+    '<label class="field"><span>Note</span>' +
+      '<input type="text" name="note" placeholder="Matte, silk, lot…" value="' + esc(s ? s.note : '') + '"></label>' +
+
+    '<div class="sheet-actions">' +
+      (s ? '<button class="btn danger" data-x="del">Supprimer</button>' : '') +
+      '<button class="btn ghost" data-x="no">Annuler</button>' +
+      '<button class="btn primary" data-x="ok">Enregistrer</button>' +
+    '</div>',
+
+    root => {
+      const chips = bindChips(root);
+      $('[data-x=no]', root).onclick = closeSheet;
+
+      const del = $('[data-x=del]', root);
+      if (del) del.onclick = () => {
+        closeSheet();
+        confirmSheet('Supprimer cette référence ?', spoolLabel(s), 'Supprimer', () => {
+          DB.spools = DB.spools.filter(x => x.id !== s.id);
+          DB.machines.forEach(m => { if (m.filamentId === s.id) m.filamentId = ''; });
+          save(); render(); toast('Référence supprimée');
+        }, true);
+      };
+
+      $('[data-x=ok]', root).onclick = () => {
+        const v = formValues(root), c = chips();
+        const size = num(v.spoolSize, 1000) || 1000;
+        const data = {
+          brand: v.brand.trim(),
+          material: c.material || 'PLA',
+          color: c.color || '',
+          colorHex: colorHexOf(c.color),
+          spoolSize: size,
+          sealed: Math.max(0, Math.round(num(v.sealed))),
+          open: Math.max(0, num(v.open)),
+          note: v.note.trim()
+        };
+        if (data.sealed === 0 && data.open === 0) {
+          toast('Indique au moins une bobine', 'bad');
+          return;
+        }
+        if (s) {
+          Object.assign(s, data);
+          if (spoolTotal(s) > 0) s.archived = false;
+        } else {
+          DB.spools.push(Object.assign({ id: uid(), archived: false, createdAt: Date.now() }, data));
+        }
+        save(); closeSheet(); render();
+        toast(fmtG(data.sealed * size + data.open) + ' enregistrés', 'ok');
+      };
+    }
+  );
+}
+
+/* ---------- archives ---------- */
+
+function showArchived() {
+  const arch = DB.spools.filter(s => s.archived);
+  sheet(
+    '<h2>Références épuisées</h2>' +
+    '<div class="sub">' + arch.length + ' référence' + (arch.length > 1 ? 's' : '') + ' sortie' +
+      (arch.length > 1 ? 's' : '') + ' du stock.</div>' +
+    arch.map(s =>
+      '<div class="rowitem">' + dot(s.colorHex) +
+      '<div class="grow"><div class="t">' + esc(spoolLabel(s)) + '</div>' +
+      '<div class="s">' + (s.note ? esc(s.note) + ' · ' : '') + fmtG(s.spoolSize || 1000) + ' la bobine</div></div>' +
+      '<button class="btn sm ghost" onclick="restock(\'' + s.id + '\')">Racheté</button>' +
+      '</div>'
+    ).join('') +
+    '<div class="sheet-actions"><button class="btn ghost" data-x="no">Fermer</button></div>',
+    root => { $('[data-x=no]', root).onclick = closeSheet; }
+  );
+}
+
+function restock(id) {
+  const s = spoolById(id);
+  if (!s) return;
+  closeSheet();
+  s.archived = false;
+  if (spoolTotal(s) <= 0) s.sealed = 1;
+  save(); render();
+  editSpool(id);
+}
+</script>
+<script>
+/* ============================================================
+   orders.js — commandes Shopify, poids, besoins matière
+   ============================================================ */
+
+const ORDER_STATUS = {
+  todo:     { label: 'À imprimer', cls: '' },
+  printing: { label: 'En cours',   cls: 'acc' },
+  done:     { label: 'Imprimée',   cls: 'ok' },
+  shipped:  { label: 'Expédiée',   cls: 'info' }
+};
+
+function renderOrders() {
+  const todo = DB.orders.filter(o => o.status !== 'shipped' && o.status !== 'done');
+  const last = DB.settings.lastSync
+    ? 'synchro ' + fmtDayClock(DB.settings.lastSync)
+    : 'jamais synchronisé';
+
+  setTop('Commandes',
+    DB.orders.length ? todo.length + ' à produire · ' + last : 'Aucune commande',
+    '<button class="tb-btn" onclick="addManualOrder()">' + iconPlus() + '</button>' +
+    '<button class="tb-btn accent" id="sync-btn" onclick="syncShopify()">' + iconSync() + 'Shopify</button>'
+  );
+
+  if (!DB.orders.length) {
+    return (DB.settings.token ? '' : '<div class="info-box" style="margin-bottom:12px">Renseigne ta boutique et ton jeton d\'accès dans Réglages pour récupérer les commandes automatiquement.</div>') +
+      emptyState('Aucune commande', 'Récupère-les depuis Shopify, ou saisis-en une à la main.', 'Synchroniser Shopify', 'syncShopify()');
+  }
+
+  let out = '';
+  const groups = [
+    ['À produire', DB.orders.filter(o => o.status === 'todo' || o.status === 'printing')],
+    ['Imprimées', DB.orders.filter(o => o.status === 'done')],
+    ['Expédiées', DB.orders.filter(o => o.status === 'shipped')]
+  ];
+
+  groups.forEach(([title, list]) => {
+    if (!list.length) return;
+    list.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    out += '<div class="sec-title">' + title + ' · ' + list.length + '</div><div class="stack">';
+    out += list.map(orderCard).join('');
+    out += '</div>';
+  });
+
+  return out;
+}
+
+function orderCard(o) {
+  const st = ORDER_STATUS[o.status] || ORDER_STATUS.todo;
+  const v = orderStockVerdict(o);
+  const lines = o.lines || [];
+  const doneN = lines.filter(l => l.done).length;
+  const totalG = lines.reduce((t, l) => t + (l.grams || 0) * (l.qty || 1), 0);
+  const noWeight = lines.some(l => !l.grams);
+
+  return '<div class="card tight click" onclick="openOrder(\'' + o.id + '\')">' +
+    '<div class="card-head">' +
+      '<div class="grow">' +
+        '<div class="card-name">' + esc(o.name) + ' · <span class="muted" style="font-weight:500">' + esc(o.customer || 'Client') + '</span></div>' +
+        '<div class="card-meta">' + (o.createdAt ? fmtDate(o.createdAt) + ' · ' : '') +
+          lines.length + ' pièce' + (lines.length > 1 ? 's' : '') +
+          (doneN ? ' · ' + doneN + ' faite' + (doneN > 1 ? 's' : '') : '') +
+          (totalG ? ' · ' + fmtG(totalG) : '') +
+        '</div>' +
+      '</div>' +
+      badge(st.cls, st.label) +
+    '</div>' +
+    '<div class="row wrap" style="margin-top:10px;gap:6px">' +
+      (noWeight ? badge('warn', 'Poids à saisir') : badge(v.cls, v.label)) +
+      lineMaterialBadges(o) +
+    '</div>' +
+  '</div>';
+}
+
+function lineMaterialBadges(o) {
+  const mats = {};
+  (o.lines || []).forEach(l => {
+    const k = (l.material || '?') + '|' + (l.color || '');
+    mats[k] = { m: l.material || '?', c: l.color || '' };
+  });
+  return Object.values(mats).map(x =>
+    '<span class="badge">' + (x.c ? '<span class="dot" style="background:' + colorHexOf(x.c) + '"></span>' : '') +
+    esc(x.m) + (x.c ? ' ' + esc(x.c) : '') + '</span>'
+  ).join('');
+}
+
+/* ---------- détail d'une commande ---------- */
+
+function openOrder(id) {
+  const o = orderById(id);
+  if (!o) return;
+  const v = orderStockVerdict(o);
+
+  sheet(
+    '<h2>' + esc(o.name) + '</h2>' +
+    '<div class="sub">' + esc(o.customer || 'Client') + (o.createdAt ? ' · ' + fmtDate(o.createdAt) : '') +
+      (o.country ? ' · ' + esc(o.country) : '') + '</div>' +
+
+    '<div class="chips" style="margin-bottom:14px">' +
+      Object.keys(ORDER_STATUS).map(k =>
+        '<button type="button" class="chip' + (o.status === k ? ' on' : '') + '" onclick="setOrderStatus(\'' + o.id + '\',\'' + k + '\')">' +
+        ORDER_STATUS[k].label + '</button>').join('') +
+    '</div>' +
+
+    '<div class="card tight" style="margin-bottom:14px">' +
+      '<div class="spread"><span class="small muted">Stock pour cette commande</span>' + badge(v.cls, v.label) + '</div>' +
+      orderNeeds(o).map(n =>
+        '<div class="kv"><span>' + esc(n.material) + (n.color ? ' · ' + esc(n.color) : '') + '</span>' +
+        '<b class="mono">' + fmtG(n.grams) + ' / ' + fmtG(stockFor(n.material, n.color)) + '</b></div>'
+      ).join('') +
+    '</div>' +
+
+    '<div class="sec-title">Pièces</div>' +
+    (o.lines || []).map(l => orderLineRow(o, l)).join('') +
+
+    '<div class="sheet-actions">' +
+      '<button class="btn danger" onclick="deleteOrder(\'' + o.id + '\')">Supprimer</button>' +
+      '<button class="btn ghost" onclick="closeSheet()">Fermer</button>' +
+    '</div>'
+  );
+}
+
+function orderLineRow(o, l) {
+  return '<div class="rowitem">' +
+    '<div class="grow" style="' + (l.done ? 'opacity:.5' : '') + '">' +
+      '<div class="t">' + esc(l.title) + (l.qty > 1 ? ' ×' + l.qty : '') + '</div>' +
+      '<div class="s">' + esc(l.variant || '') + '</div>' +
+      '<div class="row" style="gap:6px;margin-top:6px">' +
+        '<span class="badge' + (l.material ? '' : ' warn') + '">' + esc(l.material || 'Matière ?') + '</span>' +
+        (l.color ? '<span class="badge">' + dot(colorHexOf(l.color)) + esc(l.color) + '</span>' : '') +
+        '<span class="badge' + (l.grams ? '' : ' warn') + '">' + (l.grams ? fmtG(l.grams) : 'Poids ?') + '</span>' +
+      '</div>' +
+    '</div>' +
+    '<button class="btn sm ghost" onclick="editLine(\'' + o.id + '\',\'' + l.id + '\')">' + iconGear() + '</button>' +
+  '</div>';
+}
+
+function editLine(orderId, lineId) {
+  const o = orderById(orderId);
+  const l = o && (o.lines || []).find(x => x.id === lineId);
+  if (!l) return;
+  const remembered = rememberedWeight(l);
+
+  sheet(
+    '<h2>' + esc(l.title) + '</h2>' +
+    '<div class="sub">' + esc(l.variant || '') + '</div>' +
+
+    '<label class="field"><span>Poids de la pièce (g)</span>' +
+      '<input type="number" name="grams" inputmode="numeric" value="' + esc(l.grams || '') + '" placeholder="' + (remembered || 0) + '">' +
+      '<div class="hint">' + (remembered ? 'Dernier poids retenu pour cette variante : ' + fmtG(remembered) + '. ' : '') +
+      'Poids unitaire ; la quantité (×' + (l.qty || 1) + ') est appliquée automatiquement.</div>' +
+    '</label>' +
+
+    '<label class="field"><span>Matière</span>' + materialChips('material', l.material) + '</label>' +
+    '<label class="field"><span>Couleur</span>' + colorChips('color', l.color) + '</label>' +
+
+    '<label class="field row" style="gap:9px;align-items:center">' +
+      '<input type="checkbox" name="done"' + (l.done ? ' checked' : '') + ' style="width:auto">' +
+      '<span style="margin:0">Pièce imprimée</span>' +
+    '</label>' +
+
+    '<div class="sheet-actions">' +
+      '<button class="btn ghost" data-x="no">Annuler</button>' +
+      '<button class="btn primary" data-x="ok">Enregistrer</button>' +
+    '</div>',
+
+    root => {
+      const chips = bindChips(root);
+      $('[data-x=no]', root).onclick = () => { closeSheet(); openOrder(orderId); };
+      $('[data-x=ok]', root).onclick = () => {
+        const v = formValues(root), c = chips();
+        l.grams = num(v.grams) || remembered || 0;
+        l.material = c.material || l.material;
+        l.color = c.color || l.color;
+        l.done = !!v.done;
+        rememberWeight(l, l.grams);
+        const lines = o.lines || [];
+        if (lines.length && lines.every(x => x.done) && o.status !== 'shipped') o.status = 'done';
+        else if (o.status === 'done' && lines.some(x => !x.done)) o.status = 'printing';
+        save(); closeSheet(); render(); openOrder(orderId);
+      };
+    }
+  );
+}
+
+function setOrderStatus(id, st) {
+  const o = orderById(id);
+  if (!o) return;
+  o.status = st;
+  if (st === 'done' || st === 'shipped') (o.lines || []).forEach(l => l.done = true);
+  save(); closeSheet(); render(); toast(ORDER_STATUS[st].label, 'ok');
+}
+
+function deleteOrder(id) {
+  const o = orderById(id);
+  if (!o) return;
+  closeSheet();
+  confirmSheet('Supprimer ' + o.name + ' ?', 'La commande reste bien sûr dans Shopify.', 'Supprimer', () => {
+    DB.orders = DB.orders.filter(x => x.id !== id);
+    save(); render(); toast('Commande retirée');
+  }, true);
+}
+
+function addManualOrder() {
+  sheet(
+    '<h2>Commande manuelle</h2>' +
+    '<div class="sub">Pour une pièce hors boutique : commission, prototype, rechange.</div>' +
+    '<label class="field"><span>Référence</span><input type="text" name="name" placeholder="Commission Rémi"></label>' +
+    '<label class="field"><span>Client</span><input type="text" name="customer" placeholder="Nom"></label>' +
+    '<label class="field"><span>Pièce</span><input type="text" name="title" placeholder="Casque Mando"></label>' +
+    '<div class="field-2">' +
+      '<label class="field"><span>Poids (g)</span><input type="number" name="grams" inputmode="numeric" placeholder="450"></label>' +
+      '<label class="field"><span>Quantité</span><input type="number" name="qty" inputmode="numeric" value="1"></label>' +
+    '</div>' +
+    '<label class="field"><span>Matière</span>' + materialChips('material', 'PLA') + '</label>' +
+    '<label class="field"><span>Couleur</span>' + colorChips('color', '') + '</label>' +
+    '<div class="sheet-actions">' +
+      '<button class="btn ghost" data-x="no">Annuler</button>' +
+      '<button class="btn primary" data-x="ok">Créer</button>' +
+    '</div>',
+    root => {
+      const chips = bindChips(root);
+      $('[data-x=no]', root).onclick = closeSheet;
+      $('[data-x=ok]', root).onclick = () => {
+        const v = formValues(root), c = chips();
+        if (!v.name.trim() && !v.title.trim()) { toast('Il faut au moins une référence', 'bad'); return; }
+        DB.orders.push({
+          id: uid(), shopifyId: '', name: v.name.trim() || v.title.trim(),
+          customer: v.customer.trim(), createdAt: Date.now(), source: 'manual', status: 'todo',
+          lines: [{
+            id: uid(), title: v.title.trim() || v.name.trim(), variant: '',
+            qty: parseInt(v.qty, 10) || 1, grams: num(v.grams),
+            material: c.material || 'PLA', color: c.color || '', done: false
+          }]
+        });
+        save(); closeSheet(); render(); toast('Commande ajoutée', 'ok');
+      };
+    }
+  );
+}
+
+/* ============================================================
+   Synchronisation Shopify (API Admin GraphQL)
+   ============================================================ */
+
+const ORDERS_QUERY =
+  'query($n:Int!,$q:String){orders(first:$n,query:$q,sortKey:CREATED_AT,reverse:true){edges{node{' +
+  'id name createdAt displayFulfillmentStatus ' +
+  'customer{firstName lastName} shippingAddress{country} ' +
+  'lineItems(first:50){edges{node{id title quantity sku variant{id title}}}}' +
+  '}}}}';
+
+let syncing = false;
+
+async function syncShopify() {
+  if (syncing) return;
+  const st = DB.settings;
+  if (!st.shop || !st.token) {
+    toast('Configure la boutique dans Réglages', 'bad');
+    go('settings');
+    return;
+  }
+  if (!Native.ok()) {
+    toast('La synchro ne fonctionne que dans l\'app Android', 'bad');
+    return;
+  }
+
+  syncing = true;
+  const btn = $('#sync-btn');
+  if (btn) { btn.textContent = 'Synchro…'; btn.disabled = true; }
+
+  try {
+    const url = 'https://' + st.shop.replace(/^https?:\/\//, '').replace(/\/$/, '') +
+                '/admin/api/' + st.apiVersion + '/graphql.json';
+    const res = await nativeHttp('POST', url,
+      { 'X-Shopify-Access-Token': st.token, 'Content-Type': 'application/json' },
+      JSON.stringify({ query: ORDERS_QUERY, variables: { n: 50, q: 'fulfillment_status:unfulfilled' } })
+    );
+
+    if (!res.ok) throw new Error(res.error || ('HTTP ' + res.status));
+    const data = JSON.parse(res.body);
+    if (data.errors) throw new Error(data.errors[0] && data.errors[0].message || 'Erreur GraphQL');
+    if (!data.data || !data.data.orders) throw new Error('Réponse inattendue — vérifie les autorisations du jeton');
+
+    const n = mergeShopifyOrders(data.data.orders.edges.map(e => e.node));
+    DB.settings.lastSync = Date.now();
+    save(); render();
+    toast(n.added ? n.added + ' nouvelle' + (n.added > 1 ? 's' : '') + ' commande' + (n.added > 1 ? 's' : '') : 'Tout est à jour', 'ok');
+  } catch (e) {
+    toast('Échec : ' + e.message, 'bad');
+  } finally {
+    syncing = false;
+    render();
+  }
+}
+
+function mergeShopifyOrders(nodes) {
+  let added = 0;
+  nodes.forEach(nd => {
+    const existing = DB.orders.find(o => o.shopifyId === nd.id);
+    const cust = nd.customer ? [nd.customer.firstName, nd.customer.lastName].filter(Boolean).join(' ') : '';
+    const lines = (nd.lineItems.edges || []).map(e => {
+      const li = e.node;
+      const variant = li.variant ? li.variant.title : '';
+      const base = {
+        id: li.id, title: li.title, variant: variant,
+        qty: li.quantity || 1, material: materialFromVariant(variant),
+        color: '', grams: 0, done: false
+      };
+      const w = rememberedWeight(base);
+      if (w) base.grams = w;
+      return base;
+    });
+
+    if (existing) {
+      existing.customer = cust || existing.customer;
+      existing.country = nd.shippingAddress ? nd.shippingAddress.country : existing.country;
+      lines.forEach(nl => {
+        if (!(existing.lines || []).some(x => x.id === nl.id)) (existing.lines = existing.lines || []).push(nl);
+      });
+    } else {
+      added++;
+      DB.orders.push({
+        id: uid(), shopifyId: nd.id, name: nd.name, customer: cust,
+        createdAt: new Date(nd.createdAt).getTime(),
+        country: nd.shippingAddress ? nd.shippingAddress.country : '',
+        source: 'shopify', status: 'todo', lines: lines
+      });
+    }
+  });
+  return { added: added };
+}
+</script>
+<script>
+/* ============================================================
+   profiles.js — profils d'impression réutilisables
+   ============================================================ */
+
+function renderProfiles() {
+  setTop('Profils',
+    DB.profiles.length ? DB.profiles.length + ' profil' + (DB.profiles.length > 1 ? 's' : '') + ' enregistré' + (DB.profiles.length > 1 ? 's' : '') : 'Aucun profil',
+    '<button class="tb-btn accent" onclick="editProfile()">' + iconPlus() + 'Profil</button>'
+  );
+
+  if (!DB.profiles.length) {
+    return emptyState(
+      'Aucun profil',
+      'Un profil regroupe tes réglages habituels : matière, buse, hauteur de couche, températures. Tu peux ensuite l\'affecter à une machine.',
+      'Créer un profil', 'editProfile()'
+    );
+  }
+
+  return '<div class="stack">' + DB.profiles.map(profileCard).join('') + '</div>';
+}
+
+function profileCard(p) {
+  const used = DB.machines.filter(m => m.profileId === p.id).map(m => m.name);
+  const specs = [
+    p.layer ? p.layer + ' mm' : '',
+    p.nozzle ? 'buse ' + p.nozzle : '',
+    p.infill ? p.infill + ' %' : '',
+    p.speed ? p.speed + ' mm/s' : ''
+  ].filter(Boolean).join(' · ');
+
+  return '<div class="card tight click" onclick="editProfile(\'' + p.id + '\')">' +
+    '<div class="card-head">' +
+      '<div class="grow">' +
+        '<div class="card-name" style="font-size:15px">' + esc(p.name) + '</div>' +
+        '<div class="card-meta">' + esc(specs || 'Aucun réglage détaillé') + '</div>' +
+      '</div>' +
+      badge('', p.material || '—') +
+    '</div>' +
+    (p.tempNozzle || p.tempBed
+      ? '<div class="card-meta" style="margin-top:8px">' +
+        (p.tempNozzle ? 'Buse ' + esc(p.tempNozzle) + ' °C' : '') +
+        (p.tempNozzle && p.tempBed ? ' · ' : '') +
+        (p.tempBed ? 'Plateau ' + esc(p.tempBed) + ' °C' : '') + '</div>'
+      : '') +
+    (p.note ? '<div class="card-meta" style="margin-top:6px">' + esc(p.note) + '</div>' : '') +
+    (used.length ? '<div class="fil-line"><span class="grow small">Utilisé sur ' + esc(used.join(', ')) + '</span></div>' : '') +
+  '</div>';
+}
+
+function editProfile(id) {
+  const p = id ? profileById(id) : null;
+  sheet(
+    '<h2>' + (p ? 'Modifier le profil' : 'Nouveau profil') + '</h2>' +
+    '<label class="field"><span>Nom</span><input type="text" name="name" placeholder="Casque — PLA Matte fuzzy" value="' + esc(p ? p.name : '') + '"></label>' +
+    '<label class="field"><span>Matière</span>' + materialChips('material', p ? p.material : 'PLA') + '</label>' +
+    '<div class="field-2">' +
+      '<label class="field"><span>Hauteur de couche (mm)</span><input type="text" name="layer" inputmode="decimal" placeholder="0.2" value="' + esc(p ? p.layer : '') + '"></label>' +
+      '<label class="field"><span>Buse (mm)</span><input type="text" name="nozzle" inputmode="decimal" placeholder="0.4" value="' + esc(p ? p.nozzle : '') + '"></label>' +
+    '</div>' +
+    '<div class="field-2">' +
+      '<label class="field"><span>Remplissage (%)</span><input type="number" name="infill" inputmode="numeric" placeholder="15" value="' + esc(p ? p.infill : '') + '"></label>' +
+      '<label class="field"><span>Vitesse (mm/s)</span><input type="number" name="speed" inputmode="numeric" placeholder="200" value="' + esc(p ? p.speed : '') + '"></label>' +
+    '</div>' +
+    '<div class="field-2">' +
+      '<label class="field"><span>Temp. buse (°C)</span><input type="number" name="tempNozzle" inputmode="numeric" placeholder="220" value="' + esc(p ? p.tempNozzle : '') + '"></label>' +
+      '<label class="field"><span>Temp. plateau (°C)</span><input type="number" name="tempBed" inputmode="numeric" placeholder="60" value="' + esc(p ? p.tempBed : '') + '"></label>' +
+    '</div>' +
+    '<label class="field"><span>Notes</span><textarea name="note" placeholder="Fuzzy skin 0.3 / Voronoï, supports arbre, séchage 6 h…">' + esc(p ? p.note : '') + '</textarea></label>' +
+    '<div class="sheet-actions">' +
+      (p ? '<button class="btn danger" data-x="del">Supprimer</button>' : '') +
+      '<button class="btn ghost" data-x="no">Annuler</button>' +
+      '<button class="btn primary" data-x="ok">Enregistrer</button>' +
+    '</div>',
+    root => {
+      const chips = bindChips(root);
+      $('[data-x=no]', root).onclick = closeSheet;
+      const del = $('[data-x=del]', root);
+      if (del) del.onclick = () => {
+        closeSheet();
+        confirmSheet('Supprimer ce profil ?', p.name, 'Supprimer', () => {
+          DB.profiles = DB.profiles.filter(x => x.id !== p.id);
+          DB.machines.forEach(m => { if (m.profileId === p.id) m.profileId = ''; });
+          save(); render(); toast('Profil supprimé');
+        }, true);
+      };
+      $('[data-x=ok]', root).onclick = () => {
+        const v = formValues(root), c = chips();
+        if (!v.name.trim()) { toast('Il faut un nom', 'bad'); return; }
+        const data = {
+          name: v.name.trim(), material: c.material || 'PLA',
+          layer: v.layer.trim(), nozzle: v.nozzle.trim(), infill: v.infill,
+          speed: v.speed, tempNozzle: v.tempNozzle, tempBed: v.tempBed, note: v.note.trim()
+        };
+        if (p) Object.assign(p, data);
+        else DB.profiles.push(Object.assign({ id: uid() }, data));
+        save(); closeSheet(); render(); toast('Enregistré', 'ok');
+      };
+    }
+  );
+}
+</script>
+<script>
+/* ============================================================
+   settings.js — Shopify, notifications, sauvegarde
+   ============================================================ */
+
+function renderSettings() {
+  const st = DB.settings;
+  setTop('Réglages', Native.ok() ? 'Application Android' : 'Aperçu navigateur', '');
+
+  let out = '';
+
+  /* ---- Shopify ---- */
+  out += '<div class="sec-title">Boutique Shopify</div>' +
+    '<div class="card">' +
+      '<label class="field"><span>Domaine myshopify</span>' +
+        '<input type="text" name="shop" value="' + esc(st.shop) + '" placeholder="hedjfd-9e.myshopify.com" autocapitalize="off" autocorrect="off">' +
+        '<div class="hint">Le domaine technique, pas nmtsworkshop.com.</div>' +
+      '</label>' +
+      '<label class="field"><span>Jeton d\'accès Admin API</span>' +
+        '<input type="password" name="token" value="' + esc(st.token) + '" placeholder="shpat_…" autocapitalize="off" autocorrect="off">' +
+        '<div class="hint">Créé dans Shopify → Paramètres → Applications et canaux de vente → Développer des applications. Autorisations nécessaires : read_orders et read_products. Le jeton reste sur le téléphone.</div>' +
+      '</label>' +
+      '<label class="field"><span>Version d\'API</span>' +
+        '<input type="text" name="apiVersion" value="' + esc(st.apiVersion) + '" placeholder="2025-07">' +
+      '</label>' +
+      '<div class="btn-row">' +
+        '<button class="btn" onclick="saveSettings()">Enregistrer</button>' +
+        '<button class="btn primary" onclick="testShopify()">Tester</button>' +
+      '</div>' +
+    '</div>';
+
+  /* ---- notifications ---- */
+  out += '<div class="sec-title">Notifications</div>' +
+    '<div class="card">' +
+      '<label class="field"><span>Prévenir avant la fin</span>' +
+        '<select name="notifyBefore">' +
+          [0, 5, 10, 15, 30].map(v =>
+            '<option value="' + v + '"' + (st.notifyBefore === v ? ' selected' : '') + '>' +
+            (v === 0 ? 'Non, seulement à la fin' : v + ' minutes avant') + '</option>').join('') +
+        '</select>' +
+      '</label>' +
+      '<label class="field"><span>Seuil « bientôt vide »</span>' +
+        '<select name="lowThreshold">' +
+          [10, 15, 20, 25].map(v =>
+            '<option value="' + v + '"' + (st.lowThreshold === v ? ' selected' : '') + '>' + v + ' % de la bobine</option>').join('') +
+        '</select>' +
+      '</label>' +
+      '<div class="btn-row">' +
+        '<button class="btn" onclick="saveSettings()">Enregistrer</button>' +
+        '<button class="btn primary" onclick="testNotif()">Tester</button>' +
+      '</div>' +
+      (Native.ok()
+        ? '<div class="sp"></div><div class="hint">Si les notifications arrivent en retard, retire l\'app de l\'optimisation de batterie.' +
+          '<br><button class="btn sm" style="margin-top:9px" onclick="Native.openBatterySettings()">Ouvrir les réglages batterie</button></div>'
+        : '<div class="sp"></div><div class="warn-box">Dans un navigateur, les notifications en arrière-plan ne fonctionnent pas. C\'est tout l\'intérêt de la version Android.</div>')
+    + '</div>';
+
+  /* ---- données ---- */
+  const counts = DB.machines.length + ' machines · ' + activeSpools().length + ' bobines · ' +
+                 DB.orders.length + ' commandes · ' + DB.profiles.length + ' profils';
+  out += '<div class="sec-title">Sauvegarde</div>' +
+    '<div class="card">' +
+      '<div class="small muted" style="margin-bottom:12px">' + esc(counts) + '</div>' +
+      '<div class="btn-row">' +
+        '<button class="btn" onclick="exportData()">Exporter</button>' +
+        '<button class="btn" onclick="importData()">Importer</button>' +
+      '</div>' +
+      '<div class="sp"></div>' +
+      '<button class="btn wide danger" onclick="resetData()">Tout effacer</button>' +
+    '</div>';
+
+  out += '<div class="sec-title">À propos</div>' +
+    '<div class="card">' +
+      '<div class="kv"><span>Application</span><b>Atelier NMT</b></div>' +
+      '<div class="kv"><span>Version</span><b>1.0</b></div>' +
+      '<div class="kv"><span>Données</span><b>Stockées sur l\'appareil</b></div>' +
+    '</div>';
+
+  return out;
+}
+
+function saveSettings() {
+  const v = formValues($('#view'));
+  DB.settings.shop = (v.shop || '').trim();
+  DB.settings.token = (v.token || '').trim();
+  DB.settings.apiVersion = (v.apiVersion || '2025-07').trim();
+  DB.settings.notifyBefore = parseInt(v.notifyBefore, 10) || 0;
+  DB.settings.lowThreshold = parseInt(v.lowThreshold, 10) || 15;
+  save();
+  toast('Réglages enregistrés', 'ok');
+}
+
+async function testShopify() {
+  saveSettings();
+  const st = DB.settings;
+  if (!st.shop || !st.token) { toast('Domaine et jeton obligatoires', 'bad'); return; }
+  if (!Native.ok()) { toast('Test possible seulement dans l\'app Android', 'bad'); return; }
+  toast('Connexion…');
+  try {
+    const url = 'https://' + st.shop.replace(/^https?:\/\//, '').replace(/\/$/, '') +
+                '/admin/api/' + st.apiVersion + '/graphql.json';
+    const res = await nativeHttp('POST', url,
+      { 'X-Shopify-Access-Token': st.token, 'Content-Type': 'application/json' },
+      JSON.stringify({ query: '{shop{name}}' }));
+    if (!res.ok) throw new Error(res.error || ('HTTP ' + res.status));
+    const d = JSON.parse(res.body);
+    if (d.errors) throw new Error(d.errors[0].message);
+    toast('Connecté à ' + d.data.shop.name, 'ok');
+  } catch (e) {
+    toast('Échec : ' + e.message, 'bad');
+  }
+}
+
+function testNotif() {
+  saveSettings();
+  if (!Native.ok()) { toast('Disponible seulement dans l\'app Android', 'bad'); return; }
+  if (!Native.notificationsOk()) { Native.askNotifications(); return; }
+  Native.scheduleTimer('test', 'Atelier NMT — test', 'Si tu lis ça écran verrouillé, tout est bon.', Date.now() + 60000);
+  sheet(
+    '<h2>Test lancé</h2>' +
+    '<div class="sub">Une notification arrivera dans une minute. Verrouille l\'écran et laisse le téléphone de côté : c\'est exactement la situation d\'une fin d\'impression.</div>' +
+    '<div class="sheet-actions"><button class="btn primary" onclick="closeSheet()">Compris</button></div>'
+  );
+}
+
+function exportData() {
+  const json = JSON.stringify(DB, null, 2);
+  const name = 'atelier-nmt-' + new Date().toISOString().slice(0, 10) + '.json';
+  const path = Native.saveFile(name, json);
+  if (path) {
+    sheet('<h2>Sauvegarde enregistrée</h2><div class="sub">' + esc(path) + '</div>' +
+      '<div class="sheet-actions"><button class="btn primary" onclick="closeSheet()">Fermer</button></div>');
+  } else {
+    sheet(
+      '<h2>Sauvegarde</h2><div class="sub">Copie ce texte et garde-le au chaud.</div>' +
+      '<textarea style="min-height:200px" readonly>' + esc(json) + '</textarea>' +
+      '<div class="sheet-actions"><button class="btn primary" onclick="closeSheet()">Fermer</button></div>',
+      root => { const t = $('textarea', root); t.focus(); t.select(); }
+    );
+  }
+}
+
+function importData() {
+  sheet(
+    '<h2>Restaurer une sauvegarde</h2>' +
+    '<div class="sub">Colle ici le contenu d\'un export. Les données actuelles seront remplacées.</div>' +
+    '<textarea name="json" style="min-height:160px" placeholder="{ … }"></textarea>' +
+    '<div class="sheet-actions">' +
+      '<button class="btn ghost" data-x="no">Annuler</button>' +
+      '<button class="btn primary" data-x="ok">Restaurer</button>' +
+    '</div>',
+    root => {
+      $('[data-x=no]', root).onclick = closeSheet;
+      $('[data-x=ok]', root).onclick = () => {
+        try {
+          const parsed = JSON.parse($('[name=json]', root).value);
+          if (!parsed || !Array.isArray(parsed.machines)) throw new Error('format inattendu');
+          DB = Object.assign(JSON.parse(JSON.stringify(DEFAULT_DB)), parsed);
+          DB.settings = Object.assign({}, DEFAULT_DB.settings, parsed.settings || {});
+          save(); closeSheet(); rescheduleAll(); render();
+          toast('Sauvegarde restaurée', 'ok');
+        } catch (e) {
+          toast('Fichier illisible : ' + e.message, 'bad');
+        }
+      };
+    }
+  );
+}
+
+function resetData() {
+  confirmSheet('Tout effacer ?', 'Machines, bobines, commandes et profils seront perdus. Pense à exporter avant.', 'Effacer', () => {
+    DB.machines.forEach(m => Native.cancelTimer(m.id));
+    DB = JSON.parse(JSON.stringify(DEFAULT_DB));
+    save(); render(); toast('Données effacées');
+  }, true);
+}
+</script>
+<script>
+/* ============================================================
+   app.js — navigation, horloges, démarrage
+   ============================================================ */
+
+let TAB = 'machines';
+
+const VIEWS = {
+  machines: renderMachines,
+  stock: renderStock,
+  orders: renderOrders,
+  profiles: renderProfiles,
+  settings: renderSettings
+};
+
+function setTop(title, sub, actions) {
+  $('#tb-title').textContent = title;
+  $('#tb-sub').textContent = sub || '';
+  $('#tb-actions').innerHTML = actions || '';
+}
+
+function go(tab) {
+  TAB = tab;
+  closeSheet();
+  render();
+  window.scrollTo(0, 0);
+}
+
+function render() {
+  $('#view').innerHTML = (VIEWS[TAB] || renderMachines)();
+  $$('#tabbar .tab').forEach(b => b.classList.toggle('on', b.getAttribute('data-tab') === TAB));
+  paintTabBadges();
+}
+
+function paintTabBadges() {
+  const done = DB.machines.filter(m => m.status === 'done').length;
+  const tab = $('#tabbar .tab[data-tab=machines]');
+  const old = $('.badge-n', tab);
+  if (old) old.remove();
+  if (done > 0 && TAB !== 'machines') {
+    const b = document.createElement('span');
+    b.className = 'badge-n';
+    b.textContent = done;
+    tab.appendChild(b);
+  }
+}
+
+/* ---------- horloges ---------- */
+
+function tick() {
+  const now = Date.now();
+  let needsRender = false;
+
+  DB.machines.forEach(m => {
+    if (m.status !== 'running' || !m.timer) return;
+    const left = m.timer.endAt - now;
+    if (left <= 0) {
+      m.status = 'done';
+      needsRender = true;
+      save();
+    } else if (TAB === 'machines') {
+      const el = document.getElementById('clk-' + m.id);
+      if (el) el.textContent = fmtDur(left);
+    }
+  });
+
+  if (needsRender) render();
+}
+
+/* replanifie les alarmes natives d'après l'état courant
+   (après une restauration de sauvegarde par exemple) */
+function rescheduleAll() {
+  DB.machines.forEach(m => {
+    if (m.status === 'running' && m.timer && m.timer.endAt > Date.now()) scheduleFor(m);
+  });
+}
+
+/* ---------- retour Android ---------- */
+
+window.NMTonBack = function () {
+  if (sheetCloser) { closeSheet(); return 1; }
+  if (TAB !== 'machines') { go('machines'); return 1; }
+  return 0;
+};
+
+/* ---------- démarrage ---------- */
+
+function boot() {
+  load();
+
+  $$('#tabbar .tab').forEach(b => {
+    b.addEventListener('click', () => go(b.getAttribute('data-tab')));
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) { load(); render(); }
+  });
+
+  render();
+  setInterval(tick, 1000);
+
+  if (Native.ok() && !Native.notificationsOk()) {
+    setTimeout(() => Native.askNotifications(), 600);
+  }
+}
+
+document.addEventListener('DOMContentLoaded', boot);
+</script>
+</body>
+</html>

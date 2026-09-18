@@ -1,0 +1,374 @@
+/* ============================================================
+   store.js — état, persistance, modèle métier
+   ============================================================ */
+
+const KEY = 'nmt_atelier_v1';
+
+const MATERIALS = ['PLA', 'PETG', 'ABS', 'ASA', 'TPU', 'PA-CF', 'Autre'];
+
+const COLORS = [
+  { n: 'Noir',      h: '#1b1b1d' },
+  { n: 'Blanc',     h: '#f2f2f0' },
+  { n: 'Gris',      h: '#8a8f96' },
+  { n: 'Argent',    h: '#c7ccd2' },
+  { n: 'Rouge',     h: '#c8362f' },
+  { n: 'Bordeaux',  h: '#6d1f28' },
+  { n: 'Orange',    h: '#e0761f' },
+  { n: 'Jaune',     h: '#e3b724' },
+  { n: 'Vert',      h: '#3d8a4f' },
+  { n: 'Kaki',      h: '#6a6b45' },
+  { n: 'Bleu',      h: '#2f5fa8' },
+  { n: 'Bleu clair',h: '#6fa8dc' },
+  { n: 'Violet',    h: '#6b4a9e' },
+  { n: 'Rose',      h: '#d06a92' },
+  { n: 'Marron',    h: '#6b4a32' },
+  { n: 'Beige',     h: '#cbb994' },
+  { n: 'Or',        h: '#b8913c' },
+  { n: 'Transparent', h: '#9fb3bf' }
+];
+
+const DEFAULT_DB = {
+  v: 1,
+  machines: [],
+  spools: [],
+  profiles: [],
+  orders: [],
+  weights: {},
+  settings: {
+    shop: '',
+    token: '',
+    apiVersion: '2025-07',
+    notifyBefore: 0,
+    lowThreshold: 15,
+    lastSync: 0
+  }
+};
+
+let DB = null;
+
+/* ---------- persistance ---------- */
+
+let memFallback = null;
+
+function load() {
+  let raw = null;
+  try { raw = localStorage.getItem(KEY); } catch (e) { raw = memFallback; }
+  if (!raw) { DB = JSON.parse(JSON.stringify(DEFAULT_DB)); return; }
+  try {
+    const parsed = JSON.parse(raw);
+    DB = Object.assign(JSON.parse(JSON.stringify(DEFAULT_DB)), parsed);
+    DB.settings = Object.assign({}, DEFAULT_DB.settings, parsed.settings || {});
+  } catch (e) {
+    DB = JSON.parse(JSON.stringify(DEFAULT_DB));
+  }
+  migrate();
+}
+
+/* ancien format : une fiche = une bobine ({initial, left}) */
+function migrate() {
+  (DB.spools || []).forEach(s => {
+    if (s.spoolSize === undefined) {
+      s.spoolSize = s.initial || 1000;
+      s.open = s.left === undefined ? s.spoolSize : s.left;
+      s.sealed = 0;
+      delete s.initial;
+      delete s.left;
+    }
+  });
+}
+
+function save() {
+  const raw = JSON.stringify(DB);
+  memFallback = raw;
+  try { localStorage.setItem(KEY, raw); } catch (e) { /* mode privé / aperçu */ }
+}
+
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+
+/* ---------- pont natif (APK) ---------- */
+
+const Native = {
+  ok() { return typeof window.NMT !== 'undefined'; },
+
+  scheduleTimer(id, title, text, endAt) {
+    if (!this.ok()) return false;
+    try { window.NMT.scheduleTimer(String(id), String(title), String(text), Number(endAt)); return true; }
+    catch (e) { return false; }
+  },
+
+  cancelTimer(id) {
+    if (!this.ok()) return false;
+    try { window.NMT.cancelTimer(String(id)); return true; } catch (e) { return false; }
+  },
+
+  notifyNow(title, text) {
+    if (!this.ok()) return false;
+    try { window.NMT.notifyNow(String(title), String(text)); return true; } catch (e) { return false; }
+  },
+
+  saveFile(name, content) {
+    if (!this.ok()) return null;
+    try { return window.NMT.saveFile(String(name), String(content)); } catch (e) { return null; }
+  },
+
+  exactAlarmsOk() {
+    if (!this.ok()) return true;
+    try { return !!window.NMT.exactAlarmsAllowed(); } catch (e) { return true; }
+  },
+
+  openExactAlarmSettings() {
+    if (!this.ok()) return;
+    try { window.NMT.openExactAlarmSettings(); } catch (e) {}
+  },
+
+  notificationsOk() {
+    if (!this.ok()) return true;
+    try { return !!window.NMT.notificationsAllowed(); } catch (e) { return true; }
+  },
+
+  askNotifications() {
+    if (!this.ok()) return;
+    try { window.NMT.requestNotifications(); } catch (e) {}
+  },
+
+  openBatterySettings() {
+    if (!this.ok()) return;
+    try { window.NMT.openBatterySettings(); } catch (e) {}
+  }
+};
+
+/* ---------- requêtes HTTP via la coque native ----------
+   La WebView ne peut pas appeler l'API Shopify directement (CORS) :
+   la couche Java fait la requête et rappelle window.NMTcb. */
+
+let cbSeq = 0;
+const cbMap = {};
+
+window.NMTcb = function (id, json) {
+  const fn = cbMap[id];
+  delete cbMap[id];
+  if (!fn) return;
+  let res;
+  try { res = JSON.parse(json); } catch (e) { res = { ok: false, error: 'réponse illisible' }; }
+  fn(res);
+};
+
+function nativeHttp(method, url, headers, body) {
+  return new Promise((resolve, reject) => {
+    if (!Native.ok()) { reject(new Error('coque native absente')); return; }
+    const id = 'c' + (++cbSeq);
+    cbMap[id] = resolve;
+    setTimeout(() => {
+      if (cbMap[id]) { delete cbMap[id]; reject(new Error('délai dépassé')); }
+    }, 30000);
+    try {
+      window.NMT.httpAsync(method, url, JSON.stringify(headers || {}), body || '', id);
+    } catch (e) {
+      delete cbMap[id];
+      reject(new Error(String(e)));
+    }
+  });
+}
+
+/* ---------- helpers modèle ---------- */
+
+function machineById(id) { return DB.machines.find(m => m.id === id) || null; }
+function spoolById(id) { return DB.spools.find(s => s.id === id) || null; }
+function profileById(id) { return DB.profiles.find(p => p.id === id) || null; }
+function orderById(id) { return DB.orders.find(o => o.id === id) || null; }
+
+function activeSpools() { return DB.spools.filter(s => !s.archived); }
+
+/* Une entrée de stock = une référence de filament, pas une bobine physique :
+   - sealed : le nombre de bobines encore sous vide
+   - open   : ce qui reste, en grammes, sur celle qui est entamée
+   C'est ce qui permet d'enregistrer « 10 kg de noir » d'un coup. */
+
+function spoolTotal(s) {
+  return Math.max(0, s.sealed || 0) * (s.spoolSize || 1000) + Math.max(0, s.open || 0);
+}
+
+function spoolCount(s) {
+  return (s.sealed || 0) + ((s.open || 0) > 0 ? 1 : 0);
+}
+
+/* niveau de la bobine entamée : on raisonne en paliers, pas au gramme près */
+function spoolLevel(s) {
+  const size = s.spoolSize || 1000;
+  const open = s.open || 0;
+  const sealed = s.sealed || 0;
+
+  if (spoolTotal(s) <= 0) return { key: 'empty', label: 'Vide', cls: 'bad', pct: 0 };
+  if (open <= 0) return { key: 'sealed', label: 'Neuve', cls: 'ok', pct: 100 };
+
+  const pct = (open / size) * 100;
+  /* avec des bobines d'avance, une fin de bobine n'a rien d'alarmant */
+  const soft = sealed > 0;
+  if (pct < DB.settings.lowThreshold)
+    return { key: 'low', label: 'Bientôt vide', cls: soft ? 'warn' : 'bad', pct };
+  if (pct < 40) return { key: 'quarter', label: 'Faible', cls: soft ? 'ok' : 'warn', pct };
+  if (pct < 75) return { key: 'half', label: 'Entamée', cls: 'ok', pct };
+  return { key: 'full', label: 'Pleine', cls: 'ok', pct };
+}
+
+/* à racheter : plus de bobine d'avance et l'entamée touche à sa fin */
+function needsRestock(s) {
+  return (s.sealed || 0) === 0 &&
+         (s.open || 0) < (s.spoolSize || 1000) * (DB.settings.lowThreshold / 100);
+}
+
+/* ouvre une bobine neuve si besoin, puis retire les grammes demandés.
+   Renvoie ce qu'on n'a pas pu couvrir et le nombre de bobines ouvertes. */
+function consumeSpool(s, grams) {
+  const size = s.spoolSize || 1000;
+  let left = grams, opened = 0;
+
+  while (left > 0) {
+    if ((s.open || 0) <= 0) {
+      if ((s.sealed || 0) <= 0) break;
+      s.sealed--;
+      s.open = size;
+      opened++;
+    }
+    const take = Math.min(s.open, left);
+    s.open -= take;
+    left -= take;
+  }
+  if (s.open < 0) s.open = 0;
+  return { missing: left, opened: opened };
+}
+
+function spoolLabel(s) {
+  if (!s) return 'Aucun filament';
+  return [s.brand, s.material, s.color].filter(Boolean).join(' · ');
+}
+
+function colorHexOf(name) {
+  const c = COLORS.find(c => c.n.toLowerCase() === String(name || '').toLowerCase());
+  return c ? c.h : '#8a8f96';
+}
+
+/* stock disponible pour un couple matière + couleur (en g, approximatif) */
+function stockFor(material, color) {
+  return activeSpools()
+    .filter(s => s.material === material && (!color || s.color === color))
+    .reduce((t, s) => t + spoolTotal(s), 0);
+}
+
+/* clé de mémorisation des poids : produit + variante */
+function weightKey(line) {
+  return (line.title || '') + '||' + (line.variant || '');
+}
+
+function rememberedWeight(line) {
+  const w = DB.weights[weightKey(line)];
+  return typeof w === 'number' ? w : null;
+}
+
+function rememberWeight(line, grams) {
+  if (grams > 0) { DB.weights[weightKey(line)] = grams; }
+}
+
+/* besoins matière d'une commande, regroupés par matière + couleur */
+function orderNeeds(order) {
+  const map = {};
+  (order.lines || []).forEach(l => {
+    if (l.done) return;
+    const g = (l.grams || 0) * (l.qty || 1);
+    if (!g) return;
+    const k = (l.material || '?') + '|' + (l.color || '');
+    if (!map[k]) map[k] = { material: l.material || '?', color: l.color || '', grams: 0 };
+    map[k].grams += g;
+  });
+  return Object.values(map);
+}
+
+/* verdict stock d'une commande */
+function orderStockVerdict(order) {
+  const needs = orderNeeds(order);
+  if (!needs.length) return { cls: '', label: 'Poids à saisir', short: 'Poids ?' };
+  let worst = 'ok', missing = 0;
+  needs.forEach(n => {
+    const have = stockFor(n.material, n.color);
+    if (have < n.grams) { worst = 'bad'; missing += n.grams - have; }
+    else if (have < n.grams * 1.25 && worst !== 'bad') { worst = 'warn'; }
+  });
+  if (worst === 'bad') return { cls: 'bad', label: 'Manque ~' + fmtG(missing), short: 'Manque ' + fmtG(missing) };
+  if (worst === 'warn') return { cls: 'warn', label: 'Stock juste', short: 'Juste' };
+  return { cls: 'ok', label: 'Stock OK', short: 'OK' };
+}
+
+/* besoins de TOUTES les commandes à produire */
+function globalNeeds() {
+  const map = {};
+  DB.orders.forEach(o => {
+    if (o.status === 'done' || o.status === 'shipped') return;
+    orderNeeds(o).forEach(n => {
+      const k = n.material + '|' + n.color;
+      if (!map[k]) map[k] = { material: n.material, color: n.color, grams: 0 };
+      map[k].grams += n.grams;
+    });
+  });
+  return Object.values(map).sort((a, b) => b.grams - a.grams);
+}
+
+/* ---------- formats ---------- */
+
+function fmtG(g) {
+  g = Math.round(g);
+  if (g >= 1000) {
+    const kg = g / 1000;
+    return (kg >= 10 ? kg.toFixed(1) : kg.toFixed(2))
+      .replace(/\.?0+$/, '')
+      .replace('.', ',') + ' kg';
+  }
+  return g + ' g';
+}
+
+function fmtDur(ms) {
+  if (ms < 0) ms = 0;
+  const t = Math.floor(ms / 1000);
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+  if (h > 0) return h + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  return m + ':' + String(s).padStart(2, '0');
+}
+
+function fmtDurShort(ms) {
+  const t = Math.floor(ms / 60000);
+  const h = Math.floor(t / 60), m = t % 60;
+  if (h > 0) return h + ' h ' + (m ? String(m).padStart(2, '0') : '00');
+  return m + ' min';
+}
+
+function fmtClock(ts) {
+  const d = new Date(ts);
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+
+function fmtDate(ts) {
+  const d = new Date(ts);
+  return d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' });
+}
+
+function fmtDayClock(ts) {
+  const d = new Date(ts), now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  const tomorrow = new Date(now.getTime() + 86400000).toDateString() === d.toDateString();
+  if (sameDay) return fmtClock(ts);
+  if (tomorrow) return 'demain ' + fmtClock(ts);
+  return fmtDate(ts) + ' ' + fmtClock(ts);
+}
+
+/* détecte la matière dans un titre de variante Shopify
+   ex. "Covert / Without Visor / PLA" · "DC-15s / PETG / Yes" */
+function materialFromVariant(variantTitle) {
+  const parts = String(variantTitle || '').split('/').map(p => p.trim());
+  for (const p of parts) {
+    const up = p.toUpperCase().replace(/\s+/g, '');
+    const hit = MATERIALS.find(m => m !== 'Autre' && m.replace('-', '') === up.replace('-', ''));
+    if (hit) return hit;
+  }
+  return '';
+}

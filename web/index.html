@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#14161a">
+<title>Atelier NMT</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<header id="topbar">
+  <div class="tb-left">
+    <h1 id="tb-title">Machines</h1>
+    <div id="tb-sub" class="tb-sub"></div>
+  </div>
+  <div class="tb-right" id="tb-actions"></div>
+</header>
+
+<main id="view"></main>
+
+<nav id="tabbar">
+  <button class="tab" data-tab="machines">
+    <svg viewBox="0 0 24 24"><path d="M4 7h16v10H4z"/><path d="M7 7V4h10v3"/><path d="M8 17v3h8v-3"/></svg>
+    <span>Machines</span>
+  </button>
+  <button class="tab" data-tab="stock">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg>
+    <span>Stock</span>
+  </button>
+  <button class="tab" data-tab="orders">
+    <svg viewBox="0 0 24 24"><path d="M5 7h14l-1 13H6L5 7z"/><path d="M9 7V5a3 3 0 0 1 6 0v2"/></svg>
+    <span>Commandes</span>
+  </button>
+  <button class="tab" data-tab="profiles">
+    <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/><circle cx="17" cy="18" r="2"/></svg>
+    <span>Profils</span>
+  </button>
+  <button class="tab" data-tab="settings">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg>
+    <span>Réglages</span>
+  </button>
+</nav>
+
+<div id="sheet-host"></div>
+<div id="toast-host"></div>
+
+<script src="js/store.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/machines.js"></script>
+<script src="js/stock.js"></script>
+<script src="js/orders.js"></script>
+<script src="js/profiles.js"></script>
+<script src="js/settings.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

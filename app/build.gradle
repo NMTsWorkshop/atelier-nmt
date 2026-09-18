@@ -1,0 +1,43 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'fr.nmt.atelier'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "fr.nmt.atelier"
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    // L'interface web vit dans /web à la racine du projet et devient
+    // directement le dossier assets de l'APK : rien à recopier à la main.
+    sourceSets {
+        main {
+            assets.srcDirs += ['../web']
+        }
+    }
+
+    buildTypes {
+        debug {
+            minifyEnabled false
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        abortOnError false
+    }
+}
