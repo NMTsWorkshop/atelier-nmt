@@ -10,8 +10,8 @@ android {
         applicationId "fr.nmt.atelier"
         minSdk 26
         targetSdk 34
-        versionCode 3
-        versionName "1.2"
+        versionCode 4
+        versionName "1.3"
     }
 
     // L'interface web vit dans /web à la racine du projet et devient
@@ -22,6 +22,21 @@ android {
         }
     }
 
+    // Clé de signature stable, fournie par les secrets du dépôt.
+    // Sans elle, Android refuse d'installer une mise à jour par-dessus
+    // une version signée autrement — c'est ce qui bloquait les màj.
+    signingConfigs {
+        atelier {
+            def ks = System.getenv("KEYSTORE_FILE")
+            if (ks) {
+                storeFile file(ks)
+                storePassword System.getenv("KEYSTORE_PASSWORD")
+                keyAlias System.getenv("KEY_ALIAS")
+                keyPassword System.getenv("KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         debug {
             minifyEnabled false
@@ -29,6 +44,9 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (System.getenv("KEYSTORE_FILE")) {
+                signingConfig signingConfigs.atelier
+            }
         }
     }
 

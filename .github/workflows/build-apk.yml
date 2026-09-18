@@ -32,13 +32,33 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Restaurer la clé de signature
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "Secret KEYSTORE_B64 absent : la mise à jour sur téléphone sera impossible." >&2
+            exit 1
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/atelier.jks"
+          echo "KEYSTORE_FILE=$RUNNER_TEMP/atelier.jks" >> $GITHUB_ENV
+
       - name: Compiler l'APK
-        run: gradle assembleDebug --no-daemon --stacktrace
+        env:
+          KEYSTORE_FILE: ${{ env.KEYSTORE_FILE }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Effacer la clé
+        if: always()
+        run: rm -f "$RUNNER_TEMP/atelier.jks"
 
       - name: Renommer et relever la version
         run: |
           mkdir -p out
-          cp app/build/outputs/apk/debug/app-debug.apk out/atelier-nmt.apk
+          cp app/build/outputs/apk/release/app-release.apk out/atelier-nmt.apk
           VERSION=$(grep -oP 'versionName\s+"\K[^"]+' app/build.gradle)
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "Version compilée : $VERSION"
