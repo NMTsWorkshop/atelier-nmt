@@ -37,7 +37,7 @@ const DEFAULT_DB = {
   settings: {
     shop: '',
     token: '',
-    apiVersion: '2025-07',
+    apiVersion: '2026-04',
     notifyBefore: 0,
     lowThreshold: 15,
     lastSync: 0

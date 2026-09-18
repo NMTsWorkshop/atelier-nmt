@@ -55,7 +55,8 @@ function orderCard(o) {
   return '<div class="card tight click" onclick="openOrder(\'' + o.id + '\')">' +
     '<div class="card-head">' +
       '<div class="grow">' +
-        '<div class="card-name">' + esc(o.name) + ' · <span class="muted" style="font-weight:500">' + esc(o.customer || 'Client') + '</span></div>' +
+        '<div class="card-name">' + esc(o.name) +
+          (o.customer ? ' · <span class="muted" style="font-weight:500">' + esc(o.customer) + '</span>' : '') + '</div>' +
         '<div class="card-meta">' + (o.createdAt ? fmtDate(o.createdAt) + ' · ' : '') +
           lines.length + ' pièce' + (lines.length > 1 ? 's' : '') +
           (doneN ? ' · ' + doneN + ' faite' + (doneN > 1 ? 's' : '') : '') +
@@ -92,7 +93,7 @@ function openOrder(id) {
 
   sheet(
     '<h2>' + esc(o.name) + '</h2>' +
-    '<div class="sub">' + esc(o.customer || 'Client') + (o.createdAt ? ' · ' + fmtDate(o.createdAt) : '') +
+    '<div class="sub">' + esc(o.customer || 'Commande Shopify') + (o.createdAt ? ' · ' + fmtDate(o.createdAt) : '') +
       (o.country ? ' · ' + esc(o.country) : '') + '</div>' +
 
     '<div class="chips" style="margin-bottom:14px">' +
@@ -242,11 +243,13 @@ function addManualOrder() {
    Synchronisation Shopify (API Admin GraphQL)
    ============================================================ */
 
+/* Requete volontairement minimale : elle ne demande que ce que couvre
+   read_orders. Pas de bloc customer (read_customers) ni variant
+   (read_products) — variantTitle porte deja la matiere. */
 const ORDERS_QUERY =
   'query($n:Int!,$q:String){orders(first:$n,query:$q,sortKey:CREATED_AT,reverse:true){edges{node{' +
   'id name createdAt displayFulfillmentStatus ' +
-  'customer{firstName lastName} shippingAddress{country} ' +
-  'lineItems(first:50){edges{node{id title quantity sku variant{id title}}}}' +
+  'lineItems(first:50){edges{node{id title quantity sku variantTitle}}}' +
   '}}}}';
 
 let syncing = false;
@@ -300,7 +303,7 @@ function mergeShopifyOrders(nodes) {
     const cust = nd.customer ? [nd.customer.firstName, nd.customer.lastName].filter(Boolean).join(' ') : '';
     const lines = (nd.lineItems.edges || []).map(e => {
       const li = e.node;
-      const variant = li.variant ? li.variant.title : '';
+      const variant = li.variantTitle || (li.variant ? li.variant.title : '');
       const base = {
         id: li.id, title: li.title, variant: variant,
         qty: li.quantity || 1, material: materialFromVariant(variant),
@@ -313,7 +316,7 @@ function mergeShopifyOrders(nodes) {
 
     if (existing) {
       existing.customer = cust || existing.customer;
-      existing.country = nd.shippingAddress ? nd.shippingAddress.country : existing.country;
+      if (nd.shippingAddress) existing.country = nd.shippingAddress.country;
       lines.forEach(nl => {
         if (!(existing.lines || []).some(x => x.id === nl.id)) (existing.lines = existing.lines || []).push(nl);
       });

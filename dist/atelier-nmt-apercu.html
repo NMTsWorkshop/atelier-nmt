@@ -334,7 +334,7 @@ const DEFAULT_DB = {
   settings: {
     shop: '',
     token: '',
-    apiVersion: '2025-07',
+    apiVersion: '2026-04',
     notifyBefore: 0,
     lowThreshold: 15,
     lastSync: 0
@@ -1581,7 +1581,8 @@ function orderCard(o) {
   return '<div class="card tight click" onclick="openOrder(\'' + o.id + '\')">' +
     '<div class="card-head">' +
       '<div class="grow">' +
-        '<div class="card-name">' + esc(o.name) + ' · <span class="muted" style="font-weight:500">' + esc(o.customer || 'Client') + '</span></div>' +
+        '<div class="card-name">' + esc(o.name) +
+          (o.customer ? ' · <span class="muted" style="font-weight:500">' + esc(o.customer) + '</span>' : '') + '</div>' +
         '<div class="card-meta">' + (o.createdAt ? fmtDate(o.createdAt) + ' · ' : '') +
           lines.length + ' pièce' + (lines.length > 1 ? 's' : '') +
           (doneN ? ' · ' + doneN + ' faite' + (doneN > 1 ? 's' : '') : '') +
@@ -1618,7 +1619,7 @@ function openOrder(id) {
 
   sheet(
     '<h2>' + esc(o.name) + '</h2>' +
-    '<div class="sub">' + esc(o.customer || 'Client') + (o.createdAt ? ' · ' + fmtDate(o.createdAt) : '') +
+    '<div class="sub">' + esc(o.customer || 'Commande Shopify') + (o.createdAt ? ' · ' + fmtDate(o.createdAt) : '') +
       (o.country ? ' · ' + esc(o.country) : '') + '</div>' +
 
     '<div class="chips" style="margin-bottom:14px">' +
@@ -1768,11 +1769,13 @@ function addManualOrder() {
    Synchronisation Shopify (API Admin GraphQL)
    ============================================================ */
 
+/* Requete volontairement minimale : elle ne demande que ce que couvre
+   read_orders. Pas de bloc customer (read_customers) ni variant
+   (read_products) — variantTitle porte deja la matiere. */
 const ORDERS_QUERY =
   'query($n:Int!,$q:String){orders(first:$n,query:$q,sortKey:CREATED_AT,reverse:true){edges{node{' +
   'id name createdAt displayFulfillmentStatus ' +
-  'customer{firstName lastName} shippingAddress{country} ' +
-  'lineItems(first:50){edges{node{id title quantity sku variant{id title}}}}' +
+  'lineItems(first:50){edges{node{id title quantity sku variantTitle}}}' +
   '}}}}';
 
 let syncing = false;
@@ -1826,7 +1829,7 @@ function mergeShopifyOrders(nodes) {
     const cust = nd.customer ? [nd.customer.firstName, nd.customer.lastName].filter(Boolean).join(' ') : '';
     const lines = (nd.lineItems.edges || []).map(e => {
       const li = e.node;
-      const variant = li.variant ? li.variant.title : '';
+      const variant = li.variantTitle || (li.variant ? li.variant.title : '');
       const base = {
         id: li.id, title: li.title, variant: variant,
         qty: li.quantity || 1, material: materialFromVariant(variant),
@@ -1839,7 +1842,7 @@ function mergeShopifyOrders(nodes) {
 
     if (existing) {
       existing.customer = cust || existing.customer;
-      existing.country = nd.shippingAddress ? nd.shippingAddress.country : existing.country;
+      if (nd.shippingAddress) existing.country = nd.shippingAddress.country;
       lines.forEach(nl => {
         if (!(existing.lines || []).some(x => x.id === nl.id)) (existing.lines = existing.lines || []).push(nl);
       });
@@ -1978,10 +1981,10 @@ function renderSettings() {
       '</label>' +
       '<label class="field"><span>Jeton d\'accès Admin API</span>' +
         '<input type="password" name="token" value="' + esc(st.token) + '" placeholder="shpat_…" autocapitalize="off" autocorrect="off">' +
-        '<div class="hint">Créé dans Shopify → Paramètres → Applications et canaux de vente → Développer des applications. Autorisations nécessaires : read_orders et read_products. Le jeton reste sur le téléphone.</div>' +
+        '<div class="hint">Jeton de l\'app Atelier NMT. Seule autorisation nécessaire : read_orders. Le jeton reste sur le téléphone.</div>' +
       '</label>' +
       '<label class="field"><span>Version d\'API</span>' +
-        '<input type="text" name="apiVersion" value="' + esc(st.apiVersion) + '" placeholder="2025-07">' +
+        '<input type="text" name="apiVersion" value="' + esc(st.apiVersion) + '" placeholder="2026-04">' +
       '</label>' +
       '<div class="btn-row">' +
         '<button class="btn" onclick="saveSettings()">Enregistrer</button>' +
@@ -2043,7 +2046,7 @@ function saveSettings() {
   const v = formValues($('#view'));
   DB.settings.shop = (v.shop || '').trim();
   DB.settings.token = (v.token || '').trim();
-  DB.settings.apiVersion = (v.apiVersion || '2025-07').trim();
+  DB.settings.apiVersion = (v.apiVersion || '2026-04').trim();
   DB.settings.notifyBefore = parseInt(v.notifyBefore, 10) || 0;
   DB.settings.lowThreshold = parseInt(v.lowThreshold, 10) || 15;
   save();

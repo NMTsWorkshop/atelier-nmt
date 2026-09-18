@@ -17,10 +17,10 @@ function renderSettings() {
       '</label>' +
       '<label class="field"><span>Jeton d\'accès Admin API</span>' +
         '<input type="password" name="token" value="' + esc(st.token) + '" placeholder="shpat_…" autocapitalize="off" autocorrect="off">' +
-        '<div class="hint">Créé dans Shopify → Paramètres → Applications et canaux de vente → Développer des applications. Autorisations nécessaires : read_orders et read_products. Le jeton reste sur le téléphone.</div>' +
+        '<div class="hint">Jeton de l\'app Atelier NMT. Seule autorisation nécessaire : read_orders. Le jeton reste sur le téléphone.</div>' +
       '</label>' +
       '<label class="field"><span>Version d\'API</span>' +
-        '<input type="text" name="apiVersion" value="' + esc(st.apiVersion) + '" placeholder="2025-07">' +
+        '<input type="text" name="apiVersion" value="' + esc(st.apiVersion) + '" placeholder="2026-04">' +
       '</label>' +
       '<div class="btn-row">' +
         '<button class="btn" onclick="saveSettings()">Enregistrer</button>' +
@@ -82,7 +82,7 @@ function saveSettings() {
   const v = formValues($('#view'));
   DB.settings.shop = (v.shop || '').trim();
   DB.settings.token = (v.token || '').trim();
-  DB.settings.apiVersion = (v.apiVersion || '2025-07').trim();
+  DB.settings.apiVersion = (v.apiVersion || '2026-04').trim();
   DB.settings.notifyBefore = parseInt(v.notifyBefore, 10) || 0;
   DB.settings.lowThreshold = parseInt(v.lowThreshold, 10) || 15;
   save();

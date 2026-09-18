@@ -60,7 +60,7 @@ plus tard ; verrouille l'écran en attendant, c'est le vrai test.
 Dans l'admin Shopify : **Paramètres → Applications et canaux de vente →
 Développer des applications → Créer une application**.
 
-- Configuration → **Admin API** → autorisations `read_orders` et `read_products`.
+- Configuration → **Admin API** → autorisation `read_orders` (seule requise).
 - Installer l'application, puis révéler le **jeton d'accès Admin API** (`shpat_…`).
 
 Dans l'app, onglet Réglages :
@@ -69,7 +69,7 @@ Dans l'app, onglet Réglages :
 |---|---|
 | Domaine myshopify | `hedjfd-9e.myshopify.com` |
 | Jeton | le `shpat_…` |
-| Version d'API | `2025-07` |
+| Version d'API | `2026-04` |
 
 **Tester** doit répondre « Connecté à NMT's Workshop ».
 
