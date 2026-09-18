@@ -148,6 +148,11 @@ const Native = {
   openInstallPermission() {
     if (!this.ok()) return;
     try { window.NMT.openInstallPermission(); } catch (e) {}
+  },
+
+  copy(text) {
+    if (!this.ok() || typeof window.NMT.copyToClipboard !== 'function') return false;
+    try { return !!window.NMT.copyToClipboard(String(text)); } catch (e) { return false; }
   }
 };
 

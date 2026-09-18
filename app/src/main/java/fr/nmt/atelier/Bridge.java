@@ -283,6 +283,24 @@ public class Bridge {
         Updater.openInstallPermission(act);
     }
 
+    /* ---------- presse-papiers ----------
+       Le presse-papiers survit à une désinstallation, contrairement aux
+       données de l'app : c'est le chemin le plus sûr pour transporter
+       une sauvegarde d'une version à l'autre. */
+
+    @JavascriptInterface
+    public boolean copyToClipboard(final String text) {
+        try {
+            android.content.ClipboardManager cm = (android.content.ClipboardManager)
+                    act.getSystemService(Context.CLIPBOARD_SERVICE);
+            if (cm == null) return false;
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("Atelier NMT", text));
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     /* ---------- sauvegarde de fichier ---------- */
 
     @JavascriptInterface

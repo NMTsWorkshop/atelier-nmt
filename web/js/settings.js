@@ -211,8 +211,14 @@ function exportData() {
   const json = JSON.stringify(DB, null, 2);
   const name = 'atelier-nmt-' + new Date().toISOString().slice(0, 10) + '.json';
   const path = Native.saveFile(name, json);
+  const copied = Native.copy(json);
+
   if (path) {
-    sheet('<h2>Sauvegarde enregistrée</h2><div class="sub">' + esc(path) + '</div>' +
+    sheet('<h2>Sauvegarde faite</h2>' +
+      '<div class="sub">Fichier : ' + esc(path) + '</div>' +
+      (copied
+        ? '<div class="info-box">Elle est aussi dans le presse-papiers. Le presse-papiers survit à une désinstallation : si tu réinstalles l\'app, tu pourras la recoller directement dans Importer.</div>'
+        : '<div class="warn-box">Le presse-papiers n\'a pas pu être rempli — garde bien le fichier.</div>') +
       '<div class="sheet-actions"><button class="btn primary" onclick="closeSheet()">Fermer</button></div>');
   } else {
     sheet(
@@ -227,7 +233,7 @@ function exportData() {
 function importData() {
   sheet(
     '<h2>Restaurer une sauvegarde</h2>' +
-    '<div class="sub">Colle ici le contenu d\'un export. Les données actuelles seront remplacées.</div>' +
+    '<div class="sub">Colle ici une sauvegarde — appui long dans le champ, puis Coller. Les données actuelles seront remplacées.</div>' +
     '<textarea name="json" style="min-height:160px" placeholder="{ … }"></textarea>' +
     '<div class="sheet-actions">' +
       '<button class="btn ghost" data-x="no">Annuler</button>' +
