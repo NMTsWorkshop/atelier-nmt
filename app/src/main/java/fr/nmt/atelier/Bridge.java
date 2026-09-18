@@ -232,6 +232,57 @@ public class Bridge {
         return new String(bos.toByteArray(), "UTF-8");
     }
 
+    /* ---------- mise a jour de l'application ---------- */
+
+    @JavascriptInterface
+    public String appVersion() {
+        try {
+            return act.getPackageManager()
+                    .getPackageInfo(act.getPackageName(), 0).versionName;
+        } catch (Throwable t) {
+            return "?";
+        }
+    }
+
+    /** Interroge la page Releases et rappelle window.NMTcb avec le resultat. */
+    @JavascriptInterface
+    public void checkUpdate(final String cbId) {
+        new Thread(new Runnable() {
+            public void run() {
+                final String res = Updater.check(act);
+                web.post(new Runnable() {
+                    public void run() {
+                        web.evaluateJavascript(
+                                "window.NMTcb(" + JSONObject.quote(cbId) + ","
+                                        + JSONObject.quote(res) + ")", null);
+                    }
+                });
+            }
+        }).start();
+    }
+
+    /** Telecharge l'APK puis ouvre l'installateur Android. */
+    @JavascriptInterface
+    public void installUpdate(final String url, final String cbId) {
+        new Thread(new Runnable() {
+            public void run() {
+                final String res = Updater.download(act, url);
+                web.post(new Runnable() {
+                    public void run() {
+                        web.evaluateJavascript(
+                                "window.NMTcb(" + JSONObject.quote(cbId) + ","
+                                        + JSONObject.quote(res) + ")", null);
+                    }
+                });
+            }
+        }).start();
+    }
+
+    @JavascriptInterface
+    public void openInstallPermission() {
+        Updater.openInstallPermission(act);
+    }
+
     /* ---------- sauvegarde de fichier ---------- */
 
     @JavascriptInterface
@@ -262,5 +313,70 @@ public class Bridge {
         } catch (Throwable t) {
             return null;
         }
+    }
+
+    /* ---------- imprimantes du réseau local ---------- */
+
+    /** Enregistre la liste des machines connectées et (dé)clenche la relève. */
+    @JavascriptInterface
+    public void savePrinters(String json) {
+        Printers.saveConfig(act, json == null ? "[]" : json);
+        if (Sync.hasPrinters(act)) {
+            Sync.schedule(act);
+        } else {
+            Sync.cancel(act);
+        }
+    }
+
+    /** Liste des machines connectées, telle qu'enregistrée. */
+    @JavascriptInterface
+    public String printerConfig() {
+        return Printers.config(act).toString();
+    }
+
+    /** Dernier état connu de chaque machine, tel que stocké par la relève. */
+    @JavascriptInterface
+    public String printerStates() {
+        return Printers.states(act).toString();
+    }
+
+    /** Relève immédiate de toutes les machines, puis rappel vers le JS. */
+    @JavascriptInterface
+    public void syncPrinters(final String cbId) {
+        new Thread(new Runnable() {
+            public void run() {
+                try {
+                    Sync.runOnce(act, 25);
+                } catch (Throwable ignored) {
+                }
+                callBack(cbId, Printers.states(act).toString());
+            }
+        }).start();
+    }
+
+    /** Test d'une seule machine, pour l'écran de configuration. */
+    @JavascriptInterface
+    public void probePrinter(final String confJson, final String cbId) {
+        new Thread(new Runnable() {
+            public void run() {
+                String payload;
+                try {
+                    payload = Printers.poll(new JSONObject(confJson)).toString();
+                } catch (Throwable t) {
+                    payload = errorJson(String.valueOf(t.getMessage()));
+                }
+                callBack(cbId, payload);
+            }
+        }).start();
+    }
+
+    private void callBack(final String cbId, final String payload) {
+        web.post(new Runnable() {
+            public void run() {
+                web.evaluateJavascript(
+                        "window.NMTcb(" + JSONObject.quote(cbId) + ","
+                                + JSONObject.quote(payload) + ")", null);
+            }
+        });
     }
 }

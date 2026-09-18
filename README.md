@@ -12,6 +12,10 @@ Bambu et Creality.
 
 ## 1. Obtenir l'APK
 
+**Après la première installation, tu n'as plus rien à faire ici** : l'app se met
+à jour toute seule. Réglages → Rechercher une mise à jour, ou elle vérifie
+d'elle-même une fois par jour et te propose d'installer.
+
 ### Par GitHub (rien à installer)
 
 1. Crée un dépôt sur github.com (privé, peu importe le nom).
@@ -44,7 +48,7 @@ wrapper Gradle : Android Studio proposera d'utiliser sa propre version, accepte.
 Trois réglages à faire une fois, sinon les notifications arrivent en retard :
 
 - **Notifications** : l'app les demande au lancement, accepte.
-- **Alarmes précises** : si un bandeau orange apparaît sur l'écran Machines,
+- **Alarmes précises** : si un bandeau d'alerte apparaît sur l'écran Machines,
   appuie dessus et autorise.
 - **Batterie** : Réglages → Applications → Atelier NMT → Batterie → **Sans
   restriction**. Le raccourci est aussi dans l'onglet Réglages de l'app.
@@ -67,7 +71,7 @@ Dans l'app, onglet Réglages :
 
 | Champ | Valeur |
 |---|---|
-| Domaine myshopify | `hedjfd-9e.myshopify.com` |
+| Domaine myshopify | `ta-boutique.myshopify.com` |
 | Jeton | le `shpat_…` |
 | Version d'API | `2026-04` |
 
@@ -104,6 +108,19 @@ couleur et le poids se saisissent à la main — et le poids est mémorisé par
 variante, donc la fois suivante il est déjà rempli. Chaque commande affiche
 « Stock OK », « Juste » ou « Manque ~320 g ».
 
+**Liaison réseau** — dans la fiche d'une machine, section Liaison réseau : la
+marque, l'adresse IP, et pour une Bambu le numéro de série et le code d'accès
+LAN. « Tester la liaison » répond tout de suite. Une fois branchée, l'app lit
+l'avancement et le temps restant sur la machine elle-même, affiche les bobines
+vues par l'AMS, et te notifie à la vraie fin d'impression — plus besoin de
+saisir un timer. La relève tourne toutes les quinze minutes en arrière-plan,
+sans notification permanente, et l'heure de fin est recalée à chaque passage.
+Le bouton de synchronisation en haut de l'écran Machines force une relève.
+
+Côté Bambu, **il n'est pas nécessaire de couper le cloud** : le MQTT local
+répond avec le seul code d'accès, vérifié sur P1S. Le téléphone doit être sur
+le même réseau que l'atelier.
+
 **Profils** — tes réglages habituels : matière, couche, buse, remplissage,
 températures, notes. Un profil peut être rattaché par défaut à une machine.
 
@@ -132,6 +149,11 @@ app/                coque Android (Java, aucune dépendance)
   …/Timers.java         planification des alarmes
   …/AlarmReceiver.java  notification de fin
   …/BootReceiver.java   replanification après redémarrage
+  …/Printers.java       lecture Moonraker et Bambu, format commun
+  …/BambuClient.java    MQTT local, lecture seule
+  …/Sync.java           relève périodique et recalage des alarmes
+  …/Notifier.java       construction des notifications
+  …/Updater.java        mise à jour depuis la page Releases
 test/smoke.js       test de bout en bout de l'interface
 ```
 
@@ -150,8 +172,10 @@ npm i playwright && node test/smoke.js
 
 ## 6. Limites connues
 
-- Les timers sont déclaratifs : l'app ne parle pas aux imprimantes, tu saisis la
-  durée toi-même. C'était le but — ne plus dépendre des apps constructeur.
+- Les machines non branchées gardent le timer manuel : tu saisis la durée
+  toi-même, comme avant.
+- La relève exige d'être sur le Wi-Fi de l'atelier. Hors du réseau, l'app
+  affiche la dernière valeur connue et la signale comme datée.
 - Le stock est une estimation. Rien ne pèse les bobines à ta place : les
   bobines neuves sont comptées, l'entamée est estimée à l'œil.
 - Les données vivent sur un seul téléphone ; la synchro entre appareils

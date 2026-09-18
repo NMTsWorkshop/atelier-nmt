@@ -10,8 +10,8 @@ android {
         applicationId "fr.nmt.atelier"
         minSdk 26
         targetSdk 34
-        versionCode 1
-        versionName "1.0"
+        versionCode 2
+        versionName "1.1"
     }
 
     // L'interface web vit dans /web à la racine du projet et devient
@@ -40,4 +40,11 @@ android {
     lint {
         abortOnError false
     }
+}
+
+dependencies {
+    // uniquement pour FileProvider, indispensable pour lancer l'installation d'un APK
+    implementation 'androidx.core:core:1.13.1'
+    // lecture de l'etat des imprimantes Bambu en MQTT local
+    implementation 'org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5'
 }

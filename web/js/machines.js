@@ -9,6 +9,8 @@ function renderMachines() {
     DB.machines.length
       ? running + ' en cours · ' + done + ' terminée' + (done > 1 ? 's' : '') + ' · ' + DB.machines.length + ' machine' + (DB.machines.length > 1 ? 's' : '')
       : 'Aucune machine pour l\'instant',
+    (DB.machines.some(m => m.printer && m.printer.host)
+      ? '<button class="tb-btn" id="poll-btn" onclick="pollPrinters()">' + iconSync() + '</button>' : '') +
     '<button class="tb-btn accent" onclick="editMachine()">' + iconPlus() + 'Machine</button>'
   );
 
@@ -30,6 +32,36 @@ function machineCard(m) {
   const pr = profileById(m.profileId);
   const now = Date.now();
   let cls = 'card mach', clock = '', sub = '', actions = '';
+
+  /* si la machine est branchée et qu'on a une relève fraîche,
+     c'est elle qui parle — le timer manuel passe au second plan */
+  const live = (m.printer && m.printer.host && Printers.fresh(m.id)) ? Printers.state(m.id) : null;
+
+  if (live && live.state === 'printing') {
+    cls += ' running';
+    const pct = live.percent >= 0 ? live.percent : 0;
+    const rest = fmtRemaining(live.remaining);
+    clock = '<div class="clock">' + pct + ' %</div>' +
+            '<div class="clock-sub">' +
+              (rest ? 'reste ' + esc(rest) : 'en cours') +
+              (live.remaining > 0 ? ' · fin vers ' + fmtClock(now + live.remaining * 60000) : '') +
+            '</div>';
+    actions =
+      '<button class="btn sm ghost" onclick="pollPrinters()">Actualiser</button>' +
+      '<button class="btn sm primary" onclick="finishJob(\'' + m.id + '\')">Terminer</button>';
+    if (live.file) sub = '<div class="card-meta nowrap" style="margin-top:6px;color:var(--txt-2)">' + esc(live.file) + '</div>';
+    return machineShell(m, cls, clock, sub, actions, sp, live);
+  }
+
+  if (live && (live.state === 'finished' || live.state === 'idle') && m.status !== 'idle') {
+    cls += ' done';
+    clock = '<div class="clock done">Terminé</div>' +
+            '<div class="clock-sub">' + esc(live.file || '') + '</div>';
+    actions =
+      '<button class="btn sm primary" onclick="finishJob(\'' + m.id + '\')">Décharger</button>' +
+      '<button class="btn sm ghost" onclick="pollPrinters()">Actualiser</button>';
+    return machineShell(m, cls, clock, sub, actions, sp, live);
+  }
 
   if (m.status === 'running' && m.timer) {
     const left = m.timer.endAt - now;
@@ -65,17 +97,28 @@ function machineCard(m) {
     sub = '<div class="card-meta nowrap" style="margin-top:6px;color:var(--txt-2)">' + esc(m.job.label) + '</div>';
   }
 
+  return machineShell(m, cls, clock, sub, actions, sp, live);
+}
+
+/* enveloppe commune : en-tête, ligne filament, rangée d'actions */
+function machineShell(m, cls, clock, sub, actions, sp, live) {
+  const pr = profileById(m.profileId);
   const lvl = sp ? spoolLevel(sp) : null;
+  const err = (m.printer && m.printer.host) ? Printers.error(m.id) : '';
 
   return '<div class="' + cls + '">' +
     '<div class="card-head tap" onclick="editMachine(\'' + m.id + '\')">' +
       '<div class="grow">' +
-        '<div class="card-name">' + esc(m.name) + '</div>' +
+        '<div class="card-name">' + esc(m.name) +
+          (live ? ' <span class="badge ok" style="vertical-align:middle">en direct</span>' : '') +
+        '</div>' +
         '<div class="card-meta">' + esc(m.model || '—') + (pr ? ' · ' + esc(pr.name) : '') + '</div>' +
         sub +
       '</div>' +
       '<div style="text-align:right">' + clock + '</div>' +
     '</div>' +
+    (err ? '<div class="card-meta" style="margin-top:8px;color:var(--warn)">Machine injoignable — ' + esc(err) + '</div>' : '') +
+    amsLine(live) +
     '<div class="fil-line">' +
       (sp
         ? dot(sp.colorHex) + '<span class="grow nowrap">' + esc(spoolLabel(sp)) + '</span>' +
@@ -85,6 +128,17 @@ function machineCard(m) {
     '</div>' +
     '<div class="row wrap" style="margin-top:12px">' + actions + '</div>' +
   '</div>';
+}
+
+/* ce que l'AMS rapporte, tel quel — la couleur vient de la machine */
+function amsLine(live) {
+  if (!live || !live.ams || !live.ams.length) return '';
+  return '<div class="row wrap" style="gap:6px;margin-top:10px">' +
+    live.ams.map(t =>
+      '<span class="badge">' +
+        (t.color ? '<span class="dot" style="background:' + esc(t.color) + '"></span>' : '') +
+        esc(t.type) + '</span>'
+    ).join('') + '</div>';
 }
 
 /* ---------- actions ---------- */
@@ -102,6 +156,8 @@ function setStatus(id, st) {
 
 function editMachine(id) {
   const m = id ? machineById(id) : null;
+  const pc = (m && m.printer) ? m.printer : {};
+  const pk = pc.kind || '';
   sheet(
     '<h2>' + (m ? 'Modifier la machine' : 'Nouvelle machine') + '</h2>' +
     '<div class="sub">Le filament chargé se change directement depuis la fiche machine.</div>' +
@@ -110,12 +166,60 @@ function editMachine(id) {
     '<label class="field"><span>Profil d\'impression par défaut</span>' +
       '<select name="profileId">' + selectOpts(DB.profiles, m ? m.profileId : '', p => p.name, p => p.id, 'Aucun') + '</select>' +
     '</label>' +
+
+    '<div class="sec-title">Liaison réseau</div>' +
+    '<div class="hint" style="margin-bottom:10px">Renseignée, l\'app lit l\'avancement directement sur la machine et te notifie à la vraie fin, sans timer à saisir.</div>' +
+    '<label class="field"><span>Marque</span>' +
+      '<div class="chips" data-chips="kind">' +
+        '<button type="button" class="chip' + (pk === '' ? ' on' : '') + '" data-v="">Aucune</button>' +
+        PRINTER_KINDS.map(k =>
+          '<button type="button" class="chip' + (pk === k.v ? ' on' : '') + '" data-v="' + k.v + '">' + k.label + '</button>'
+        ).join('') +
+      '</div>' +
+    '</label>' +
+    '<label class="field"><span>Adresse IP</span>' +
+      '<input type="text" name="host" inputmode="decimal" placeholder="192.168.1.42" value="' + esc(pc.host || '') + '">' +
+    '</label>' +
+    '<div id="bambu-fields" style="display:' + (pk === 'bambu' ? 'block' : 'none') + '">' +
+      '<label class="field"><span>Numéro de série</span>' +
+        '<input type="text" name="serial" autocapitalize="characters" placeholder="01P00A…" value="' + esc(pc.serial || '') + '">' +
+      '</label>' +
+      '<label class="field"><span>Code d\'accès LAN</span>' +
+        '<input type="text" name="code" placeholder="8 caractères" value="' + esc(pc.code || '') + '">' +
+        '<div class="hint">Écran de l\'imprimante : Réglages → Réseau.</div>' +
+      '</label>' +
+    '</div>' +
+    '<button class="btn wide" style="margin-bottom:6px" data-x="probe">Tester la liaison</button>' +
+    '<div id="probe-out" class="hint"></div>' +
+
     '<div class="sheet-actions">' +
       (m ? '<button class="btn danger" data-x="del">Supprimer</button>' : '') +
       '<button class="btn ghost" data-x="no">Annuler</button>' +
       '<button class="btn primary" data-x="ok">Enregistrer</button>' +
     '</div>',
     root => {
+      const chips = bindChips(root);
+      const bambu = $('#bambu-fields', root);
+      $$('[data-chips=kind] .chip', root).forEach(c => c.addEventListener('click', () => {
+        bambu.style.display = c.getAttribute('data-v') === 'bambu' ? 'block' : 'none';
+      }));
+
+      $('[data-x=probe]', root).onclick = () => {
+        const out = $('#probe-out', root);
+        const conf = buildPrinter(chips(), formValues(root));
+        if (!conf) { out.textContent = 'Choisis une marque et renseigne l\'adresse IP.'; return; }
+        out.textContent = 'Connexion…';
+        Printers.probe(conf).then(r => {
+          if (r && r.ok) {
+            out.innerHTML = '<span style="color:var(--ok)">Liaison établie — ' +
+              esc(r.state || '?') + (r.percent >= 0 ? ' · ' + r.percent + ' %' : '') +
+              (r.file ? ' · ' + esc(r.file) : '') + '</span>';
+          } else {
+            out.innerHTML = '<span style="color:var(--bad)">Échec — ' + esc((r && r.error) || 'sans réponse') + '</span>';
+          }
+        }).catch(e => { out.innerHTML = '<span style="color:var(--bad)">Échec — ' + esc(e.message) + '</span>'; });
+      };
+
       $('[data-x=no]', root).onclick = closeSheet;
       const del = $('[data-x=del]', root);
       if (del) del.onclick = () => {
@@ -123,21 +227,24 @@ function editMachine(id) {
         confirmSheet('Supprimer ' + m.name + ' ?', 'La machine disparaît du parc. Le stock n\'est pas touché.', 'Supprimer', () => {
           Native.cancelTimer(m.id);
           DB.machines = DB.machines.filter(x => x.id !== m.id);
-          save(); render(); toast('Machine supprimée');
+          save(); Printers.push(); render(); toast('Machine supprimée');
         }, true);
       };
       $('[data-x=ok]', root).onclick = () => {
         const v = formValues(root);
         if (!v.name.trim()) { toast('Il faut un nom', 'bad'); return; }
+        const printer = buildPrinter(chips(), v);
         if (m) {
           m.name = v.name.trim(); m.model = v.model.trim(); m.profileId = v.profileId;
+          m.printer = printer;
         } else {
           DB.machines.push({
             id: uid(), name: v.name.trim(), model: v.model.trim(),
-            profileId: v.profileId, filamentId: '', status: 'idle', timer: null, job: null
+            profileId: v.profileId, filamentId: '', status: 'idle', timer: null,
+            job: null, printer: printer
           });
         }
-        save(); closeSheet(); render(); toast('Enregistré', 'ok');
+        save(); Printers.push(); closeSheet(); render(); toast('Enregistré', 'ok');
       };
     }
   );
@@ -383,3 +490,26 @@ function nativeWarningBanner() {
 function iconPlus() { return '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>'; }
 function iconGear() { return '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 4v2M12 18v2M4 12h2M18 12h2M6.3 6.3l1.4 1.4M16.3 16.3l1.4 1.4M17.7 6.3l-1.4 1.4M7.7 16.3l-1.4 1.4"/></svg>'; }
 function iconSync() { return '<svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 1-15.5 6.2M3 12A9 9 0 0 1 18.5 5.8"/><path d="M3 4v5h5M21 20v-5h-5"/></svg>'; }
+
+
+/* assemble la liaison réseau depuis les champs de la fiche */
+function buildPrinter(chipVals, v) {
+  const kind = (chipVals && chipVals.kind) || '';
+  const host = (v.host || '').trim();
+  if (!kind || !host) return null;
+  const p = { kind: kind, host: host };
+  if (kind === 'bambu') {
+    p.serial = (v.serial || '').trim();
+    p.code = (v.code || '').trim();
+  }
+  return p;
+}
+
+/* relève immédiate de toutes les machines branchées */
+function pollPrinters() {
+  const btn = $('#poll-btn');
+  if (btn) btn.textContent = '…';
+  Printers.sync()
+    .then(() => { render(); toast('Machines relevées', 'ok'); })
+    .catch(e => { render(); toast('Relève impossible : ' + e.message, 'bad'); });
+}

@@ -35,7 +35,7 @@ public class MainActivity extends Activity {
         s.setTextZoom(100);
         s.setMediaPlaybackRequiresUserGesture(false);
 
-        web.setBackgroundColor(Color.parseColor("#101216"));
+        web.setBackgroundColor(Color.parseColor("#0F131B"));
         web.setOverScrollMode(WebView.OVER_SCROLL_NEVER);
         web.setWebViewClient(new WebViewClient());
         web.setWebChromeClient(new WebChromeClient());

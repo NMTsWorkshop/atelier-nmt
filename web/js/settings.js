@@ -68,14 +68,99 @@ function renderSettings() {
       '<button class="btn wide danger" onclick="resetData()">Tout effacer</button>' +
     '</div>';
 
+  out += '<div class="sec-title">Mise à jour</div>' +
+    '<div class="card">' +
+      '<div class="kv"><span>Version installée</span><b>' + esc(Native.version()) + '</b></div>' +
+      '<div id="maj-out" class="small muted" style="margin:12px 0 0">' +
+        (Native.ok() ? 'Appuie pour voir s\'il y a du nouveau.' : 'Disponible seulement dans l\'application.') +
+      '</div>' +
+      '<div class="sp"></div>' +
+      '<button class="btn wide primary" onclick="checkUpdate()">Rechercher une mise à jour</button>' +
+    '</div>';
+
   out += '<div class="sec-title">À propos</div>' +
     '<div class="card">' +
       '<div class="kv"><span>Application</span><b>Atelier NMT</b></div>' +
-      '<div class="kv"><span>Version</span><b>1.0</b></div>' +
       '<div class="kv"><span>Données</span><b>Stockées sur l\'appareil</b></div>' +
+      '<div class="kv"><span>Machines branchées</span><b>' +
+        DB.machines.filter(m => m.printer && m.printer.host).length + ' sur ' + DB.machines.length + '</b></div>' +
     '</div>';
 
   return out;
+}
+
+/* ---------- mise à jour ---------- */
+
+function checkUpdate(silencieux) {
+  const out = $('#maj-out');
+  if (!Native.ok()) { if (out) out.textContent = 'Disponible seulement dans l\'application.'; return; }
+  if (out && !silencieux) out.textContent = 'Recherche…';
+
+  DB.settings.lastUpdateCheck = Date.now();
+  save();
+
+  nativeCall('checkUpdate', []).then(r => {
+    if (!r || !r.ok) {
+      if (out && !silencieux) out.innerHTML = '<span style="color:var(--bad)">Échec — ' +
+        esc((r && r.error) || 'sans réponse') + '</span>';
+      return;
+    }
+    if (!r.available) {
+      if (out && !silencieux) out.textContent = 'Tu es à jour (version ' + esc(r.current) + ').';
+      return;
+    }
+    proposeUpdate(r);
+  }).catch(e => {
+    if (out && !silencieux) out.innerHTML = '<span style="color:var(--bad)">Échec — ' + esc(e.message) + '</span>';
+  });
+}
+
+function proposeUpdate(r) {
+  sheet(
+    '<h2>Version ' + esc(r.version) + ' disponible</h2>' +
+    '<div class="sub">Tu es en ' + esc(r.current) + '. L\'installation se fait sur place, tes données sont conservées.</div>' +
+    (r.notes ? '<div class="card tight small" style="margin-bottom:14px;white-space:pre-wrap">' +
+        esc(String(r.notes).slice(0, 400)) + '</div>' : '') +
+    '<div class="sheet-actions">' +
+      '<button class="btn ghost" data-x="no">Plus tard</button>' +
+      '<button class="btn primary" data-x="ok">Installer</button>' +
+    '</div>',
+    root => {
+      $('[data-x=no]', root).onclick = closeSheet;
+      $('[data-x=ok]', root).onclick = () => {
+        const btn = $('[data-x=ok]', root);
+        btn.textContent = 'Téléchargement…';
+        btn.disabled = true;
+        nativeCall('installUpdate', [r.url]).then(res => {
+          if (res && res.ok) {
+            closeSheet();
+            toast('Installateur ouvert', 'ok');
+          } else if (res && res.needPermission) {
+            closeSheet();
+            confirmSheet('Autorisation requise',
+              'Android demande la permission d\'installer des applications depuis Atelier NMT. Une fois accordée, relance la mise à jour.',
+              'Ouvrir les réglages', () => Native.openInstallPermission());
+          } else {
+            btn.textContent = 'Réessayer';
+            btn.disabled = false;
+            toast('Échec : ' + ((res && res.error) || 'inconnu'), 'bad');
+          }
+        }).catch(e => {
+          btn.textContent = 'Réessayer';
+          btn.disabled = false;
+          toast('Échec : ' + e.message, 'bad');
+        });
+      };
+    }
+  );
+}
+
+/* vérification discrète au démarrage, une fois par jour */
+function autoCheckUpdate() {
+  if (!Native.ok()) return;
+  const last = DB.settings.lastUpdateCheck || 0;
+  if (Date.now() - last < 20 * 3600000) return;
+  checkUpdate(true);
 }
 
 function saveSettings() {

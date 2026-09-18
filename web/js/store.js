@@ -40,7 +40,8 @@ const DEFAULT_DB = {
     apiVersion: '2026-04',
     notifyBefore: 0,
     lowThreshold: 15,
-    lastSync: 0
+    lastSync: 0,
+    lastUpdateCheck: 0
   }
 };
 
@@ -136,6 +137,16 @@ const Native = {
   openBatterySettings() {
     if (!this.ok()) return;
     try { window.NMT.openBatterySettings(); } catch (e) {}
+  },
+
+  version() {
+    if (!this.ok() || typeof window.NMT.appVersion !== 'function') return '—';
+    try { return window.NMT.appVersion(); } catch (e) { return '—'; }
+  },
+
+  openInstallPermission() {
+    if (!this.ok()) return;
+    try { window.NMT.openInstallPermission(); } catch (e) {}
   }
 };
 
@@ -170,6 +181,98 @@ function nativeHttp(method, url, headers, body) {
       reject(new Error(String(e)));
     }
   });
+}
+
+/* ---------- appels natifs avec rappel ---------- */
+
+function nativeCall(fn, args) {
+  return new Promise((resolve, reject) => {
+    if (!Native.ok() || typeof window.NMT[fn] !== 'function') {
+      reject(new Error('indisponible hors de l\'application'));
+      return;
+    }
+    const id = 'c' + (++cbSeq);
+    cbMap[id] = resolve;
+    setTimeout(() => {
+      if (cbMap[id]) { delete cbMap[id]; reject(new Error('délai dépassé')); }
+    }, 60000);
+    try {
+      window.NMT[fn].apply(window.NMT, (args || []).concat([id]));
+    } catch (e) {
+      delete cbMap[id];
+      reject(new Error(String(e)));
+    }
+  });
+}
+
+/* ---------- imprimantes du réseau local ---------- */
+
+let PSTATES = {};
+
+const Printers = {
+
+  ok() {
+    return Native.ok() && typeof window.NMT.printerStates === 'function';
+  },
+
+  /* relit le dernier état connu, tel que la relève l'a stocké */
+  refresh() {
+    if (!this.ok()) return PSTATES;
+    try { PSTATES = JSON.parse(window.NMT.printerStates() || '{}'); }
+    catch (e) { PSTATES = {}; }
+    return PSTATES;
+  },
+
+  /* état d'une machine, ou null si injoignable ou jamais relevée */
+  state(machineId) {
+    const s = PSTATES[machineId];
+    if (!s || !s.ok) return null;
+    return s;
+  },
+
+  /* erreur de la dernière relève, pour l'afficher telle quelle */
+  error(machineId) {
+    const s = PSTATES[machineId];
+    return (s && !s.ok) ? (s.error || 'injoignable') : '';
+  },
+
+  /* la configuration est dérivée des machines : une seule source de vérité */
+  push() {
+    if (!this.ok()) return;
+    const conf = DB.machines
+      .filter(m => m.printer && m.printer.kind && m.printer.host)
+      .map(m => Object.assign({ machineId: m.id, name: m.name }, m.printer));
+    try { window.NMT.savePrinters(JSON.stringify(conf)); } catch (e) {}
+  },
+
+  sync() {
+    return nativeCall('syncPrinters', []).then(res => {
+      PSTATES = res && typeof res === 'object' ? res : {};
+      return PSTATES;
+    });
+  },
+
+  probe(conf) {
+    return nativeCall('probePrinter', [JSON.stringify(conf)]);
+  },
+
+  /* fraîcheur : au-delà de 40 min, l'info n'est plus fiable */
+  fresh(machineId) {
+    const s = PSTATES[machineId];
+    return !!(s && s.at && Date.now() - s.at < 40 * 60000);
+  }
+};
+
+const PRINTER_KINDS = [
+  { v: 'bambu', label: 'Bambu Lab' },
+  { v: 'moonraker', label: 'Creality / Klipper' }
+];
+
+function fmtRemaining(min) {
+  if (min == null || min < 0) return '';
+  if (min < 60) return min + ' min';
+  const h = Math.floor(min / 60), m = min % 60;
+  return h + ' h ' + String(m).padStart(2, '0');
 }
 
 /* ---------- helpers modèle ---------- */

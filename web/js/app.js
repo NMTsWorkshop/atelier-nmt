@@ -50,6 +50,15 @@ function tick() {
   const now = Date.now();
   let needsRender = false;
 
+  /* l'état des machines branchées est réécrit par la relève de fond :
+     on le relit régulièrement plutôt que d'interroger le réseau ici */
+  if (Printers.ok() && ++pollTicks >= 20) {
+    pollTicks = 0;
+    const before = JSON.stringify(PSTATES);
+    Printers.refresh();
+    if (JSON.stringify(PSTATES) !== before && TAB === 'machines') needsRender = true;
+  }
+
   DB.machines.forEach(m => {
     if (m.status !== 'running' || !m.timer) return;
     const left = m.timer.endAt - now;
@@ -84,19 +93,24 @@ window.NMTonBack = function () {
 
 /* ---------- démarrage ---------- */
 
+let pollTicks = 0;
+
 function boot() {
   load();
+  Printers.refresh();
+  Printers.push();
 
   $$('#tabbar .tab').forEach(b => {
     b.addEventListener('click', () => go(b.getAttribute('data-tab')));
   });
 
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) { load(); render(); }
+    if (!document.hidden) { load(); Printers.refresh(); render(); }
   });
 
   render();
   setInterval(tick, 1000);
+  setTimeout(autoCheckUpdate, 2500);
 
   if (Native.ok() && !Native.notificationsOk()) {
     setTimeout(() => Native.askNotifications(), 600);
