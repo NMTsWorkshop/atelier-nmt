@@ -2,5 +2,5 @@
 <resources>
     <color name="bg">#FF0F131B</color>
     <color name="accent">#FF2CB2FF</color>
-    <color name="ic_launcher_background">#FF151A24</color>
+    <color name="ic_launcher_background">#FFFFFFFF</color>
 </resources>

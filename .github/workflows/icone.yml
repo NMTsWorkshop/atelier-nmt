@@ -1,0 +1,78 @@
+name: Icone
+
+# Fabrique l'icone de l'application a partir du logo de la boutique.
+# A lancer a la main (onglet Actions) quand le logo change.
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "Adresse du logo (PNG a fond transparent)"
+        required: false
+        default: "https://cdn.shopify.com/s/files/1/0934/8497/4454/files/logo_bleu.png"
+
+permissions:
+  contents: write
+
+jobs:
+  icone:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pillow
+        run: pip install --quiet pillow
+
+      - name: Fabriquer l'icone
+        env:
+          LOGO: ${{ inputs.url }}
+        run: |
+          python3 - <<'PY'
+          import os, urllib.request
+          from PIL import Image
+
+          url = os.environ.get("LOGO") or ""
+          src = "/tmp/logo.png"
+          urllib.request.urlretrieve(url, src)
+
+          im = Image.open(src).convert("RGBA")
+          box = im.getchannel("A").point(lambda a: 255 if a > 12 else 0).getbbox()
+          im = im.crop(box)
+
+          # zone sure d'une icone adaptative : le motif tient dans 268 px sur 432
+          TAILLE, MOTIF = 432, 268
+          k = min(MOTIF / im.width, MOTIF / im.height)
+          im = im.resize((max(1, round(im.width * k)), max(1, round(im.height * k))), Image.LANCZOS)
+
+          fond = Image.new("RGBA", (TAILLE, TAILLE), (0, 0, 0, 0))
+          fond.paste(im, ((TAILLE - im.width) // 2, (TAILLE - im.height) // 2), im)
+
+          # aplatir sur la couleur dominante : le fichier reste leger et le trait net
+          px = fond.load()
+          somme = [0, 0, 0]; n = 0
+          for y in range(TAILLE):
+              for x in range(TAILLE):
+                  r, g, b, a = px[x, y]
+                  if a > 200:
+                      somme[0] += r; somme[1] += g; somme[2] += b; n += 1
+          if n:
+              R, G, B = (c // n for c in somme)
+              for y in range(TAILLE):
+                  for x in range(TAILLE):
+                      a = px[x, y][3]
+                      px[x, y] = (0, 0, 0, 0) if a < 8 else (R, G, B, round(a / 17) * 17)
+
+          dossier = "app/src/main/res/mipmap-xxxhdpi"
+          os.makedirs(dossier, exist_ok=True)
+          fond.save(dossier + "/ic_launcher_foreground.png", optimize=True)
+          print("icone ecrite,", n, "pixels pleins")
+          PY
+
+      - name: Deposer l'icone dans le depot
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png
+          git diff --cached --quiet && echo "icone inchangee" && exit 0
+          git commit -m "Icone de l'application reprise du logo de la boutique"
+          git push
