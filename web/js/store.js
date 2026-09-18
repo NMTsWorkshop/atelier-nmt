@@ -242,6 +242,19 @@ const Printers = {
     return (s && !s.ok) ? (s.error || 'injoignable') : '';
   },
 
+  /* vrai quand la panne vient de la fiche, pas du réseau */
+  reglage(machineId) {
+    const s = PSTATES[machineId];
+    return !!(s && !s.ok && s.reglage);
+  },
+
+  /* comptage après une relève : combien répondent, et qui ne répond pas */
+  bilan() {
+    const branchees = DB.machines.filter(m => m.printer && m.printer.kind && m.printer.host);
+    const muettes = branchees.filter(m => !this.state(m.id));
+    return { total: branchees.length, muettes: muettes.map(m => m.name) };
+  },
+
   /* la configuration est dérivée des machines : une seule source de vérité */
   push() {
     if (!this.ok()) return;

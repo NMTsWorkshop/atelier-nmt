@@ -74,6 +74,13 @@ public class Printers {
         String kind = conf.optString("kind");
         try {
             out.put("kind", kind);
+            String manque = manquant(conf, kind);
+            if (manque != null) {
+                out.put("ok", false);
+                out.put("reglage", true);
+                out.put("error", manque);
+                return out;
+            }
             if ("moonraker".equals(kind)) {
                 pollMoonraker(conf, out);
             } else if ("bambu".equals(kind)) {
@@ -87,17 +94,61 @@ public class Printers {
         } catch (Throwable t) {
             try {
                 out.put("ok", false);
-                out.put("error", short_(String.valueOf(t.getMessage())));
+                out.put("error", lisible(t, conf.optString("host", "")));
             } catch (Exception ignored) {
             }
         }
         return out;
     }
 
+    /**
+     * Ce qui manque dans la fiche, avant même d'essayer le réseau : mieux vaut
+     * dire « il manque le code » que « injoignable ».
+     */
+    private static String manquant(JSONObject conf, String kind) {
+        if (conf.optString("host", "").trim().length() == 0) {
+            return "adresse IP à renseigner dans la fiche machine";
+        }
+        if ("bambu".equals(kind)) {
+            if (conf.optString("serial", "").trim().length() == 0) {
+                return "numéro de série à renseigner dans la fiche machine";
+            }
+            if (conf.optString("code", "").trim().length() == 0) {
+                return "code d'accès LAN à saisir dans la fiche machine";
+            }
+        }
+        return null;
+    }
+
     private static String short_(String s) {
         if (s == null) return "erreur";
         s = s.replaceAll("\\s+", " ").trim();
         return s.length() > 120 ? s.substring(0, 120) + "…" : s;
+    }
+
+    /**
+     * Traduit les pannes courantes. Le message brut de Java ne dit rien à
+     * personne : ici on nomme la cause et, quand c'est utile, le remède.
+     */
+    private static String lisible(Throwable t, String host) {
+        String brut = short_(String.valueOf(t.getMessage()));
+        String b = brut.toLowerCase();
+        if (b.contains("cleartext")) {
+            return "trafic HTTP bloqué par Android — mets l'application à jour";
+        }
+        if (b.contains("econnrefused") || b.contains("connection refused")) {
+            return host + " répond mais refuse la connexion — machine allumée, service coupé ?";
+        }
+        if (b.contains("ehostunreach") || b.contains("enetunreach") || b.contains("network is unreachable")) {
+            return "réseau inaccessible — le téléphone est-il sur le wifi de l'atelier ?";
+        }
+        if (b.contains("timed out") || b.contains("timeout") || b.contains("etimedout")) {
+            return "pas de réponse de " + host + " — machine éteinte, ou téléphone hors du wifi de l'atelier";
+        }
+        if (b.contains("unauthorized") || b.contains("not authorized") || b.contains("bad user name")) {
+            return "refusé par la machine — code d'accès LAN ou numéro de série erroné";
+        }
+        return brut;
     }
 
     /* ---------- Creality / Klipper ---------- */

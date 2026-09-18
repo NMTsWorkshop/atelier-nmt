@@ -117,7 +117,11 @@ function machineShell(m, cls, clock, sub, actions, sp, live) {
       '</div>' +
       '<div style="text-align:right">' + clock + '</div>' +
     '</div>' +
-    (err ? '<div class="card-meta" style="margin-top:8px;color:var(--warn)">Machine injoignable — ' + esc(err) + '</div>' : '') +
+    (err
+      ? '<div class="card-meta" style="margin-top:8px;color:var(--warn)">' +
+          (Printers.reglage(m.id) ? 'Réglage à compléter — ' : 'Machine injoignable — ') +
+          esc(err) + '</div>'
+      : '') +
     amsLine(live) +
     '<div class="fil-line">' +
       (sp
@@ -510,6 +514,19 @@ function pollPrinters() {
   const btn = $('#poll-btn');
   if (btn) btn.textContent = '…';
   Printers.sync()
-    .then(() => { render(); toast('Machines relevées', 'ok'); })
+    .then(() => {
+      render();
+      const b = Printers.bilan();
+      if (b.total === 0) {
+        toast('Aucune machine n\'a d\'adresse réseau', 'warn');
+      } else if (b.muettes.length === 0) {
+        toast(b.total + (b.total > 1 ? ' machines relevées' : ' machine relevée'), 'ok');
+      } else if (b.muettes.length === b.total) {
+        toast('Aucune machine ne répond — voir le détail sur les cartes', 'bad');
+      } else {
+        toast((b.total - b.muettes.length) + ' sur ' + b.total + ' — sans réponse : ' +
+              b.muettes.join(', '), 'warn');
+      }
+    })
     .catch(e => { render(); toast('Relève impossible : ' + e.message, 'bad'); });
 }

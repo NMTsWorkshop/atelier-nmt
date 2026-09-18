@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Les imprimantes de l'atelier répondent en HTTP simple sur le réseau local
+     (Moonraker, port 7125). Depuis Android 9, le trafic en clair est refusé
+     par défaut : sans cette autorisation, chaque relève Creality échouait par
+     « Cleartext HTTP traffic to 10.1.3.3 not permitted », ce qui affichait
+     « Machine injoignable » alors que la machine répondait très bien.
+     Tout le reste (Shopify, GitHub) continue de passer en HTTPS. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

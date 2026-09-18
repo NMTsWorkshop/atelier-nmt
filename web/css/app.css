@@ -234,6 +234,7 @@ textarea{resize:vertical;min-height:70px}
 }
 .toast.ok{border-color:#2d5c48;color:var(--ok)}
 .toast.bad{border-color:#5c2d2d;color:var(--bad)}
+.toast.warn{border-color:#5c4c2d;color:var(--warn)}
 
 /* ---------- misc ---------- */
 .kv{display:flex;justify-content:space-between;gap:12px;padding:7px 0;font-size:13.5px;border-bottom:1px solid var(--line-soft)}
