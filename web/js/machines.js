@@ -143,9 +143,11 @@ function amsLine(live) {
   if (!live || !live.ams || !live.ams.length) return '';
   return '<div class="row wrap" style="gap:6px;margin-top:10px">' +
     live.ams.map(t =>
-      '<span class="badge">' +
-        (t.color ? '<span class="dot" style="background:' + esc(t.color) + '"></span>' : '') +
-        esc(t.type) + '</span>'
+      t.inconnue
+        ? '<span class="badge" title="Bobine présente mais non renseignée sur la machine">? non renseignée</span>'
+        : '<span class="badge">' +
+            (t.color ? '<span class="dot" style="background:' + esc(t.color) + '"></span>' : '') +
+            esc(t.type) + '</span>'
     ).join('') + '</div>';
 }
 

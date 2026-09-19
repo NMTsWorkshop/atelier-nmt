@@ -292,13 +292,33 @@ public class Printers {
         JSONObject ams = p.optJSONObject("ams");
         if (ams != null) {
             JSONArray units = ams.optJSONArray("ams");
+            /* un bit par emplacement occupé, même quand la bobine n'est pas
+               identifiée (pas de puce, et rien de saisi dans Bambu Studio) */
+            long presentes = 0;
+            try {
+                presentes = Long.parseLong(ams.optString("tray_exist_bits", "0"), 16);
+            } catch (Exception ignored) {
+            }
             if (units != null) {
                 for (int i = 0; i < units.length(); i++) {
-                    JSONArray trays = units.getJSONObject(i).optJSONArray("tray");
+                    JSONObject unit = units.getJSONObject(i);
+                    JSONArray trays = unit.optJSONArray("tray");
                     if (trays == null) continue;
+                    int numAms = unit.optInt("id", i);
                     for (int j = 0; j < trays.length(); j++) {
                         JSONObject t = trays.getJSONObject(j);
                         String type = t.optString("tray_type", "");
+                        int idx = t.optInt("id", j);
+                        boolean occupe = ((presentes >> (numAms * 4 + idx)) & 1L) == 1L;
+                        if (type.length() == 0 && occupe) {
+                            JSONObject s = new JSONObject();
+                            s.put("slot", String.valueOf(idx));
+                            s.put("type", "?");
+                            s.put("color", "");
+                            s.put("inconnue", true);
+                            slots.put(s);
+                            continue;
+                        }
                         if (type.length() == 0) continue;
                         JSONObject s = new JSONObject();
                         s.put("slot", t.optString("id", String.valueOf(j)));
