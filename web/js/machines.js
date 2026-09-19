@@ -3,7 +3,10 @@
    ============================================================ */
 
 function renderMachines() {
-  const running = DB.machines.filter(m => m.status === 'running').length;
+  /* une machine qui imprime d'après son propre relevé compte aussi */
+  const enDirect = m => m.printer && m.printer.host && Printers.fresh(m.id) &&
+    Printers.state(m.id) && Printers.state(m.id).state === 'printing';
+  const running = DB.machines.filter(m => m.status === 'running' || enDirect(m)).length;
   const done = DB.machines.filter(m => m.status === 'done').length;
   setTop('Machines',
     DB.machines.length
@@ -41,9 +44,10 @@ function machineCard(m) {
     cls += ' running';
     const pct = live.percent >= 0 ? live.percent : 0;
     const rest = fmtRemaining(live.remaining);
-    clock = '<div class="clock">' + pct + ' %</div>' +
+    /* le temps restant d'abord, c'est lui qui sert ; le pourcentage en dessous */
+    clock = '<div class="clock">' + (rest ? esc(rest) : pct + ' %') + '</div>' +
             '<div class="clock-sub">' +
-              (rest ? 'reste ' + esc(rest) : 'en cours') +
+              (rest ? pct + ' %' : 'en cours') +
               (live.remaining > 0 ? ' · fin vers ' + fmtClock(now + live.remaining * 60000) : '') +
             '</div>';
     actions =

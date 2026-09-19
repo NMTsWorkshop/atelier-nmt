@@ -22,6 +22,7 @@ public class JSONArray {
   public JSONObject getJSONObject(int i) throws Exception { return null; }
   public JSONObject optJSONObject(int i){ return null; }
   public JSONArray optJSONArray(int i){ return null; }
+  public String optString(int i){ return ""; }
   public void put(Object o){}
   public String toString(){ return "[]"; }
 }
@@ -91,6 +92,7 @@ public class MqttConnectOptions {
   public void setKeepAliveInterval(int s){}
   public void setCleanSession(boolean b){}
   public void setAutomaticReconnect(boolean b){}
+  public void setHttpsHostnameVerificationEnabled(boolean b){}
 }
 ''',
 

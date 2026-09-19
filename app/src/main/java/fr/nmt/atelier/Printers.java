@@ -190,6 +190,84 @@ public class Printers {
             remaining = Math.round((elapsed * (1 - progress) / progress) / 60.0);
         }
         out.put("remaining", Math.max(0, remaining));
+
+        /* bobines du CFS : requête à part, une machine sans CFS n'a pas
+           d'objet « box » et ne doit pas faire échouer tout le relevé */
+        JSONArray slots = new JSONArray();
+        try {
+            JSONObject b = getJson(base + "/printer/objects/query?box")
+                    .getJSONObject("result").getJSONObject("status").optJSONObject("box");
+            if (b != null) cfsSlots(b, slots);
+        } catch (Exception ignored) {
+        }
+        out.put("ams", slots);
+    }
+
+    /**
+     * Le CFS range ses bobines par module (T1 à T4), quatre emplacements
+     * chacun, en tableaux parallèles : couleur « 0RRGGBB », code matière
+     * « 1XXXXX », fabricant « none » quand l'emplacement est vide.
+     */
+    private static void cfsSlots(JSONObject box, JSONArray slots) throws Exception {
+        String lettres = "ABCD";
+        for (int u = 1; u <= 4; u++) {
+            JSONObject mod = box.optJSONObject("T" + u);
+            if (mod == null) continue;
+            if (!"connect".equalsIgnoreCase(mod.optString("state", ""))) continue;
+            JSONArray couleurs = mod.optJSONArray("color_value");
+            JSONArray matieres = mod.optJSONArray("material_type");
+            JSONArray fabricants = mod.optJSONArray("vender");
+            if (couleurs == null) continue;
+            for (int i = 0; i < couleurs.length() && i < 4; i++) {
+                String fab = fabricants == null ? "" : fabricants.optString(i).trim();
+                if ("none".equalsIgnoreCase(fab)) continue;
+                String c = couleurs.optString(i).trim();
+                String code = matieres == null ? "" : matieres.optString(i).trim();
+                String couleur = c.length() >= 6 && !c.startsWith("-") ? "#" + c.substring(c.length() - 6) : "";
+                String type = matiereCreality(code);
+                if (couleur.length() == 0 && type.length() == 0) continue;
+                JSONObject s = new JSONObject();
+                s.put("slot", "T" + u + lettres.charAt(i));
+                s.put("type", type.length() > 0 ? type : "?");
+                s.put("color", couleur);
+                slots.put(s);
+            }
+        }
+    }
+
+    /**
+     * Codes matière des étiquettes RFID Creality. Le « 1 » de tête est
+     * retiré ; au-delà de la liste, on se contente de ne pas nommer.
+     */
+    private static String matiereCreality(String code) {
+        if (code == null) return "";
+        code = code.trim();
+        if (code.length() == 6 && code.charAt(0) == '1') code = code.substring(1);
+        if (code.length() != 5) return "";
+        switch (code) {
+            case "02001": case "00006": return "PLA-CF";
+            case "03001": case "07001": case "00004": return "ABS";
+            case "06001": case "06002": case "00003": return "PETG";
+            case "06003": case "00014": return "PETG-CF";
+            case "07002": case "00021": return "PC";
+            case "10001": case "16001": case "00005": case "00026": return "TPU";
+            case "11001": case "00008": case "00023": return "PA";
+            case "12002": case "12003": case "12004": case "12005": case "00009":
+            case "00015": case "00016": case "00022": case "00025": return "PA-CF";
+            case "19001": case "00007": return "ASA";
+            case "00033": return "ASA-CF";
+            case "00011": return "PVA";
+            case "00012": return "HIPS";
+            case "00020": return "PET";
+            case "00032": return "PCTG";
+            default: break;
+        }
+        /* le reste de la gamme Creality est du PLA sous divers noms */
+        String[] pla = {"01001", "01002", "01004", "01601", "04001", "05001", "08001", "09001",
+                "09002", "13001", "14001", "15001", "17001", "18001", "29001", "00001", "00002",
+                "00024", "00035"};
+        for (String x : pla) if (x.equals(code)) return "PLA";
+        return "";
     }
 
     /* ---------- Bambu ---------- */
@@ -199,7 +277,7 @@ public class Printers {
                 conf.getString("host"),
                 conf.getString("serial"),
                 conf.getString("code"),
-                20);
+                8);
 
         out.put("state", normalise(p.optString("gcode_state", "")));
         String file = p.optString("subtask_name", "");
@@ -229,6 +307,19 @@ public class Printers {
                         slots.put(s);
                     }
                 }
+            }
+        }
+        /* bobine externe, sur le support à l'arrière : c'est la seule
+           qu'une machine sans AMS déclare, sous « vt_tray » */
+        JSONObject ext = p.optJSONObject("vt_tray");
+        if (ext != null) {
+            String type = ext.optString("tray_type", "");
+            if (type.length() > 0) {
+                JSONObject s = new JSONObject();
+                s.put("slot", "ext");
+                s.put("type", type);
+                s.put("color", cleanColor(ext.optString("tray_color", "")));
+                slots.put(s);
             }
         }
         out.put("ams", slots);

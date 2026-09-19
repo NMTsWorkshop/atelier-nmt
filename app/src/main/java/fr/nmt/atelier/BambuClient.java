@@ -43,8 +43,12 @@ public class BambuClient {
         opts.setKeepAliveInterval(30);
         opts.setCleanSession(true);
         opts.setAutomaticReconnect(false);
+        /* le certificat de la machine porte son numéro de série, pas son
+           adresse IP : la vérification de nom échouerait toujours */
+        opts.setHttpsHostnameVerificationEnabled(false);
 
         final JSONObject[] result = new JSONObject[1];
+        final JSONObject[] partial = new JSONObject[1];
         final CountDownLatch latch = new CountDownLatch(1);
 
         client.setCallback(new MqttCallback() {
@@ -58,11 +62,18 @@ public class BambuClient {
                 try {
                     JSONObject d = new JSONObject(new String(message.getPayload(), "UTF-8"));
                     JSONObject p = d.optJSONObject("print");
-                    /* les rapports partiels arrivent en continu ; on attend
-                       celui qui porte réellement l'état d'impression */
-                    if (p != null && (p.has("gcode_state") || p.has("mc_percent"))) {
+                    /* pendant une impression, la machine envoie chaque seconde
+                       des rapports partiels (avancement seul, sans les bobines).
+                       On attend le rapport complet, réponse au « pushall » ;
+                       un partiel ne sert que de secours. */
+                    if (p == null) return;
+                    boolean etat = p.has("gcode_state") || p.has("mc_percent");
+                    boolean bobines = p.has("ams") || p.has("vt_tray");
+                    if (etat && bobines) {
                         result[0] = p;
                         latch.countDown();
+                    } else if (etat && partial[0] == null) {
+                        partial[0] = p;
                     }
                 } catch (Exception ignored) {
                 }
@@ -91,6 +102,7 @@ public class BambuClient {
             }
         }
 
+        if (result[0] == null) result[0] = partial[0];
         if (result[0] == null) {
             throw new Exception("aucune donnée reçue en " + timeoutSec + " s");
         }
