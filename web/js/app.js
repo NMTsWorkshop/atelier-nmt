@@ -57,6 +57,11 @@ function tick() {
     const before = JSON.stringify(PSTATES);
     Printers.refresh();
     if (JSON.stringify(PSTATES) !== before && TAB === 'machines') needsRender = true;
+    /* temps restant calculé depuis la fin prévue : on le rafraîchit */
+    if (TAB === 'machines' && DB.machines.some(m => {
+      const s = Printers.state(m.id);
+      return s && s.state === 'printing';
+    })) needsRender = true;
   }
 
   DB.machines.forEach(m => {

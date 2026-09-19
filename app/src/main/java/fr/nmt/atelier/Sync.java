@@ -97,7 +97,7 @@ public class Sync {
             if (one == null || st == null) continue;
             String id = one.optString("machineId", "m" + i);
             String name = one.optString("name", "Machine");
-            Printers.putState(c, id, st);
+            Printers.record(c, id, st);
             if (st.optBoolean("ok", false)) {
                 react(c, id, name, before.optJSONObject(id), st);
             }

@@ -63,6 +63,35 @@ public class Printers {
         }
     }
 
+    /**
+     * Enregistre le résultat d'une relève. Un échec (hors du wifi de
+     * l'atelier, machine éteinte) n'efface pas le dernier bon relevé : on le
+     * garde tel quel, avec l'heure où il a été pris, et on note seulement
+     * que la machine ne répond plus. L'interface continue d'afficher
+     * l'impression et d'en estimer la fin à partir de ce relevé.
+     */
+    static void record(Context c, String machineId, JSONObject st) {
+        if (st.optBoolean("ok", false)) {
+            putState(c, machineId, st);
+            return;
+        }
+        try {
+            JSONObject all = states(c);
+            JSONObject prev = all.optJSONObject(machineId);
+            if (prev != null && prev.optBoolean("ok", false)) {
+                prev.put("stale", true);
+                prev.put("staleError", st.optString("error", ""));
+                prev.put("staleReglage", st.optBoolean("reglage", false));
+                prev.put("staleAt", System.currentTimeMillis());
+                all.put(machineId, prev);
+                prefs(c).edit().putString(KEY_STATE, all.toString()).apply();
+                return;
+            }
+        } catch (Exception ignored) {
+        }
+        putState(c, machineId, st);
+    }
+
     /* ---------- interrogation d'une machine ---------- */
 
     /**

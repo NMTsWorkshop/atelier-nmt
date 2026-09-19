@@ -251,7 +251,7 @@ const Printers = {
   /* comptage après une relève : combien répondent, et qui ne répond pas */
   bilan() {
     const branchees = DB.machines.filter(m => m.printer && m.printer.kind && m.printer.host);
-    const muettes = branchees.filter(m => !this.state(m.id));
+    const muettes = branchees.filter(m => !this.state(m.id) || (PSTATES[m.id] || {}).stale);
     return { total: branchees.length, muettes: muettes.map(m => m.name) };
   },
 
@@ -275,10 +275,25 @@ const Printers = {
     return nativeCall('probePrinter', [JSON.stringify(conf)]);
   },
 
-  /* fraîcheur : au-delà de 40 min, l'info n'est plus fiable */
+  /* un relevé reste affiché 24 h : hors du wifi, c'est lui qui fait foi,
+     la fin estimée continue d'avancer à partir de l'heure où il a été pris */
   fresh(machineId) {
     const s = PSTATES[machineId];
-    return !!(s && s.at && Date.now() - s.at < 40 * 60000);
+    return !!(s && s.at && Date.now() - s.at < 24 * 3600000);
+  },
+
+  /* vrai quand la machine ne répond plus et qu'on affiche l'ancien relevé */
+  stale(machineId) {
+    const s = PSTATES[machineId];
+    return !!(s && s.ok && (s.stale || Date.now() - s.at > 40 * 60000));
+  },
+
+  /* heure de fin prévue, calculée depuis le relevé et non depuis maintenant */
+  endAt(machineId) {
+    const s = PSTATES[machineId];
+    if (!s || !s.ok) return 0;
+    if (s.endAt) return s.endAt;
+    return s.remaining > 0 && s.at ? s.at + s.remaining * 60000 : 0;
   }
 };
 

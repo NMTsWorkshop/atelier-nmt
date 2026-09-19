@@ -5,7 +5,8 @@
 function renderMachines() {
   /* une machine qui imprime d'après son propre relevé compte aussi */
   const enDirect = m => m.printer && m.printer.host && Printers.fresh(m.id) &&
-    Printers.state(m.id) && Printers.state(m.id).state === 'printing';
+    Printers.state(m.id) && Printers.state(m.id).state === 'printing' &&
+    !(Printers.stale(m.id) && Printers.endAt(m.id) && Printers.endAt(m.id) <= Date.now());
   const running = DB.machines.filter(m => m.status === 'running' || enDirect(m)).length;
   const done = DB.machines.filter(m => m.status === 'done').length;
   setTop('Machines',
@@ -41,14 +42,31 @@ function machineCard(m) {
   const live = (m.printer && m.printer.host && Printers.fresh(m.id)) ? Printers.state(m.id) : null;
 
   if (live && live.state === 'printing') {
-    cls += ' running';
     const pct = live.percent >= 0 ? live.percent : 0;
-    const rest = fmtRemaining(live.remaining);
+    const vieux = Printers.stale(m.id);
+    const fin = Printers.endAt(m.id);
+    /* le temps restant se recalcule à partir de l'heure de fin prévue :
+       il continue de décompter même sans nouveau relevé */
+    const resteMin = fin ? Math.max(0, Math.round((fin - now) / 60000)) : -1;
+
+    if (vieux && fin && fin <= now) {
+      cls += ' done';
+      clock = '<div class="clock done" style="font-size:22px">Sans doute fini</div>' +
+              '<div class="clock-sub">prévu vers ' + fmtDayClock(fin) + '</div>';
+      actions =
+        '<button class="btn sm ghost" onclick="pollPrinters()">Actualiser</button>' +
+        '<button class="btn sm primary" onclick="finishJob(\'' + m.id + '\')">Décharger</button>';
+      if (live.file) sub = '<div class="card-meta nowrap" style="margin-top:6px;color:var(--txt-2)">' + esc(live.file) + '</div>';
+      return machineShell(m, cls, clock, sub, actions, sp, live);
+    }
+
+    cls += ' running';
+    const rest = fmtRemaining(resteMin);
     /* le temps restant d'abord, c'est lui qui sert ; le pourcentage en dessous */
-    clock = '<div class="clock">' + (rest ? esc(rest) : pct + ' %') + '</div>' +
+    clock = '<div class="clock">' + (rest ? (vieux ? '≈ ' : '') + esc(rest) : pct + ' %') + '</div>' +
             '<div class="clock-sub">' +
-              (rest ? pct + ' %' : 'en cours') +
-              (live.remaining > 0 ? ' · fin vers ' + fmtClock(now + live.remaining * 60000) : '') +
+              (rest ? pct + ' %' + (vieux ? ' au relevé' : '') : 'en cours') +
+              (fin ? ' · fin vers ' + fmtDayClock(fin) : '') +
             '</div>';
     actions =
       '<button class="btn sm ghost" onclick="pollPrinters()">Actualiser</button>' +
@@ -114,13 +132,22 @@ function machineShell(m, cls, clock, sub, actions, sp, live) {
     '<div class="card-head tap" onclick="editMachine(\'' + m.id + '\')">' +
       '<div class="grow">' +
         '<div class="card-name">' + esc(m.name) +
-          (live ? ' <span class="badge ok" style="vertical-align:middle">en direct</span>' : '') +
+          (live
+            ? (Printers.stale(m.id)
+                ? ' <span class="badge" style="vertical-align:middle">relevé de ' + fmtDayClock(live.at) + '</span>'
+                : ' <span class="badge ok" style="vertical-align:middle">en direct</span>')
+            : '') +
         '</div>' +
         '<div class="card-meta">' + esc(m.model || '—') + (pr ? ' · ' + esc(pr.name) : '') + '</div>' +
         sub +
       '</div>' +
       '<div style="text-align:right">' + clock + '</div>' +
     '</div>' +
+    (live && live.stale
+      ? '<div class="card-meta" style="margin-top:8px">Hors de portée' +
+          (live.staleAt ? ' depuis ' + fmtDayClock(live.staleAt) : '') +
+          ' — dernier relevé affiché</div>'
+      : '') +
     (err
       ? '<div class="card-meta" style="margin-top:8px;color:var(--warn)">' +
           (Printers.reglage(m.id) ? 'Réglage à compléter — ' : 'Machine injoignable — ') +
