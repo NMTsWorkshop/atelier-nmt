@@ -71,7 +71,7 @@ const errors = [];
     await page.click('#tabbar .tab[data-tab=stock]');
     await page.click('#tb-actions .tb-btn.accent');
     await page.waitForSelector('.sheet');
-    await page.fill('.sheet [name=brand]', 'Sunlu');
+    await page.click('.sheet [data-chips=brand] .chip[data-v=Sunlu]');
     await page.click('.sheet [data-chips=material] .chip[data-v=PLA]');
     await page.click('.sheet [data-chips=color] .chip[data-v=Noir]');
     await page.fill('.sheet [name=sealed]', '9');
@@ -86,7 +86,7 @@ const errors = [];
   await step('deuxième référence, presque épuisée', async () => {
     await page.click('#tb-actions .tb-btn.accent');
     await page.waitForSelector('.sheet');
-    await page.fill('.sheet [name=brand]', 'Creality');
+    await page.click('.sheet [data-chips=brand] .chip[data-v=Creality]');
     await page.click('.sheet [data-chips=material] .chip[data-v=PETG]');
     await page.click('.sheet [data-chips=color] .chip[data-v=Rouge]');
     await page.fill('.sheet [name=sealed]', '0');

@@ -203,7 +203,7 @@ function editSpool(id) {
     (s ? '' : '<div class="sub">Une seule fiche par référence : indique combien de bobines tu as, pas besoin d\'en créer une par une.</div>') +
 
     '<label class="field"><span>Marque</span>' +
-      '<input type="text" name="brand" placeholder="Sunlu, Creality…" value="' + esc(s ? s.brand : '') + '"></label>' +
+      brandChips('brand', s ? s.brand : 'Sunlu') + '</label>' +
     '<label class="field"><span>Matière</span>' + materialChips('material', s ? s.material : 'PLA') + '</label>' +
     '<label class="field"><span>Couleur</span>' + colorChips('color', s ? s.color : '') + '</label>' +
 
@@ -250,7 +250,7 @@ function editSpool(id) {
         const v = formValues(root), c = chips();
         const size = num(v.spoolSize, 1000) || 1000;
         const data = {
-          brand: v.brand.trim(),
+          brand: c.brand || '',
           material: c.material || 'PLA',
           color: c.color || '',
           colorHex: colorHexOf(c.color),

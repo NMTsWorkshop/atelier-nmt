@@ -70,6 +70,18 @@ function materialChips(name, current) {
     ).join('') + '</div>';
 }
 
+/* marques proposées ; une marque saisie autrefois reste affichée en plus */
+const BRANDS = ['Sunlu', 'Bambu Lab', 'Creality'];
+
+function brandChips(name, current) {
+  const list = BRANDS.slice();
+  if (current && list.indexOf(current) < 0) list.push(current);
+  return '<div class="chips" data-chips="' + name + '">' +
+    list.map(b =>
+      '<button type="button" class="chip' + (b === current ? ' on' : '') + '" data-v="' + esc(b) + '">' + esc(b) + '</button>'
+    ).join('') + '</div>';
+}
+
 function colorChips(name, current) {
   return '<div class="chips" data-chips="' + name + '">' +
     COLORS.map(c =>
