@@ -49,8 +49,8 @@ function orderCard(o) {
   const v = orderStockVerdict(o);
   const lines = o.lines || [];
   const doneN = lines.filter(l => l.done).length;
-  const totalG = lines.reduce((t, l) => t + (l.grams || 0) * (l.qty || 1), 0);
-  const noWeight = lines.some(l => !l.grams);
+  const totalG = o.grams || 0;
+  const noWeight = !totalG;
 
   return '<div class="card tight click" onclick="openOrder(\'' + o.id + '\')">' +
     '<div class="card-head">' +
@@ -73,15 +73,8 @@ function orderCard(o) {
 }
 
 function lineMaterialBadges(o) {
-  const mats = {};
-  (o.lines || []).forEach(l => {
-    const k = (l.material || '?') + '|' + (l.color || '');
-    mats[k] = { m: l.material || '?', c: l.color || '' };
-  });
-  return Object.values(mats).map(x =>
-    '<span class="badge">' + (x.c ? '<span class="dot" style="background:' + colorHexOf(x.c) + '"></span>' : '') +
-    esc(x.m) + (x.c ? ' ' + esc(x.c) : '') + '</span>'
-  ).join('');
+  return '<span class="badge">' + (o.color ? '<span class="dot" style="background:' + colorHexOf(o.color) + '"></span>' : '') +
+    esc(o.material || '?') + (o.color ? ' ' + esc(o.color) : '') + '</span>';
 }
 
 /* ---------- détail d'une commande ---------- */
@@ -102,6 +95,8 @@ function openOrder(id) {
         ORDER_STATUS[k].label + '</button>').join('') +
     '</div>' +
 
+    orderWeightBlock(o) +
+
     '<div class="card tight" style="margin-bottom:14px">' +
       '<div class="spread"><span class="small muted">Stock pour cette commande</span>' + badge(v.cls, v.label) + '</div>' +
       orderNeeds(o).map(n =>
@@ -112,75 +107,76 @@ function openOrder(id) {
 
     '<div class="sec-title">Pièces</div>' +
     (o.lines || []).map(l => orderLineRow(o, l)).join('') +
+    '<div class="small muted" style="margin-top:6px">Touche une pièce pour la marquer comme imprimée.</div>' +
 
     '<div class="sheet-actions">' +
       '<button class="btn danger" onclick="deleteOrder(\'' + o.id + '\')">Supprimer</button>' +
       '<button class="btn ghost" onclick="closeSheet()">Fermer</button>' +
-    '</div>'
+    '</div>',
+    root => {
+      const chips = bindChips(root);
+      $$('[data-chips=o-material] .chip, [data-chips=o-color] .chip', root).forEach(c =>
+        c.addEventListener('click', () => {
+          const v = chips();
+          o.material = v['o-material'] || o.material;
+          o.color = v['o-color'] || o.color;
+          save(); render();
+        }));
+      const g = $('#o-grams', root);
+      if (g) g.addEventListener('keydown', e => { if (e.key === 'Enter') saveOrderWeight(o.id); });
+    }
   );
 }
 
 function orderLineRow(o, l) {
-  return '<div class="rowitem">' +
+  return '<div class="rowitem tap" onclick="toggleLine(\'' + o.id + '\',\'' + l.id + '\')">' +
     '<div class="grow" style="' + (l.done ? 'opacity:.5' : '') + '">' +
       '<div class="t">' + esc(l.title) + (l.qty > 1 ? ' ×' + l.qty : '') + '</div>' +
       '<div class="s">' + esc(l.variant || '') + '</div>' +
-      '<div class="row" style="gap:6px;margin-top:6px">' +
-        '<span class="badge' + (l.material ? '' : ' warn') + '">' + esc(l.material || 'Matière ?') + '</span>' +
-        (l.color ? '<span class="badge">' + dot(colorHexOf(l.color)) + esc(l.color) + '</span>' : '') +
-        '<span class="badge' + (l.grams ? '' : ' warn') + '">' + (l.grams ? fmtG(l.grams) : 'Poids ?') + '</span>' +
-      '</div>' +
     '</div>' +
-    '<button class="btn sm ghost" onclick="editLine(\'' + o.id + '\',\'' + l.id + '\')">' + iconGear() + '</button>' +
+    badge(l.done ? 'ok' : '', l.done ? 'Imprimée' : 'À faire') +
   '</div>';
 }
 
-function editLine(orderId, lineId) {
+/* poids total, matière et couleur : une fois pour toute la commande */
+function orderWeightBlock(o) {
+  const rem = rememberedOrderWeight(o);
+  return '<div class="card tight" style="margin-bottom:14px">' +
+    '<label class="field" style="margin-bottom:10px"><span>Poids total de la commande (g)</span>' +
+      '<div class="row" style="gap:8px">' +
+        '<input type="number" id="o-grams" inputmode="numeric" value="' + esc(o.grams || '') + '" placeholder="' + (rem || 0) + '" style="flex:1">' +
+        '<button class="btn sm primary" onclick="saveOrderWeight(\'' + o.id + '\')">OK</button>' +
+      '</div>' +
+      '<div class="hint">Toutes pièces et quantités comprises.' +
+        (rem && rem !== o.grams ? ' Même commande déjà vue : ' + fmtG(rem) + '.' : '') +
+        (o.used ? ' Déjà imprimé : ' + fmtG(o.used) + ', reste ' + fmtG(orderRemaining(o)) + '.' : '') +
+      '</div>' +
+    '</label>' +
+    '<label class="field" style="margin-bottom:10px"><span>Matière</span>' + materialChips('o-material', o.material || 'PLA') + '</label>' +
+    '<label class="field" style="margin:0"><span>Couleur</span>' + colorChips('o-color', o.color || '') + '</label>' +
+  '</div>';
+}
+
+function saveOrderWeight(id) {
+  const o = orderById(id);
+  const el = $('#o-grams');
+  if (!o || !el) return;
+  const rem = rememberedOrderWeight(o);
+  o.grams = num(el.value) || rem || 0;
+  rememberOrderWeight(o);
+  save(); render(); openOrder(id);
+  toast(o.grams ? 'Poids enregistré : ' + fmtG(o.grams) : 'Poids effacé', 'ok');
+}
+
+function toggleLine(orderId, lineId) {
   const o = orderById(orderId);
   const l = o && (o.lines || []).find(x => x.id === lineId);
   if (!l) return;
-  const remembered = rememberedWeight(l);
-
-  sheet(
-    '<h2>' + esc(l.title) + '</h2>' +
-    '<div class="sub">' + esc(l.variant || '') + '</div>' +
-
-    '<label class="field"><span>Poids de la pièce (g)</span>' +
-      '<input type="number" name="grams" inputmode="numeric" value="' + esc(l.grams || '') + '" placeholder="' + (remembered || 0) + '">' +
-      '<div class="hint">' + (remembered ? 'Dernier poids retenu pour cette variante : ' + fmtG(remembered) + '. ' : '') +
-      'Poids unitaire ; la quantité (×' + (l.qty || 1) + ') est appliquée automatiquement.</div>' +
-    '</label>' +
-
-    '<label class="field"><span>Matière</span>' + materialChips('material', l.material) + '</label>' +
-    '<label class="field"><span>Couleur</span>' + colorChips('color', l.color) + '</label>' +
-
-    '<label class="field row" style="gap:9px;align-items:center">' +
-      '<input type="checkbox" name="done"' + (l.done ? ' checked' : '') + ' style="width:auto">' +
-      '<span style="margin:0">Pièce imprimée</span>' +
-    '</label>' +
-
-    '<div class="sheet-actions">' +
-      '<button class="btn ghost" data-x="no">Annuler</button>' +
-      '<button class="btn primary" data-x="ok">Enregistrer</button>' +
-    '</div>',
-
-    root => {
-      const chips = bindChips(root);
-      $('[data-x=no]', root).onclick = () => { closeSheet(); openOrder(orderId); };
-      $('[data-x=ok]', root).onclick = () => {
-        const v = formValues(root), c = chips();
-        l.grams = num(v.grams) || remembered || 0;
-        l.material = c.material || l.material;
-        l.color = c.color || l.color;
-        l.done = !!v.done;
-        rememberWeight(l, l.grams);
-        const lines = o.lines || [];
-        if (lines.length && lines.every(x => x.done) && o.status !== 'shipped') o.status = 'done';
-        else if (o.status === 'done' && lines.some(x => !x.done)) o.status = 'printing';
-        save(); closeSheet(); render(); openOrder(orderId);
-      };
-    }
-  );
+  l.done = !l.done;
+  const lines = o.lines || [];
+  if (lines.length && lines.every(x => x.done) && o.status !== 'shipped') o.status = 'done';
+  else if (o.status === 'done' && lines.some(x => !x.done)) o.status = 'printing';
+  save(); render(); openOrder(orderId);
 }
 
 function setOrderStatus(id, st) {
@@ -209,7 +205,7 @@ function addManualOrder() {
     '<label class="field"><span>Client</span><input type="text" name="customer" placeholder="Nom"></label>' +
     '<label class="field"><span>Pièce</span><input type="text" name="title" placeholder="Casque Mando"></label>' +
     '<div class="field-2">' +
-      '<label class="field"><span>Poids (g)</span><input type="number" name="grams" inputmode="numeric" placeholder="450"></label>' +
+      '<label class="field"><span>Poids total (g)</span><input type="number" name="grams" inputmode="numeric" placeholder="450"></label>' +
       '<label class="field"><span>Quantité</span><input type="number" name="qty" inputmode="numeric" value="1"></label>' +
     '</div>' +
     '<label class="field"><span>Matière</span>' + materialChips('material', 'PLA') + '</label>' +
@@ -227,10 +223,10 @@ function addManualOrder() {
         DB.orders.push({
           id: uid(), shopifyId: '', name: v.name.trim() || v.title.trim(),
           customer: v.customer.trim(), createdAt: Date.now(), source: 'manual', status: 'todo',
+          grams: num(v.grams), used: 0, material: c.material || 'PLA', color: c.color || '',
           lines: [{
             id: uid(), title: v.title.trim() || v.name.trim(), variant: '',
-            qty: parseInt(v.qty, 10) || 1, grams: num(v.grams),
-            material: c.material || 'PLA', color: c.color || '', done: false
+            qty: parseInt(v.qty, 10) || 1, done: false
           }]
         });
         save(); closeSheet(); render(); toast('Commande ajoutée', 'ok');
@@ -307,10 +303,8 @@ function mergeShopifyOrders(nodes) {
       const base = {
         id: li.id, title: li.title, variant: variant,
         qty: li.quantity || 1, material: materialFromVariant(variant),
-        color: '', grams: 0, done: false
+        color: '', done: false
       };
-      const w = rememberedWeight(base);
-      if (w) base.grams = w;
       return base;
     });
 
@@ -322,12 +316,16 @@ function mergeShopifyOrders(nodes) {
       });
     } else {
       added++;
-      DB.orders.push({
+      const ref = lines.find(l => l.material) || {};
+      const o = {
         id: uid(), shopifyId: nd.id, name: nd.name, customer: cust,
         createdAt: new Date(nd.createdAt).getTime(),
         country: nd.shippingAddress ? nd.shippingAddress.country : '',
-        source: 'shopify', status: 'todo', lines: lines
-      });
+        source: 'shopify', status: 'todo', lines: lines,
+        grams: 0, used: 0, material: ref.material || 'PLA', color: ''
+      };
+      o.grams = rememberedOrderWeight(o) || 0;
+      DB.orders.push(o);
     }
   });
   return { added: added };

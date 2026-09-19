@@ -373,7 +373,7 @@ function startTimer(id) {
             '<option value="' + x.ref + '">' + esc(x.order.name + ' · ' + x.line.title + (x.line.variant ? ' (' + x.line.variant + ')' : '')) + '</option>'
           ).join('') +
           '</select>' +
-          '<div class="hint">Le poids et la matière de la ligne seront repris automatiquement.</div>' +
+          '<div class="hint">Le poids restant de la commande sera proposé à la fin.</div>' +
         '</label>'
       : '') +
 
@@ -403,7 +403,10 @@ function startTimer(id) {
           const lid = v.lineRef.slice(cut + 2);
           const l = o && (o.lines || []).find(x => x.id === lid);
           if (l) {
-            job.orderId = o.id; job.lineId = l.id; job.grams = l.grams || 0;
+            /* poids proposé : ce qui reste de la commande, réparti sur les pièces à faire */
+            const aFaire = (o.lines || []).filter(x => !x.done).length || 1;
+            job.orderId = o.id; job.lineId = l.id;
+            job.grams = Math.round(orderRemaining(o) / aFaire);
             if (!job.label) job.label = l.title + (l.variant ? ' — ' + l.variant : '');
             if (o.status === 'todo') o.status = 'printing';
           }
@@ -499,6 +502,10 @@ function finishJob(id) {
           }
           if (spoolTotal(sp) <= 0) toast(spoolLabel(sp) + ' est épuisé', 'bad');
           else if (needsRestock(sp)) toast(spoolLabel(sp) + ' : à racheter', 'bad');
+        }
+        if (m.job && m.job.orderId && g > 0) {
+          const oc = orderById(m.job.orderId);
+          if (oc) oc.used = (oc.used || 0) + g;
         }
         if (m.job && m.job.lineId && v.lineDone) {
           const o = orderById(m.job.orderId);

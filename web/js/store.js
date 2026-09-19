@@ -68,6 +68,16 @@ function load() {
 
 /* ancien format : une fiche = une bobine ({initial, left}) */
 function migrate() {
+  /* poids par pièce -> un poids pour toute la commande */
+  (DB.orders || []).forEach(o => {
+    if (o.grams !== undefined) return;
+    const lines = o.lines || [];
+    o.grams = lines.reduce((t, l) => t + (l.grams || 0) * (l.qty || 1), 0);
+    o.used = lines.filter(l => l.done).reduce((t, l) => t + (l.grams || 0) * (l.qty || 1), 0);
+    const ref = lines.find(l => l.material) || lines[0] || {};
+    o.material = o.material || ref.material || 'PLA';
+    o.color = o.color || ref.color || '';
+  });
   (DB.spools || []).forEach(s => {
     if (s.spoolSize === undefined) {
       s.spoolSize = s.initial || 1000;
@@ -442,6 +452,39 @@ function stockFor(material, color) {
     .reduce((t, s) => t + spoolTotal(s), 0);
 }
 
+/* mémorisation du poids d'une commande : même contenu = même poids.
+   La signature, c'est la liste des pièces et de leurs quantités. */
+function orderSignature(o) {
+  return (o.lines || [])
+    .map(l => (l.title || '') + '||' + (l.variant || '') + '×' + (l.qty || 1))
+    .sort().join('##');
+}
+
+function rememberedOrderWeight(o) {
+  const w = DB.weights['cmd:' + orderSignature(o)];
+  if (typeof w === 'number') return w;
+  /* ancien mémo, par pièce : on additionne s'il couvre toutes les pièces */
+  const lines = o.lines || [];
+  if (!lines.length) return null;
+  let t = 0;
+  for (const l of lines) {
+    const x = rememberedWeight(l);
+    if (x == null) return null;
+    t += x * (l.qty || 1);
+  }
+  return t;
+}
+
+function rememberOrderWeight(o) {
+  if (o.grams > 0 && (o.lines || []).length) DB.weights['cmd:' + orderSignature(o)] = o.grams;
+}
+
+/* ce qui reste à imprimer d'une commande, en grammes */
+function orderRemaining(o) {
+  if (o.status === 'done' || o.status === 'shipped') return 0;
+  return Math.max(0, (o.grams || 0) - (o.used || 0));
+}
+
 /* clé de mémorisation des poids : produit + variante */
 function weightKey(line) {
   return (line.title || '') + '||' + (line.variant || '');
@@ -458,16 +501,9 @@ function rememberWeight(line, grams) {
 
 /* besoins matière d'une commande, regroupés par matière + couleur */
 function orderNeeds(order) {
-  const map = {};
-  (order.lines || []).forEach(l => {
-    if (l.done) return;
-    const g = (l.grams || 0) * (l.qty || 1);
-    if (!g) return;
-    const k = (l.material || '?') + '|' + (l.color || '');
-    if (!map[k]) map[k] = { material: l.material || '?', color: l.color || '', grams: 0 };
-    map[k].grams += g;
-  });
-  return Object.values(map);
+  const g = orderRemaining(order);
+  if (!g) return [];
+  return [{ material: order.material || '?', color: order.color || '', grams: g }];
 }
 
 /* verdict stock d'une commande */
