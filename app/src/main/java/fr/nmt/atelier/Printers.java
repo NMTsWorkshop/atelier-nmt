@@ -271,7 +271,9 @@ public class Printers {
     private static String matiereCreality(String code) {
         if (code == null) return "";
         code = code.trim();
-        if (code.length() == 6 && code.charAt(0) == '1') code = code.substring(1);
+        /* six chiffres : le premier indique l'origine (« 1 » puce RFID,
+           « 0 » saisie à l'écran de la machine), les cinq suivants la matière */
+        if (code.length() == 6) code = code.substring(1);
         if (code.length() != 5) return "";
         switch (code) {
             case "02001": case "00006": return "PLA-CF";

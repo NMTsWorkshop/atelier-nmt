@@ -174,8 +174,29 @@ function amsLine(live) {
         ? '<span class="badge" title="Bobine présente mais non renseignée sur la machine">? non renseignée</span>'
         : '<span class="badge">' +
             (t.color ? '<span class="dot" style="background:' + esc(t.color) + '"></span>' : '') +
-            esc(t.type) + '</span>'
+            esc(t.type) + (t.color ? ' ' + esc(colorNameOf(t.color).toLowerCase()) : '') + '</span>'
     ).join('') + '</div>';
+}
+
+/* nom de la teinte la plus proche dans la palette de l'appli :
+   un point noir sur fond sombre ne se lit pas, « noir » si */
+function colorNameOf(hex) {
+  const rgb = h => {
+    const m = /^#?([0-9a-f]{6})$/i.exec(String(h || '').trim());
+    if (!m) return null;
+    const n = parseInt(m[1], 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  };
+  const c = rgb(hex);
+  if (!c) return '';
+  let best = '', d = Infinity;
+  COLORS.forEach(k => {
+    const r = rgb(k.h);
+    if (!r) return;
+    const e = (r[0] - c[0]) ** 2 * 2 + (r[1] - c[1]) ** 2 * 4 + (r[2] - c[2]) ** 2 * 3;
+    if (e < d) { d = e; best = k.n; }
+  });
+  return best;
 }
 
 /* ---------- actions ---------- */
