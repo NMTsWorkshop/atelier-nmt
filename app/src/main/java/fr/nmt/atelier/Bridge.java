@@ -380,6 +380,37 @@ public class Bridge {
         }).start();
     }
 
+    /**
+     * Envoie un ou plusieurs lots de compta sur le canal du relais.
+     * Un script resté sur le PC les reprend pour remplir le tableur.
+     */
+    @JavascriptInterface
+    public void publishCompta(final String lotsJson, final String cbId) {
+        new Thread(new Runnable() {
+            public void run() {
+                org.json.JSONObject out = new org.json.JSONObject();
+                int envoyes = 0;
+                try {
+                    org.json.JSONArray lots = new org.json.JSONArray(lotsJson);
+                    for (int i = 0; i < lots.length(); i++) {
+                        Relay.publier(act, lots.getString(i));
+                        envoyes++;
+                    }
+                    out.put("ok", true);
+                    out.put("lots", envoyes);
+                } catch (Throwable t) {
+                    try {
+                        out.put("ok", false);
+                        out.put("lots", envoyes);
+                        out.put("error", String.valueOf(t.getMessage()));
+                    } catch (Exception ignored) {
+                    }
+                }
+                callBack(cbId, out.toString());
+            }
+        }).start();
+    }
+
     /** Relève immédiate de toutes les machines, puis rappel vers le JS. */
     @JavascriptInterface
     public void syncPrinters(final String cbId) {

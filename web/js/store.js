@@ -322,8 +322,82 @@ const Relais = {
     try { window.NMT.saveRelay(String(sujet || '')); return true; } catch (e) { return false; }
   },
 
-  test() { return nativeCall('testRelay', []); }
+  test() { return nativeCall('testRelay', []); },
+
+  /* lots : tableau de chaines JSON, une par message ntfy */
+  publier(lots) { return nativeCall('publishCompta', [JSON.stringify(lots)]); }
 };
+
+/* ============================================================
+   Compta — ce que l'app envoie au tableur Argent.xlsx
+   ============================================================
+
+   L'app publie ses commandes sur le canal du relais ; un script resté
+   sur le PC les reprend et ajoute les lignes manquantes au tableur.
+   Rien ne revient dans l'autre sens : le tableur garde tout ce qui y
+   est saisi à la main.
+
+   ntfy limite un message à quelques kilo-octets, d'où les lots. Chaque
+   envoi porte la liste complète : un seul lot récent suffit au script,
+   même s'il a manqué les précédents. */
+
+const COMPTA_STATUTS = { todo: 'not started', printing: 'started', done: 'finished', shipped: 'delivered' };
+const COMPTA_TAILLE_LOT = 3000;   // octets par message, marge comprise
+
+function comptaRef(o) {
+  return o.shopifyId ? (o.name || o.shopifyId) : 'M-' + o.id;
+}
+
+function comptaLigne(o) {
+  const l = { r: comptaRef(o), d: o.createdAt || Date.now(), s: COMPTA_STATUTS[o.status] || 'not started' };
+  if (o.customer) l.n = o.customer;
+  if (o.country) l.p = o.country;
+  if (o.price) l.e = o.price;
+  if (o.grams) l.g = o.grams;
+  if (o.material) l.m = o.material;
+  const objet = (o.lines || []).map(x => x.title + (x.qty > 1 ? ' x' + x.qty : '')).join(' + ');
+  if (objet) l.o = objet.slice(0, 60);
+  return l;
+}
+
+/* découpe la liste en messages qui tiennent dans une notification ntfy */
+function comptaLots(commandes) {
+  const lignes = commandes.map(comptaLigne);
+  const paquets = [];
+  let cour = [], taille = 0;
+  lignes.forEach(l => {
+    const n = JSON.stringify(l).length + 1;
+    if (cour.length && taille + n > COMPTA_TAILLE_LOT) { paquets.push(cour); cour = []; taille = 0; }
+    cour.push(l); taille += n;
+  });
+  if (cour.length) paquets.push(cour);
+
+  const at = Date.now();
+  return paquets.map((p, i) =>
+    JSON.stringify({ t: 'compta', at: at, lot: i + 1, lots: paquets.length, c: p }));
+}
+
+let comptaEnAttente = null;
+
+/* Envoi immédiat. Renvoie le nombre de commandes parties. */
+async function comptaEnvoyer() {
+  if (!Relais.ok() || !Relais.sujet()) throw new Error('aucun relais configuré');
+  const commandes = DB.orders.slice().sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  if (!commandes.length) return 0;
+  const lots = comptaLots(commandes);
+  const res = await Relais.publier(lots);
+  if (!res || !res.ok) throw new Error((res && res.error) || 'envoi refusé');
+  DB.settings.comptaSentAt = Date.now();
+  save();
+  return commandes.length;
+}
+
+/* Envoi discret, groupé, après une modification de commande. */
+function comptaPlanifier() {
+  if (!Relais.ok() || !Relais.sujet()) return;
+  clearTimeout(comptaEnAttente);
+  comptaEnAttente = setTimeout(() => { comptaEnvoyer().catch(() => {}); }, 5000);
+}
 
 const PRINTER_KINDS = [
   { v: 'bambu', label: 'Bambu Lab' },

@@ -23,6 +23,7 @@ public class JSONArray {
   public JSONObject optJSONObject(int i){ return null; }
   public JSONArray optJSONArray(int i){ return null; }
   public String optString(int i){ return ""; }
+  public String getString(int i) throws Exception { return ""; }
   public void put(Object o){}
   public String toString(){ return "[]"; }
 }

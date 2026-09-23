@@ -99,6 +99,36 @@ public class Relay {
         return new String(bos.toByteArray(), "UTF-8");
     }
 
+    /**
+     * Publie un message sur le canal du relais.
+     *
+     * Sert à la compta : l'application envoie ses commandes, un petit script
+     * resté sur le PC les récupère et remplit le tableur. Le canal est le même
+     * que celui des relevés d'imprimantes — les deux ne se gênent pas, chaque
+     * lecteur ne garde que ce qui le concerne.
+     */
+    static void publier(Context c, String corps) throws Exception {
+        String sujet = sujet(c);
+        if (sujet.length() == 0) throw new Exception("aucun sujet de relais enregistré");
+
+        HttpURLConnection h = (HttpURLConnection) new URL(
+                "https://ntfy.sh/" + URLEncoder.encode(sujet, "UTF-8")).openConnection();
+        h.setConnectTimeout(8000);
+        h.setReadTimeout(12000);
+        h.setRequestMethod("POST");
+        h.setDoOutput(true);
+        h.setRequestProperty("Content-Type", "text/plain; charset=utf-8");
+        h.setRequestProperty("Priority", "min");
+        h.setRequestProperty("Title", "compta");
+        byte[] b = corps.getBytes("UTF-8");
+        h.setFixedLengthStreamingMode(b.length);
+        h.getOutputStream().write(b);
+        h.getOutputStream().close();
+        int code = h.getResponseCode();
+        h.disconnect();
+        if (code < 200 || code >= 300) throw new Exception("HTTP " + code);
+    }
+
     /** Test manuel, depuis l'écran des réglages. */
     static JSONObject test(Context c) {
         JSONObject out = new JSONObject();

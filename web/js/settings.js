@@ -45,6 +45,24 @@ function renderSettings() {
       '<div class="hint" id="relais-out" style="margin-top:9px"></div>' +
     '</div>';
 
+  /* ---- tableur de compta ---- */
+  if (sujet) {
+    const envoye = DB.settings.comptaSentAt;
+    out += '<div class="sec-title">Tableur de compta</div>' +
+      '<div class="card">' +
+        '<div class="hint" style="margin-bottom:10px">L\'app envoie ses commandes sur le même canal que le relais. ' +
+          'Le script <b>compta_xlsx.py</b>, resté sur le PC, les ajoute en bas de la feuille Compta d\'Argent.xlsx. ' +
+          'Rien n\'est jamais écrit par-dessus ce que tu as saisi à la main.</div>' +
+        '<div class="kv"><span>Commandes dans l\'app</span><b class="mono">' + DB.orders.length + '</b></div>' +
+        '<div class="kv"><span>Dernier envoi</span><b class="mono">' +
+          (envoye ? fmtDayClock(envoye) : 'jamais') + '</b></div>' +
+        '<div class="btn-row">' +
+          '<button class="btn primary" onclick="envoyerCompta()">Envoyer maintenant</button>' +
+        '</div>' +
+        '<div class="hint" id="compta-out" style="margin-top:9px"></div>' +
+      '</div>';
+  }
+
   /* ---- notifications ---- */
   out += '<div class="sec-title">Notifications</div>' +
     '<div class="card">' +
@@ -197,6 +215,21 @@ function saveRelais() {
   if (!Relais.save(el.value)) { toast('Le relais ne marche que dans l\'app Android', 'bad'); return; }
   toast(el.value.trim() ? 'Relais enregistré' : 'Relais désactivé', 'ok');
   render();
+}
+
+function envoyerCompta() {
+  const out = $('#compta-out');
+  if (out) out.textContent = 'Envoi…';
+  comptaEnvoyer()
+    .then(n => {
+      if (out) out.innerHTML = '<span style="color:var(--ok)">' + n + ' commande' + (n > 1 ? 's' : '') +
+        ' publiée' + (n > 1 ? 's' : '') + '. Lance le script sur le PC pour remplir le tableur.</span>';
+      toast('Compta envoyée', 'ok');
+      render();
+    })
+    .catch(e => {
+      if (out) out.innerHTML = '<span style="color:var(--bad)">Échec — ' + esc(e.message) + '</span>';
+    });
 }
 
 function testRelais() {

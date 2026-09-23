@@ -122,8 +122,10 @@ function openOrder(id) {
           o.color = v['o-color'] || o.color;
           save(); render();
         }));
-      const g = $('#o-grams', root);
-      if (g) g.addEventListener('keydown', e => { if (e.key === 'Enter') saveOrderWeight(o.id); });
+      ['#o-grams', '#o-price', '#o-country'].forEach(sel => {
+        const el = $(sel, root);
+        if (el) el.addEventListener('keydown', e => { if (e.key === 'Enter') saveOrderWeight(o.id); });
+      });
     }
   );
 }
@@ -152,6 +154,13 @@ function orderWeightBlock(o) {
         (o.used ? ' Déjà imprimé : ' + fmtG(o.used) + ', reste ' + fmtG(orderRemaining(o)) + '.' : '') +
       '</div>' +
     '</label>' +
+    '<div class="field-2" style="margin-bottom:10px">' +
+      '<label class="field" style="margin:0"><span>Prix payé (€)</span>' +
+        '<input type="number" id="o-price" inputmode="decimal" step="0.01" value="' + esc(o.price || '') + '" placeholder="0"></label>' +
+      '<label class="field" style="margin:0"><span>Pays</span>' +
+        '<input type="text" id="o-country" maxlength="3" autocapitalize="characters" autocorrect="off" value="' + esc(o.country || '') + '" placeholder="FR"></label>' +
+    '</div>' +
+    '<div class="small muted" style="margin:-4px 0 10px">Prix et pays partent dans le tableur de compta.</div>' +
     '<label class="field" style="margin-bottom:10px"><span>Matière</span>' + materialChips('o-material', o.material || 'PLA') + '</label>' +
     '<label class="field" style="margin:0"><span>Couleur</span>' + colorChips('o-color', o.color || '') + '</label>' +
   '</div>';
@@ -163,9 +172,12 @@ function saveOrderWeight(id) {
   if (!o || !el) return;
   const rem = rememberedOrderWeight(o);
   o.grams = num(el.value) || rem || 0;
+  const p = $('#o-price'), c = $('#o-country');
+  if (p) o.price = num(p.value);
+  if (c) o.country = c.value.trim().toUpperCase();
   rememberOrderWeight(o);
-  save(); render(); openOrder(id);
-  toast(o.grams ? 'Poids enregistré : ' + fmtG(o.grams) : 'Poids effacé', 'ok');
+  save(); comptaPlanifier(); render(); openOrder(id);
+  toast(o.grams ? 'Poids enregistré : ' + fmtG(o.grams) : 'Enregistré', 'ok');
 }
 
 function toggleLine(orderId, lineId) {
@@ -176,7 +188,7 @@ function toggleLine(orderId, lineId) {
   const lines = o.lines || [];
   if (lines.length && lines.every(x => x.done) && o.status !== 'shipped') o.status = 'done';
   else if (o.status === 'done' && lines.some(x => !x.done)) o.status = 'printing';
-  save(); render(); openOrder(orderId);
+  save(); comptaPlanifier(); render(); openOrder(orderId);
 }
 
 function setOrderStatus(id, st) {
@@ -184,7 +196,7 @@ function setOrderStatus(id, st) {
   if (!o) return;
   o.status = st;
   if (st === 'done' || st === 'shipped') (o.lines || []).forEach(l => l.done = true);
-  save(); closeSheet(); render(); toast(ORDER_STATUS[st].label, 'ok');
+  save(); comptaPlanifier(); closeSheet(); render(); toast(ORDER_STATUS[st].label, 'ok');
 }
 
 function deleteOrder(id) {
@@ -208,6 +220,10 @@ function addManualOrder() {
       '<label class="field"><span>Poids total (g)</span><input type="number" name="grams" inputmode="numeric" placeholder="450"></label>' +
       '<label class="field"><span>Quantité</span><input type="number" name="qty" inputmode="numeric" value="1"></label>' +
     '</div>' +
+    '<div class="field-2">' +
+      '<label class="field"><span>Prix payé (€)</span><input type="number" name="price" inputmode="decimal" step="0.01" placeholder="0"></label>' +
+      '<label class="field"><span>Pays</span><input type="text" name="country" maxlength="3" autocapitalize="characters" autocorrect="off" value="FR"></label>' +
+    '</div>' +
     '<label class="field"><span>Matière</span>' + materialChips('material', 'PLA') + '</label>' +
     '<label class="field"><span>Couleur</span>' + colorChips('color', '') + '</label>' +
     '<div class="sheet-actions">' +
@@ -223,13 +239,14 @@ function addManualOrder() {
         DB.orders.push({
           id: uid(), shopifyId: '', name: v.name.trim() || v.title.trim(),
           customer: v.customer.trim(), createdAt: Date.now(), source: 'manual', status: 'todo',
+          price: num(v.price), country: (v.country || '').trim().toUpperCase(),
           grams: num(v.grams), used: 0, material: c.material || 'PLA', color: c.color || '',
           lines: [{
             id: uid(), title: v.title.trim() || v.name.trim(), variant: '',
             qty: parseInt(v.qty, 10) || 1, done: false
           }]
         });
-        save(); closeSheet(); render(); toast('Commande ajoutée', 'ok');
+        save(); comptaPlanifier(); closeSheet(); render(); toast('Commande ajoutée', 'ok');
       };
     }
   );
@@ -239,14 +256,29 @@ function addManualOrder() {
    Synchronisation Shopify (API Admin GraphQL)
    ============================================================ */
 
-/* Requete volontairement minimale : elle ne demande que ce que couvre
-   read_orders. Pas de bloc customer (read_customers) ni variant
-   (read_products) — variantTitle porte deja la matiere. */
-const ORDERS_QUERY =
-  'query($n:Int!,$q:String){orders(first:$n,query:$q,sortKey:CREATED_AT,reverse:true){edges{node{' +
-  'id name createdAt displayFulfillmentStatus ' +
-  'lineItems(first:50){edges{node{id title quantity sku variantTitle}}}' +
-  '}}}}';
+/* Trois niveaux de requete, du plus complet au plus prudent.
+   Le prix et le pays remplissent le tableau de compta, mais le bloc
+   client et l'adresse relevent des donnees client protegees : selon les
+   autorisations du jeton, Shopify peut les refuser. On essaie le niveau
+   le plus riche, on redescend a la premiere erreur, et on retient celui
+   qui a marche pour ne pas recommencer a chaque synchro. */
+const ORDERS_LINES = 'lineItems(first:50){edges{node{id title quantity sku variantTitle}}}';
+
+const ORDERS_NIVEAUX = {
+  complet: 'id name createdAt displayFulfillmentStatus ' +
+    'currentTotalPriceSet{shopMoney{amount}} shippingAddress{countryCodeV2} ' +
+    'customer{firstName lastName} ' + ORDERS_LINES,
+  prix: 'id name createdAt displayFulfillmentStatus ' +
+    'currentTotalPriceSet{shopMoney{amount}} ' + ORDERS_LINES,
+  base: 'id name createdAt displayFulfillmentStatus ' + ORDERS_LINES
+};
+
+const ORDERS_ORDRE = ['complet', 'prix', 'base'];
+
+function ordersQuery(niveau) {
+  return 'query($n:Int!,$q:String){orders(first:$n,query:$q,sortKey:CREATED_AT,reverse:true)' +
+    '{edges{node{' + ORDERS_NIVEAUX[niveau] + '}}}}';
+}
 
 let syncing = false;
 
@@ -270,20 +302,35 @@ async function syncShopify() {
   try {
     const url = 'https://' + st.shop.replace(/^https?:\/\//, '').replace(/\/$/, '') +
                 '/admin/api/' + st.apiVersion + '/graphql.json';
-    const res = await nativeHttp('POST', url,
-      { 'X-Shopify-Access-Token': st.token, 'Content-Type': 'application/json' },
-      JSON.stringify({ query: ORDERS_QUERY, variables: { n: 50, q: 'fulfillment_status:unfulfilled' } })
-    );
 
-    if (!res.ok) throw new Error(res.error || ('HTTP ' + res.status));
-    const data = JSON.parse(res.body);
-    if (data.errors) throw new Error(data.errors[0] && data.errors[0].message || 'Erreur GraphQL');
-    if (!data.data || !data.data.orders) throw new Error('Réponse inattendue — vérifie les autorisations du jeton');
+    const depart = ORDERS_ORDRE.indexOf(st.orderFields);
+    const aTenter = ORDERS_ORDRE.slice(depart < 0 ? 0 : depart);
+    let data = null, niveau = '', dernier = '';
+
+    for (const essai of aTenter) {
+      const res = await nativeHttp('POST', url,
+        { 'X-Shopify-Access-Token': st.token, 'Content-Type': 'application/json' },
+        JSON.stringify({ query: ordersQuery(essai), variables: { n: 50, q: 'fulfillment_status:unfulfilled' } })
+      );
+      if (!res.ok) throw new Error(res.error || ('HTTP ' + res.status));
+      const d = JSON.parse(res.body);
+      if (d.errors) { dernier = (d.errors[0] && d.errors[0].message) || 'Erreur GraphQL'; continue; }
+      if (!d.data || !d.data.orders) { dernier = 'Réponse inattendue'; continue; }
+      data = d; niveau = essai;
+      break;
+    }
+
+    if (!data) throw new Error(dernier || 'Réponse inattendue — vérifie les autorisations du jeton');
 
     const n = mergeShopifyOrders(data.data.orders.edges.map(e => e.node));
     DB.settings.lastSync = Date.now();
+    DB.settings.orderFields = niveau;
     save(); render();
-    toast(n.added ? n.added + ' nouvelle' + (n.added > 1 ? 's' : '') + ' commande' + (n.added > 1 ? 's' : '') : 'Tout est à jour', 'ok');
+    comptaPlanifier();
+    const manque = niveau === 'base' ? ' · prix et pays à saisir dans l\'app'
+                 : niveau === 'prix' ? ' · pays à saisir dans l\'app' : '';
+    toast((n.added ? n.added + ' nouvelle' + (n.added > 1 ? 's' : '') + ' commande' + (n.added > 1 ? 's' : '')
+                   : 'Tout est à jour') + manque, 'ok');
   } catch (e) {
     toast('Échec : ' + e.message, 'bad');
   } finally {
@@ -308,9 +355,14 @@ function mergeShopifyOrders(nodes) {
       return base;
     });
 
+    const pays = nd.shippingAddress ? (nd.shippingAddress.countryCodeV2 || nd.shippingAddress.country || '') : '';
+    const prix = nd.currentTotalPriceSet && nd.currentTotalPriceSet.shopMoney
+      ? num(nd.currentTotalPriceSet.shopMoney.amount) : 0;
+
     if (existing) {
       existing.customer = cust || existing.customer;
-      if (nd.shippingAddress) existing.country = nd.shippingAddress.country;
+      if (pays) existing.country = pays;
+      if (prix) existing.price = prix;
       lines.forEach(nl => {
         if (!(existing.lines || []).some(x => x.id === nl.id)) (existing.lines = existing.lines || []).push(nl);
       });
@@ -320,7 +372,7 @@ function mergeShopifyOrders(nodes) {
       const o = {
         id: uid(), shopifyId: nd.id, name: nd.name, customer: cust,
         createdAt: new Date(nd.createdAt).getTime(),
-        country: nd.shippingAddress ? nd.shippingAddress.country : '',
+        country: pays, price: prix,
         source: 'shopify', status: 'todo', lines: lines,
         grams: 0, used: 0, material: ref.material || 'PLA', color: ''
       };
