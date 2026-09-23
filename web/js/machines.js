@@ -133,9 +133,11 @@ function machineShell(m, cls, clock, sub, actions, sp, live) {
       '<div class="grow">' +
         '<div class="card-name">' + esc(m.name) +
           (live
-            ? (Printers.stale(m.id)
-                ? ' <span class="badge" style="vertical-align:middle">relevé de ' + fmtDayClock(live.at) + '</span>'
-                : ' <span class="badge ok" style="vertical-align:middle">en direct</span>')
+            ? (live.relais && !Printers.stale(m.id)
+                ? ' <span class="badge info" style="vertical-align:middle">via le relais</span>'
+                : Printers.stale(m.id)
+                  ? ' <span class="badge" style="vertical-align:middle">relevé de ' + fmtDayClock(live.at) + '</span>'
+                  : ' <span class="badge ok" style="vertical-align:middle">en direct</span>')
             : '') +
         '</div>' +
         '<div class="card-meta">' + esc(m.model || '—') + (pr ? ' · ' + esc(pr.name) : '') + '</div>' +

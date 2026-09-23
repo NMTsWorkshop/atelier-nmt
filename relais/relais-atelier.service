@@ -1,0 +1,15 @@
+[Unit]
+Description=Relais de l'atelier NMT
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/opt/relais-atelier
+ExecStart=/usr/bin/python3 /opt/relais-atelier/relais_atelier.py
+Restart=always
+RestartSec=20
+
+[Install]
+WantedBy=multi-user.target

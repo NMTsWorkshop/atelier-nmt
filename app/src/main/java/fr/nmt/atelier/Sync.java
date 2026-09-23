@@ -91,12 +91,41 @@ public class Sync {
         }
         pool.shutdownNow();
 
+        /* machines muettes sur le réseau local : le relais de l'atelier a
+           peut-être un relevé plus frais, publié depuis là-bas */
+        JSONObject relais = null;
+        if (Relay.actif(c)) {
+            boolean besoin = false;
+            for (int i = 0; i < conf.length(); i++) {
+                JSONObject st = results[i];
+                if (st == null || !st.optBoolean("ok", false)) besoin = true;
+            }
+            if (besoin) {
+                try {
+                    relais = Relay.dernier(c);
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+
         for (int i = 0; i < conf.length(); i++) {
             JSONObject one = conf.optJSONObject(i);
             JSONObject st = results[i];
             if (one == null || st == null) continue;
             String id = one.optString("machineId", "m" + i);
             String name = one.optString("name", "Machine");
+
+            if (relais != null && !st.optBoolean("ok", false)) {
+                JSONObject r = relais.optJSONObject(one.optString("host", ""));
+                if (r != null && r.optBoolean("ok", false)
+                        && Relay.plusRecent(r, before.optJSONObject(id))) {
+                    try {
+                        r.put("relais", true);
+                    } catch (Exception ignored) {
+                    }
+                    st = r;
+                }
+            }
             Printers.record(c, id, st);
             if (st.optBoolean("ok", false)) {
                 react(c, id, name, before.optJSONObject(id), st);

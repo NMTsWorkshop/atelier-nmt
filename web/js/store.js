@@ -307,6 +307,24 @@ const Printers = {
   }
 };
 
+/* ---------- relais de l'atelier ---------- */
+
+const Relais = {
+  ok() { return Native.ok() && typeof window.NMT.relayTopic === 'function'; },
+
+  sujet() {
+    if (!this.ok()) return '';
+    try { return window.NMT.relayTopic() || ''; } catch (e) { return ''; }
+  },
+
+  save(sujet) {
+    if (!this.ok()) return false;
+    try { window.NMT.saveRelay(String(sujet || '')); return true; } catch (e) { return false; }
+  },
+
+  test() { return nativeCall('testRelay', []); }
+};
+
 const PRINTER_KINDS = [
   { v: 'bambu', label: 'Bambu Lab' },
   { v: 'moonraker', label: 'Creality / Klipper' }

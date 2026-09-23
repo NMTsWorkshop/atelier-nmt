@@ -358,6 +358,28 @@ public class Bridge {
         return Printers.states(act).toString();
     }
 
+    /** Sujet du relais de l'atelier, tel qu'enregistré. */
+    @JavascriptInterface
+    public String relayTopic() {
+        return Relay.sujet(act);
+    }
+
+    /** Enregistre le sujet du relais. */
+    @JavascriptInterface
+    public void saveRelay(String sujet) {
+        Relay.setSujet(act, sujet);
+    }
+
+    /** Test du relais depuis l'écran des réglages. */
+    @JavascriptInterface
+    public void testRelay(final String cbId) {
+        new Thread(new Runnable() {
+            public void run() {
+                callBack(cbId, Relay.test(act).toString());
+            }
+        }).start();
+    }
+
     /** Relève immédiate de toutes les machines, puis rappel vers le JS. */
     @JavascriptInterface
     public void syncPrinters(final String cbId) {

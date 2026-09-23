@@ -156,6 +156,7 @@ PATCHES = [
      '  public JSONArray optJSONArray(String k){ return null; }\n'
      '  public boolean has(String k){ return false; }\n'
      '  public boolean optBoolean(String k, boolean d){ return d; }\n'
+     '  public int length(){ return 0; }\n'
      '  public int optInt(String k){ return 0; }\n'
      '  public int optInt(String k, int d){ return d; }\n'
      '  public double optDouble(String k, double d){ return d; }'),

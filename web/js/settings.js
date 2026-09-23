@@ -28,6 +28,23 @@ function renderSettings() {
       '</div>' +
     '</div>';
 
+  /* ---- relais de l'atelier ---- */
+  const sujet = Relais.sujet();
+  out += '<div class="sec-title">Relais de l\'atelier</div>' +
+    '<div class="card">' +
+      '<div class="hint" style="margin-bottom:10px">Un appareil resté à l\'atelier publie l\'état des imprimantes. ' +
+        'Hors du wifi de l\'atelier, l\'application lit ce relevé — en 4G comme sur n\'importe quel wifi.</div>' +
+      '<label class="field"><span>Sujet publié par le relais</span>' +
+        '<input type="text" name="relayTopic" value="' + esc(sujet) + '" placeholder="nmt-atelier-…" autocapitalize="off" autocorrect="off">' +
+        '<div class="hint">Le même que dans le fichier relais.json du Pi. Laisse vide pour ne pas utiliser de relais.</div>' +
+      '</label>' +
+      '<div class="btn-row">' +
+        '<button class="btn" onclick="saveRelais()">Enregistrer</button>' +
+        '<button class="btn primary" onclick="testRelais()">Tester</button>' +
+      '</div>' +
+      '<div class="hint" id="relais-out" style="margin-top:9px"></div>' +
+    '</div>';
+
   /* ---- notifications ---- */
   out += '<div class="sec-title">Notifications</div>' +
     '<div class="card">' +
@@ -172,6 +189,33 @@ function saveSettings() {
   DB.settings.lowThreshold = parseInt(v.lowThreshold, 10) || 15;
   save();
   toast('Réglages enregistrés', 'ok');
+}
+
+function saveRelais() {
+  const el = $('[name=relayTopic]');
+  if (!el) return;
+  if (!Relais.save(el.value)) { toast('Le relais ne marche que dans l\'app Android', 'bad'); return; }
+  toast(el.value.trim() ? 'Relais enregistré' : 'Relais désactivé', 'ok');
+  render();
+}
+
+function testRelais() {
+  const out = $('#relais-out');
+  saveRelais();
+  if (out) out.textContent = 'Lecture du relais…';
+  Relais.test()
+    .then(r => {
+      if (!out) return;
+      if (r && r.ok) {
+        const noms = (r.machines || []).join(', ');
+        out.innerHTML = '<span style="color:var(--ok)">Relevé reçu — ' + r.joignables + ' machine(s) joignable(s) sur ' +
+          (r.machines || []).length + (r.at ? ', publié à ' + fmtDayClock(r.at) : '') + '</span>' +
+          (noms ? '<br>' + esc(noms) : '');
+      } else {
+        out.innerHTML = '<span style="color:var(--bad)">Échec — ' + esc((r && r.error) || 'sans réponse') + '</span>';
+      }
+    })
+    .catch(e => { if (out) out.innerHTML = '<span style="color:var(--bad)">Échec — ' + esc(e.message) + '</span>'; });
 }
 
 async function testShopify() {

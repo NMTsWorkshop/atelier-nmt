@@ -56,7 +56,8 @@ public class Printers {
     static void putState(Context c, String machineId, JSONObject st) {
         try {
             JSONObject all = states(c);
-            st.put("at", System.currentTimeMillis());
+            /* un relevé venu du relais porte déjà son heure : on la garde */
+            if (!st.has("at")) st.put("at", System.currentTimeMillis());
             all.put(machineId, st);
             prefs(c).edit().putString(KEY_STATE, all.toString()).apply();
         } catch (Exception ignored) {
