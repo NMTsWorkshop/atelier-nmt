@@ -13,6 +13,7 @@ function renderMachines() {
     DB.machines.length
       ? running + ' en cours · ' + done + ' terminée' + (done > 1 ? 's' : '') + ' · ' + DB.machines.length + ' machine' + (DB.machines.length > 1 ? 's' : '')
       : 'Aucune machine pour l\'instant',
+    '<button class="tb-btn" title="Heure de fin" onclick="calculetteFin()">' + iconClock() + '</button>' +
     (DB.machines.some(m => m.printer && m.printer.host)
       ? '<button class="tb-btn" id="poll-btn" onclick="pollPrinters()">' + iconSync() + '</button>' : '') +
     '<button class="tb-btn accent" onclick="editMachine()">' + iconPlus() + 'Machine</button>'
@@ -557,6 +558,75 @@ function nativeWarningBanner() {
 function iconPlus() { return '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>'; }
 function iconGear() { return '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 4v2M12 18v2M4 12h2M18 12h2M6.3 6.3l1.4 1.4M16.3 16.3l1.4 1.4M17.7 6.3l-1.4 1.4M7.7 16.3l-1.4 1.4"/></svg>'; }
 function iconSync() { return '<svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 1-15.5 6.2M3 12A9 9 0 0 1 18.5 5.8"/><path d="M3 4v5h5M21 20v-5h-5"/></svg>'; }
+
+function iconClock() { return '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>'; }
+
+/* ---------- calculette : à quelle heure ça finit ? ---------- */
+
+function calculetteFin() {
+  sheet(
+    '<h2>Heure de fin</h2>' +
+    '<div class="sub">La durée annoncée par le trancheur, pour savoir avant de lancer à quelle heure ça se termine.</div>' +
+
+    '<label class="field"><span>Durée d\'impression</span>' +
+      '<div class="chips" id="calc-presets">' +
+        [30, 60, 120, 240, 480, 720, 1440].map(min =>
+          '<button type="button" class="chip" data-min="' + min + '">' +
+          (min < 60 ? min + ' min' : (min / 60) + ' h') + '</button>').join('') +
+      '</div>' +
+    '</label>' +
+
+    '<div class="field-2">' +
+      '<label class="field"><span>Heures</span>' +
+        '<input type="number" id="calc-h" inputmode="numeric" placeholder="0" min="0"></label>' +
+      '<label class="field"><span>Minutes</span>' +
+        '<input type="number" id="calc-min" inputmode="numeric" placeholder="0" min="0"></label>' +
+    '</div>' +
+
+    '<div class="card tight" style="text-align:center">' +
+      '<div class="small muted">Fin prévue</div>' +
+      '<div class="clock" id="calc-fin" style="margin:4px 0">—</div>' +
+      '<div class="small muted" id="calc-detail">Indique une durée.</div>' +
+    '</div>' +
+
+    '<div class="sheet-actions">' +
+      '<button class="btn ghost" data-x="no">Fermer</button>' +
+    '</div>',
+
+    root => {
+      const h = $('#calc-h', root), mn = $('#calc-min', root);
+      const fin = $('#calc-fin', root), detail = $('#calc-detail', root);
+
+      const calcule = () => {
+        const mins = num(h.value) * 60 + num(mn.value);
+        if (mins <= 0) {
+          fin.textContent = '—';
+          detail.textContent = 'Indique une durée.';
+          return;
+        }
+        const t = Date.now() + mins * 60000;
+        fin.textContent = fmtClock(t);
+        const jours = Math.floor((new Date(t).setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / 86400000);
+        detail.textContent = fmtRemaining(mins) + ' à partir de ' + fmtClock(Date.now()) +
+          (jours === 1 ? ' · demain' : jours > 1 ? ' · dans ' + jours + ' jours' : '');
+      };
+
+      [h, mn].forEach(el => el.addEventListener('input', calcule));
+      $$('#calc-presets .chip', root).forEach(c => c.addEventListener('click', () => {
+        const min = parseInt(c.getAttribute('data-min'), 10);
+        h.value = Math.floor(min / 60) || '';
+        mn.value = min % 60 || '';
+        calcule();
+      }));
+
+      $('[data-x=no]', root).onclick = closeSheet;
+      /* l'horloge de départ avance : on recalcule chaque minute */
+      const tic = setInterval(() => { if (!document.body.contains(root)) clearInterval(tic); else calcule(); }, 30000);
+      calcule();
+      h.focus();
+    }
+  );
+}
 
 
 /* assemble la liaison réseau depuis les champs de la fiche */
