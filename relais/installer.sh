@@ -37,6 +37,7 @@ sudo mkdir -p "$DOSSIER"
 sudo curl -fsSL "$BASE/relais_atelier.py" -o "$DOSSIER/relais_atelier.py"
 sudo curl -fsSL "$BASE/biblio.py" -o "$DOSSIER/biblio.py"
 sudo curl -fsSL "$BASE/relais-atelier.service" -o /etc/systemd/system/relais-atelier@.service
+sudo systemctl daemon-reload
 sudo chown -R "$USER:$USER" "$DOSSIER"
 echo "Programme installé dans $DOSSIER."
 
@@ -153,24 +154,34 @@ SAMBA
 fi
 
 echo
-echo "=== Reste à faire, à la main ==="
-echo
-echo "1. Remplir les trois A-REMPLIR :"
-echo "     nano $DOSSIER/relais.json"
-echo "   - sujet : le même que dans l'app, Réglages > Relais de l'atelier"
-echo "   - code  : le code d'accès LAN de chaque Bambu, lu sur son écran"
-echo
-echo "2. Essayer un relevé :"
-echo "     python3 $DOSSIER/relais_atelier.py --une-fois"
-echo
-echo "3. Le lancer en permanence :"
-echo "     sudo systemctl enable --now relais-atelier@$USER"
-echo "     journalctl -u relais-atelier@$USER -f"
-echo
-echo "4. Dans l'app, Réglages > Bibliothèque de gcodes :"
+if grep -q "A-REMPLIR" "$DOSSIER/relais.json"; then
+  echo "=== Reste à faire, à la main ==="
+  echo
+  echo "1. Remplir les A-REMPLIR :"
+  echo "     nano $DOSSIER/relais.json"
+  echo "   - sujet : le même que dans l'app, Réglages > Relais de l'atelier"
+  echo "   - code  : le code d'accès LAN de chaque Bambu, lu sur son écran"
+  echo
+  echo "2. Essayer un relevé :"
+  echo "     python3 $DOSSIER/relais_atelier.py --une-fois"
+  echo
+  echo "3. Le lancer en permanence :"
+  echo "     sudo systemctl enable --now relais-atelier@$USER"
+  echo "     journalctl -u relais-atelier@$USER -f"
+  echo
+else
+  echo "=== Relais déjà configuré ==="
+  echo
+  echo "Rien à remplir. Pour prendre en compte cette mise à jour :"
+  echo "     sudo systemctl restart relais-atelier@$USER"
+  echo
+fi
+
+echo "Dans l'app, Réglages > Bibliothèque de gcodes :"
 echo "     adresse : $ADRESSE"
 echo "     jeton   : $(lire_reglage jeton)"
 echo
-echo "5. Déposer les fichiers tranchés dans $RACINE,"
-echo "   un sous-dossier par famille de machines (k2, p1s)."
+echo "Déposer les fichiers tranchés dans $RACINE :"
+echo "   k2  pour les Creality, p1s pour les Bambu,"
+echo "   un sous-dossier par commande à l'intérieur."
 echo

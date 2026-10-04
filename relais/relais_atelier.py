@@ -15,6 +15,7 @@ Réglages dans relais.json, à côté de ce fichier :
 {
   "sujet": "nmt-atelier-xxxxxxxx",
   "periode": 60,
+  "publication": 900,
   "biblio": "/opt/relais-atelier/gcodes",
   "port_api": 8765,
   "jeton": "xxxxxxxxxxxxxxxx",
@@ -356,6 +357,45 @@ def relever(machines):
     return etats
 
 
+# ntfy.sh n'accepte que 250 messages par jour sans compte. Une publication
+# par minute en ferait 1440 : le quota tombe en quatre heures et l'état des
+# machines ne sort plus de l'atelier jusqu'au lendemain. On ne publie donc
+# que lorsqu'il s'est passé quelque chose, plus une publication de principe
+# de temps en temps pour que l'app ait toujours un relevé frais.
+#
+# Les machines, elles, restent relevées chaque minute : c'est gratuit, ça
+# sert au service local et à l'historique, et c'est ce qui permet de voir
+# un changement.
+
+PUBLICATION = {"at": 0, "signature": None, "muet_jusqu_a": 0}
+
+# le pourcentage d'avancement n'entre pas dans la signature : il bouge en
+# permanence, et l'app recalcule la fin prévue depuis l'heure du relevé
+def signature(etats):
+    out = []
+    for cle in sorted(etats):
+        e = etats[cle]
+        bobines = ",".join("%s:%s:%s" % (b.get("slot"), b.get("type"), b.get("color"))
+                           for b in (e.get("ams") or []))
+        out.append("|".join(str(x) for x in (
+            cle, e.get("ok"), e.get("state"), e.get("file"), e.get("erreur", ""),
+            e.get("stale", False), bobines)))
+    return "\n".join(out)
+
+
+def faut_publier(etats, repos):
+    """(oui, pourquoi) — le pourquoi part dans le journal."""
+    maintenant = time.time()
+    if maintenant < PUBLICATION["muet_jusqu_a"]:
+        return False, "quota ntfy atteint"
+    sig = signature(etats)
+    if sig != PUBLICATION["signature"]:
+        return True, "changement"
+    if maintenant - PUBLICATION["at"] >= repos:
+        return True, "relevé de principe"
+    return False, "rien de neuf"
+
+
 def publier(sujet, etats):
     # les champs bruts des machines servent au diagnostic sur place ; ntfy
     # limite un message à quelques kilo-octets, ils n'y vont pas
@@ -412,6 +452,7 @@ def demarrer_api(c, machines):
 def main():
     c = charger_reglages()
     periode = max(30, int(c.get("periode", 60)))
+    repos = max(120, int(c.get("publication", 900)))
     unique = "--une-fois" in sys.argv
     machines = c.get("machines") or []
     biblio, contexte = demarrer_api(c, machines)
@@ -426,18 +467,33 @@ def main():
                      ligne["fichier"], ligne["minutes"]), flush=True)
         joignables = sum(1 for e in etats.values() if e.get("ok"))
         datees = sum(1 for e in etats.values() if e.get("stale"))
-        try:
-            publier(c["sujet"], etats)
-            print("%s — %d/%d machines%s, publié"
-                  % (time.strftime("%H:%M:%S"), joignables, len(etats),
-                     (", %d datée%s" % (datees, "s" if datees > 1 else "")) if datees else ""),
-                  flush=True)
-        except urllib.error.HTTPError as e:
-            print("%s — publication refusée (HTTP %s)" % (time.strftime("%H:%M:%S"), e.code),
-                  file=sys.stderr, flush=True)
-        except Exception as e:
-            print("%s — publication impossible : %s" % (time.strftime("%H:%M:%S"), e),
-                  file=sys.stderr, flush=True)
+        oui, pourquoi = faut_publier(etats, repos)
+        if oui or unique:
+            try:
+                publier(c["sujet"], etats)
+                PUBLICATION["at"] = time.time()
+                PUBLICATION["signature"] = signature(etats)
+                PUBLICATION["muet_jusqu_a"] = 0
+                print("%s — %d/%d machines%s, publié (%s)"
+                      % (time.strftime("%H:%M:%S"), joignables, len(etats),
+                         (", %d datée%s" % (datees, "s" if datees > 1 else "")) if datees else "",
+                         pourquoi),
+                      flush=True)
+            except urllib.error.HTTPError as e:
+                if e.code == 429:
+                    # quota journalier de ntfy : réessayer chaque minute ne fait
+                    # que remplir le journal. On se tait une demi-heure.
+                    PUBLICATION["muet_jusqu_a"] = time.time() + 1800
+                    print("%s — quota ntfy atteint (250 messages par jour sans "
+                          "compte) : publication suspendue 30 min. Les machines "
+                          "restent visibles sur le réseau de l'atelier."
+                          % time.strftime("%H:%M:%S"), file=sys.stderr, flush=True)
+                else:
+                    print("%s — publication refusée (HTTP %s)"
+                          % (time.strftime("%H:%M:%S"), e.code), file=sys.stderr, flush=True)
+            except Exception as e:
+                print("%s — publication impossible : %s" % (time.strftime("%H:%M:%S"), e),
+                      file=sys.stderr, flush=True)
         if unique:
             print(json.dumps(etats, ensure_ascii=False, indent=1))
             return
