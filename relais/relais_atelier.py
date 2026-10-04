@@ -192,11 +192,11 @@ def _paquet(s):
     return entete >> 4, _recevoir(s, val)
 
 
-def lire_bambu(m, duree=8):
+def lire_bambu(m, duree=15):
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
-    s = ctx.wrap_socket(socket.create_connection((m["hote"], 8883), timeout=8))
+    s = ctx.wrap_socket(socket.create_connection((m["hote"], 8883), timeout=10))
     complet, partiel = None, None
     try:
         tete = _mqtt_texte("MQTT") + bytes([4, 0xC2]) + struct.pack(">H", 30)
@@ -293,6 +293,14 @@ def lisible(e, hote):
     return str(e)[:120]
 
 
+# Dernière lecture réussie de chaque machine, gardée d'un cycle à l'autre.
+DERNIERS = {}
+
+# Au-delà, on cesse de republier l'ancienne lecture : la machine est
+# vraiment partie, et il vaut mieux le dire que de montrer du périmé.
+PEREMPTION = 15 * 60 * 1000
+
+
 def relever(machines):
     etats = {}
     for m in machines:
@@ -305,6 +313,21 @@ def relever(machines):
         etat["nom"] = m.get("nom", m["hote"])
         etat["at"] = int(time.time() * 1000)
         etat["ms"] = int((time.time() - debut) * 1000)
+
+        if etat.get("ok"):
+            DERNIERS[cle] = etat
+        else:
+            # Une lecture ratée ne doit pas effacer la précédente : une
+            # Bambu qui met trop longtemps à répondre ferait sinon
+            # disparaître l'impression en cours de l'écran pendant une
+            # minute. On republie la dernière bonne, datée et signalée.
+            garde = DERNIERS.get(cle)
+            if garde and (etat["at"] - garde.get("at", 0)) <= PEREMPTION:
+                raison = etat.get("error", "")
+                etat = dict(garde)
+                etat["stale"] = True
+                if raison:
+                    etat["staleError"] = raison
         etats[cle] = etat
     return etats
 
@@ -341,10 +364,13 @@ def main():
         debut = time.time()
         etats = relever(c.get("machines") or [])
         joignables = sum(1 for e in etats.values() if e.get("ok"))
+        datees = sum(1 for e in etats.values() if e.get("stale"))
         try:
             publier(c["sujet"], etats)
-            print("%s — %d/%d machines, publié"
-                  % (time.strftime("%H:%M:%S"), joignables, len(etats)), flush=True)
+            print("%s — %d/%d machines%s, publié"
+                  % (time.strftime("%H:%M:%S"), joignables, len(etats),
+                     (", %d datée%s" % (datees, "s" if datees > 1 else "")) if datees else ""),
+                  flush=True)
         except urllib.error.HTTPError as e:
             print("%s — publication refusée (HTTP %s)" % (time.strftime("%H:%M:%S"), e.code),
                   file=sys.stderr, flush=True)
