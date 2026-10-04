@@ -52,9 +52,9 @@ else
     { "nom": "K2 Plus 1", "type": "moonraker", "hote": "10.1.2.57" },
     { "nom": "K2 Plus 2", "type": "moonraker", "hote": "10.1.2.59" },
     { "nom": "P1S 1",     "type": "bambu", "hote": "10.1.3.10",
-      "serie": "01P00C462500170", "code": "A-REMPLIR" },
+      "serie": "01P09C510800409", "code": "A-REMPLIR" },
     { "nom": "P1S 2",     "type": "bambu", "hote": "10.1.3.11",
-      "serie": "01P09C510800409", "code": "A-REMPLIR" }
+      "serie": "01P00C462500170", "code": "A-REMPLIR" }
   ]
 }
 JSON
