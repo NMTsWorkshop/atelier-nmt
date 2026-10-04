@@ -209,12 +209,13 @@ function saveSettings() {
   toast('Réglages enregistrés', 'ok');
 }
 
-function saveRelais() {
+function saveRelais(silencieux) {
   const el = $('[name=relayTopic]');
-  if (!el) return;
-  if (!Relais.save(el.value)) { toast('Le relais ne marche que dans l\'app Android', 'bad'); return; }
-  toast(el.value.trim() ? 'Relais enregistré' : 'Relais désactivé', 'ok');
+  if (!el) return false;
+  if (!Relais.save(el.value)) { toast('Le relais ne marche que dans l\'app Android', 'bad'); return false; }
+  if (!silencieux) toast(el.value.trim() ? 'Relais enregistré' : 'Relais désactivé', 'ok');
   render();
+  return true;
 }
 
 function envoyerCompta() {
@@ -222,22 +223,31 @@ function envoyerCompta() {
   if (out) out.textContent = 'Envoi…';
   comptaEnvoyer()
     .then(n => {
-      if (out) out.innerHTML = '<span style="color:var(--ok)">' + n + ' commande' + (n > 1 ? 's' : '') +
-        ' publiée' + (n > 1 ? 's' : '') + '. Lance le script sur le PC pour remplir le tableur.</span>';
-      toast('Compta envoyée', 'ok');
+      toast(n + ' commande' + (n > 1 ? 's' : '') + ' envoyée' + (n > 1 ? 's' : ''), 'ok');
       render();
+      const o = $('#compta-out');
+      if (o) o.innerHTML = '<span style="color:var(--ok)">' + n + ' commande' + (n > 1 ? 's' : '') +
+        ' publiée' + (n > 1 ? 's' : '') + '. Lance le script sur le PC pour remplir le tableur.</span>';
     })
     .catch(e => {
+      toast('Échec — ' + e.message, 'bad');
       if (out) out.innerHTML = '<span style="color:var(--bad)">Échec — ' + esc(e.message) + '</span>';
     });
 }
 
 function testRelais() {
+  /* enregistrer redessine l'écran : on ne retient la zone de texte qu'après,
+     sinon on écrit dans un élément qui n'est plus affiché */
+  if (!saveRelais(true)) return;
   const out = $('#relais-out');
-  saveRelais();
   if (out) out.textContent = 'Lecture du relais…';
   Relais.test()
     .then(r => {
+      if (r && r.ok) {
+        toast(r.joignables + ' machine' + (r.joignables > 1 ? 's' : '') + ' au relais', 'ok');
+      } else {
+        toast('Relais muet — ' + ((r && r.error) || 'sans réponse'), 'bad');
+      }
       if (!out) return;
       if (r && r.ok) {
         const noms = (r.machines || []).join(', ');
@@ -248,7 +258,10 @@ function testRelais() {
         out.innerHTML = '<span style="color:var(--bad)">Échec — ' + esc((r && r.error) || 'sans réponse') + '</span>';
       }
     })
-    .catch(e => { if (out) out.innerHTML = '<span style="color:var(--bad)">Échec — ' + esc(e.message) + '</span>'; });
+    .catch(e => {
+      toast('Échec — ' + e.message, 'bad');
+      if (out) out.innerHTML = '<span style="color:var(--bad)">Échec — ' + esc(e.message) + '</span>';
+    });
 }
 
 async function testShopify() {
