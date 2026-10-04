@@ -96,14 +96,22 @@ function renderBiblio() {
     '<button class="tb-btn" onclick="biblioHistorique()">' + iconClock() + 'Historique</button>' +
     '<button class="tb-btn" onclick="biblioRafraichir()">' + iconSync() + '</button>');
 
+  /* lue à distance : tout se voit et se coche, mais un gcode ne passe pas
+     par le canal du relais */
+  let out = BIB.canal
+    ? '<div class="note" style="margin:0 2px 12px">Lu par le relais, à distance. ' +
+      'Tout se voit et se coche ; déposer un fichier sur une machine demande d\'être ' +
+      'sur le réseau de l\'atelier.</div>'
+    : '';
+
   if (!tous.length) {
-    return emptyState('Bibliothèque vide',
+    return out + emptyState('Bibliothèque vide',
       'Dépose tes fichiers tranchés dans le dossier partagé du relais. Un sous-dossier par commande, ' +
       'sous k2 ou p1s selon la machine.');
   }
 
   const q = BIB_FILTRE.trim().toLowerCase();
-  let out = '<div class="card tight">' +
+  out += '<div class="card tight">' +
     '<input id="bib-q" type="search" placeholder="Chercher un fichier ou une commande" ' +
       'oninput="biblioChercher(this.value)" value="' + esc(BIB_FILTRE) + '">' +
     '<div class="chips" style="margin-top:8px">' +
@@ -274,7 +282,10 @@ function ficheFichierSheet(chemin) {
 
   /* ---- envoyer ---- */
   html += '<div class="sec-title">Envoyer sur une machine</div>';
-  if (!dest.length) {
+  if (BIB.canal) {
+    html += '<div class="card tight"><div class="s">Il faut être sur le réseau de l\'atelier : ' +
+      'un gcode pèse trop pour passer par le canal du relais.</div></div>';
+  } else if (!dest.length) {
     html += '<div class="card tight"><div class="s">Aucune machine de cette famille dans le parc.</div></div>';
   } else {
     html += '<div class="stack">';
@@ -300,7 +311,7 @@ function ficheFichierSheet(chemin) {
     }
   }
 
-  sheet(html, () => { if (f.multi) chargerApercus(f); });
+  sheet(html, () => { if (f.multi && !BIB.canal) chargerApercus(f); });
 }
 
 function ligneplateau(chemin, p) {
@@ -373,10 +384,14 @@ function biblioMarquer(chemin, plateau, fait) {
       toast((res && res.error) || 'refusé par le relais', 'bad');
       return;
     }
-    toast(fait ? 'Plateau ' + plateau + ' de ' + nom + ' marqué fait'
-               : 'Plateau ' + plateau + ' remis à faire', 'ok');
+    const mot = fait ? 'Plateau ' + plateau + ' de ' + nom + ' marqué fait'
+                     : 'Plateau ' + plateau + ' remis à faire';
+    toast(res.differe ? mot + ' — le relais suit dans la minute' : mot, 'ok');
     closeSheet();
-    biblioCharger();
+    /* à distance l'ordre met une relève à arriver : on laisse au relais le
+       temps de l'appliquer avant de relire, sinon on réaffiche l'ancien état */
+    if (res.differe) setTimeout(() => biblioCharger(), 70000);
+    else biblioCharger();
   }).catch(e => toast(e.message || 'refusé', 'bad'));
 }
 
@@ -417,8 +432,10 @@ function biblioRattacher(chemin) {
         closeSheet();
         Biblio.rattacher(chemin, v).then(res => {
           if (!res || !res.ok) { toast((res && res.error) || 'refusé', 'bad'); return; }
-          toast(v ? 'Rattaché à ' + v : 'Détaché', 'ok');
-          biblioCharger();
+          toast((v ? 'Rattaché à ' + v : 'Détaché') +
+                (res.differe ? ' — le relais suit dans la minute' : ''), 'ok');
+          if (res.differe) setTimeout(() => biblioCharger(), 70000);
+          else biblioCharger();
         }).catch(e => toast(e.message || 'refusé', 'bad'));
       };
     });

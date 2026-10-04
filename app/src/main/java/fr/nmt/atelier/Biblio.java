@@ -135,8 +135,32 @@ public class Biblio {
 
     /* ---------- ce que l'interface appelle ---------- */
 
+    /**
+     * L'index, par le chemin le plus direct qui réponde.
+     *
+     * À l'atelier, le service du relais : instantané et complet. Ailleurs,
+     * ce que le relais a publié sur le canal : un peu moins frais, et sans
+     * les aperçus de plateaux, mais lisible de n'importe où.
+     */
     static JSONObject index(Context c) {
-        return appel(c, "/biblio", null, DELAI_LECTURE);
+        if (actif(c)) {
+            JSONObject direct = appel(c, "/biblio", null, DELAI_LECTURE);
+            if (direct.optBoolean("ok")) return direct;
+        }
+        try {
+            JSONObject canal = Relay.bibliotheque(c);
+            if (canal.optBoolean("ok")) return canal;
+            return erreur(Relay.actif(c)
+                    ? "le relais n'a encore rien publié de la bibliothèque"
+                    : "aucun relais configuré");
+        } catch (Throwable t) {
+            return erreur(String.valueOf(t.getMessage()));
+        }
+    }
+
+    /** Vrai quand le service du relais répond ici et maintenant. */
+    static boolean surPlace(Context c) {
+        return actif(c) && appel(c, "/vivant", null, 3000).optBoolean("ok");
     }
 
     static JSONObject historique(Context c, int combien) {
@@ -146,21 +170,42 @@ public class Biblio {
     static JSONObject exemplaires(Context c, String chemin, int combien) {
         try {
             JSONObject o = new JSONObject();
+            o.put("quoi", "exemplaires");
             o.put("chemin", chemin);
             o.put("n", combien);
-            return appel(c, "/exemplaires", o, DELAI_LECTURE);
+            if (surPlace(c)) return appel(c, "/exemplaires", o, DELAI_LECTURE);
+            return parLeCanal(c, o);
         } catch (Exception e) {
             return erreur(String.valueOf(e.getMessage()));
+        }
+    }
+
+    /**
+     * Une action qui ne déplace aucun fichier marche aussi hors de
+     * l'atelier : on la publie, et le relais l'applique dans la minute.
+     */
+    private static JSONObject parLeCanal(Context c, JSONObject ordre) {
+        try {
+            if (!Relay.actif(c)) return erreur("aucun relais configuré");
+            Relay.ordre(c, ordre, jeton(c));
+            JSONObject o = new JSONObject();
+            o.put("ok", true);
+            o.put("differe", true);
+            return o;
+        } catch (Throwable t) {
+            return erreur(String.valueOf(t.getMessage()));
         }
     }
 
     static JSONObject exemplairesPlateau(Context c, String chemin, int plateau, int combien) {
         try {
             JSONObject o = new JSONObject();
+            o.put("quoi", "exemplaires");
             o.put("chemin", chemin);
             o.put("plateau", plateau);
             o.put("n", combien);
-            return appel(c, "/exemplaires", o, DELAI_LECTURE);
+            if (surPlace(c)) return appel(c, "/exemplaires", o, DELAI_LECTURE);
+            return parLeCanal(c, o);
         } catch (Exception e) {
             return erreur(String.valueOf(e.getMessage()));
         }
@@ -171,11 +216,13 @@ public class Biblio {
                               boolean fait, String machine) {
         try {
             JSONObject o = new JSONObject();
+            o.put("quoi", "marquer");
             o.put("chemin", chemin);
             o.put("plateau", plateau);
             o.put("fait", fait);
             o.put("machine", machine == null ? "" : machine);
-            return appel(c, "/marquer", o, DELAI_LECTURE);
+            if (surPlace(c)) return appel(c, "/marquer", o, DELAI_LECTURE);
+            return parLeCanal(c, o);
         } catch (Exception e) {
             return erreur(String.valueOf(e.getMessage()));
         }
@@ -184,9 +231,11 @@ public class Biblio {
     static JSONObject commande(Context c, String chemin, String nom) {
         try {
             JSONObject o = new JSONObject();
+            o.put("quoi", "commande");
             o.put("chemin", chemin);
             o.put("commande", nom == null ? "" : nom);
-            return appel(c, "/commande", o, DELAI_LECTURE);
+            if (surPlace(c)) return appel(c, "/commande", o, DELAI_LECTURE);
+            return parLeCanal(c, o);
         } catch (Exception e) {
             return erreur(String.valueOf(e.getMessage()));
         }

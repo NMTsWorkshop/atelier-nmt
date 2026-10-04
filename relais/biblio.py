@@ -22,7 +22,10 @@ Ce module n'est pas lancé seul : relais_atelier.py l'importe, lui donne
 ses relevés et ouvre son petit serveur HTTP sur le réseau local.
 """
 
+import base64
 import ftplib
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -33,6 +36,7 @@ import time
 import urllib.parse
 import urllib.request
 import zipfile
+import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # nombre d'exemplaires écrit dans le nom du fichier
@@ -770,3 +774,133 @@ def vignette(biblio, chemin_relatif, idx):
             with zipfile.ZipFile(entier) as z:
                 return z.read(p["vignette"])
     raise ValueError("pas d'aperçu pour ce plateau")
+
+
+# ----------------------------------------------------------------------
+# la bibliothèque hors de l'atelier
+# ----------------------------------------------------------------------
+#
+# Le service HTTP ci-dessus ne répond que sur le réseau local. C'est bien
+# pour envoyer un fichier de cinquante mégaoctets, mais tout le reste —
+# voir ce qui reste à sortir d'une commande, cocher un plateau — devrait
+# marcher de n'importe où, comme l'état des machines.
+#
+# On passe donc par le même canal que le relevé : le relais publie son
+# index, l'app le lit. Rien à ouvrir sur la box, rien à installer de plus.
+#
+# Deux contraintes de ntfy commandent la forme : un message fait quelques
+# kilo-octets, et le compte gratuit n'en accepte que 250 par jour. L'index
+# est donc compressé puis découpé, et republié seulement quand il change.
+
+TAILLE_LOT = 3000
+_PUBLIE = {"empreinte": None, "at": 0}
+
+
+def resume(index):
+    """L'index allégé de ce qui ne sert qu'en local : les chemins internes
+    des vignettes et la racine du disque n'ont rien à faire sur Internet."""
+    fichiers = []
+    for f in index.get("fichiers") or []:
+        plateaux_legers = []
+        for p in f.get("plateaux") or []:
+            plateaux_legers.append({k: v for k, v in p.items() if k != "vignette"})
+        fichiers.append(dict(f, plateaux=plateaux_legers))
+    return {"familles": index.get("familles") or [], "fichiers": fichiers,
+            "commandes": index.get("commandes") or []}
+
+
+def lots_biblio(index, at=None):
+    """[chaînes JSON] à publier, ou [] si rien n'a changé depuis la
+    dernière fois."""
+    corps = json.dumps(resume(index), ensure_ascii=False, sort_keys=True)
+    empreinte = hashlib.sha256(corps.encode("utf-8")).hexdigest()[:16]
+    if empreinte == _PUBLIE["empreinte"]:
+        return []
+
+    # du JSON se compresse d'un facteur six ou sept : sans ça, une
+    # bibliothèque un peu fournie coûterait dix messages à chaque envoi
+    serre = base64.b64encode(zlib.compress(corps.encode("utf-8"), 9)).decode("ascii")
+    morceaux = [serre[i:i + TAILLE_LOT] for i in range(0, len(serre), TAILLE_LOT)] or [""]
+    quand = at or int(time.time() * 1000)
+    _PUBLIE["empreinte"] = empreinte
+    _PUBLIE["at"] = quand
+    return [json.dumps({"t": "biblio", "at": quand, "e": empreinte,
+                        "lot": i + 1, "lots": len(morceaux), "d": m},
+                       ensure_ascii=False)
+            for i, m in enumerate(morceaux)]
+
+
+def oublier_publication():
+    """Force la republication au prochain tour — après un ordre appliqué,
+    pour que l'app voie tout de suite le résultat de son geste."""
+    _PUBLIE["empreinte"] = None
+
+
+# ----------------------------------------------------------------------
+# les ordres venus de l'app
+# ----------------------------------------------------------------------
+#
+# Dans l'autre sens, l'app publie sur le même canal et le relais lit. Le
+# sujet ntfy est déjà le secret du relais, mais il ne protège que la
+# lecture : quelqu'un qui le connaîtrait pourrait cocher des plateaux. Un
+# ordre porte donc une signature calculée avec le jeton, que seuls l'app
+# et le Pi connaissent.
+
+ORDRES_VUS = []
+PEREMPTION_ORDRE = 2 * 3600 * 1000
+
+
+# On signe une suite de champs séparés par un caractère qui n'apparaît
+# jamais dans un nom de fichier, et non du JSON : deux langages ne
+# sérialisent pas le JSON de la même façon, et une signature qui dépend
+# d'un espace après les deux-points casserait au premier accent.
+CHAMPS_SIGNES = ("id", "at", "quoi", "chemin", "plateau", "fait", "n",
+                 "commande", "machine")
+
+
+def signer(jeton, ordre):
+    def valeur(cle):
+        v = ordre.get(cle)
+        if v is None:
+            return ""
+        if isinstance(v, bool):
+            return "1" if v else "0"
+        return str(v)
+    corps = "\u001f".join(valeur(c) for c in CHAMPS_SIGNES)
+    return hmac.new(str(jeton or "").encode("utf-8"),
+                    corps.encode("utf-8"), hashlib.sha256).hexdigest()[:32]
+
+
+def appliquer_ordre(biblio, ordre, jeton):
+    """Renvoie une phrase pour le journal, ou None si l'ordre est écarté."""
+    ident = ordre.get("id")
+    if not ident or ident in ORDRES_VUS:
+        return None
+    quand = int(ordre.get("at") or 0)
+    if abs(int(time.time() * 1000) - quand) > PEREMPTION_ORDRE:
+        return None          # trop vieux : sans doute un message rejoué
+    if jeton and not hmac.compare_digest(signer(jeton, ordre), str(ordre.get("sig") or "")):
+        return "ordre refusé (signature)"
+
+    ORDRES_VUS.append(ident)
+    del ORDRES_VUS[:-200]
+
+    quoi = ordre.get("quoi")
+    chemin = ordre.get("chemin") or ""
+    try:
+        if quoi == "marquer":
+            biblio.marquer(chemin, ordre.get("plateau", 1),
+                           bool(ordre.get("fait", True)), ordre.get("machine") or "")
+            return "plateau %s de %s : %s" % (
+                ordre.get("plateau"), os.path.basename(chemin),
+                "fait" if ordre.get("fait", True) else "remis à faire")
+        if quoi == "exemplaires":
+            biblio.fixer_exemplaires(chemin, ordre.get("n"), ordre.get("plateau"))
+            return "%s : %s exemplaire(s)" % (os.path.basename(chemin), ordre.get("n"))
+        if quoi == "commande":
+            biblio.fixer_commande(chemin, ordre.get("commande"))
+            return "%s rattaché à %s" % (os.path.basename(chemin),
+                                         ordre.get("commande") or "aucune commande")
+    except ValueError as e:
+        return "ordre impossible : %s" % e
+    return None

@@ -375,6 +375,20 @@ const errors = [];
     if (vu[1] !== 2 || vu[2] !== true) throw new Error('mauvais plateau : ' + JSON.stringify(vu));
   });
 
+  await step('à distance, l\'envoi est remplacé par une explication', async () => {
+    await page.evaluate(() => { BIB.canal = true; render(); });
+    await page.waitForTimeout(200);
+    const note = await page.textContent('#view .note');
+    if (!/réseau de l'atelier/.test(note)) throw new Error('bandeau absent : ' + note);
+    await page.click('#view [data-bib*="casque_jetpack"]');
+    await page.waitForTimeout(300);
+    const txt = await page.textContent('.sheet');
+    if (/Déposer</.test(txt)) throw new Error('le bouton Déposer ne devrait pas être là');
+    if (!/pèse trop/.test(txt)) throw new Error('explication absente');
+    await page.evaluate(() => { closeSheet(); BIB.canal = false; render(); });
+    await page.waitForTimeout(150);
+  });
+
   await step('l\'historique de la farm s\'affiche', async () => {
     await page.click('#tb-actions .tb-btn');
     await page.waitForTimeout(400);

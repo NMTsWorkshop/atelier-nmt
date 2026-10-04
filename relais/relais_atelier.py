@@ -396,6 +396,42 @@ def faut_publier(etats, repos):
     return False, "rien de neuf"
 
 
+def lire_ordres(sujet, depuis):
+    """Les ordres que l'app a publiés sur le canal depuis la dernière fois.
+
+    C'est le chemin de retour : hors de l'atelier, l'app ne peut pas appeler
+    le service local, alors elle publie et le relais vient lire."""
+    url = SERVEUR + urllib.parse.quote(sujet) + "/json?poll=1&since=" + str(depuis)
+    req = urllib.request.Request(url, headers={"User-Agent": "relais-atelier/1"})
+    with urllib.request.urlopen(req, timeout=15) as rep:
+        brut = rep.read().decode("utf-8", "replace")
+    ordres = []
+    for ligne in brut.splitlines():
+        ligne = ligne.strip()
+        if not ligne:
+            continue
+        try:
+            evt = json.loads(ligne)
+            if evt.get("event") != "message":
+                continue
+            charge = json.loads(evt.get("message") or "{}")
+        except ValueError:
+            continue
+        if charge.get("t") == "ordre":
+            ordres.append(charge)
+    return ordres
+
+
+def publier_corps(sujet, corps, titre):
+    req = urllib.request.Request(SERVEUR + urllib.parse.quote(sujet),
+                                 data=corps.encode("utf-8"), method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Title", titre)
+    req.add_header("Priority", "min")
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return r.status
+
+
 def publier(sujet, etats):
     # les champs bruts des machines servent au diagnostic sur place ; ntfy
     # limite un message à quelques kilo-octets, ils n'y vont pas
@@ -456,6 +492,9 @@ def main():
     unique = "--une-fois" in sys.argv
     machines = c.get("machines") or []
     biblio, contexte = demarrer_api(c, machines)
+    # au démarrage on regarde deux heures en arrière, pour reprendre un ordre
+    # publié pendant que le Pi redémarrait ; ensuite une fenêtre glissante
+    derniers_ordres = "2h"
     while True:
         debut = time.time()
         etats = relever(machines)
@@ -467,6 +506,19 @@ def main():
                      ligne["fichier"], ligne["minutes"]), flush=True)
         joignables = sum(1 for e in etats.values() if e.get("ok"))
         datees = sum(1 for e in etats.values() if e.get("stale"))
+        # --- les ordres venus de l'app, appliqués avant de republier ---
+        if c.get("sujet"):
+            try:
+                for ordre in lire_ordres(c["sujet"], derniers_ordres):
+                    dit = bibliotheque.appliquer_ordre(biblio, ordre, c.get("jeton"))
+                    if dit:
+                        print("%s — %s" % (time.strftime("%H:%M:%S"), dit), flush=True)
+                        bibliotheque.oublier_publication()
+                derniers_ordres = "70s"
+            except Exception as e:
+                print("%s — lecture des ordres impossible : %s"
+                      % (time.strftime("%H:%M:%S"), e), file=sys.stderr, flush=True)
+
         oui, pourquoi = faut_publier(etats, repos)
         if oui or unique:
             try:
@@ -494,6 +546,27 @@ def main():
             except Exception as e:
                 print("%s — publication impossible : %s" % (time.strftime("%H:%M:%S"), e),
                       file=sys.stderr, flush=True)
+
+        # --- la bibliothèque, pour qu'elle soit lisible hors de l'atelier ---
+        if c.get("sujet") and time.time() >= PUBLICATION["muet_jusqu_a"]:
+            try:
+                lots = bibliotheque.lots_biblio(biblio.index())
+                for morceau in lots:
+                    publier_corps(c["sujet"], morceau, "biblio")
+                if lots:
+                    print("%s — bibliothèque publiée (%d message%s)"
+                          % (time.strftime("%H:%M:%S"), len(lots),
+                             "s" if len(lots) > 1 else ""), flush=True)
+            except urllib.error.HTTPError as e:
+                if e.code == 429:
+                    PUBLICATION["muet_jusqu_a"] = time.time() + 1800
+                bibliotheque.oublier_publication()
+                print("%s — bibliothèque non publiée (HTTP %s)"
+                      % (time.strftime("%H:%M:%S"), e.code), file=sys.stderr, flush=True)
+            except Exception as e:
+                bibliotheque.oublier_publication()
+                print("%s — bibliothèque non publiée : %s"
+                      % (time.strftime("%H:%M:%S"), e), file=sys.stderr, flush=True)
         if unique:
             print(json.dumps(etats, ensure_ascii=False, indent=1))
             return

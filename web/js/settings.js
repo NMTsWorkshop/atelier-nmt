@@ -48,18 +48,21 @@ function renderSettings() {
   /* ---- bibliothèque de gcodes ---- */
   out += '<div class="sec-title">Bibliothèque de gcodes</div>' +
     '<div class="card">' +
-      '<div class="hint" style="margin-bottom:10px">Le relais garde les fichiers tranchés, rangés par famille de machines, ' +
-        'et dit lesquels ont déjà été imprimés. Ça ne répond que sur le réseau de l\'atelier : ' +
-        'les fichiers pèsent trop pour passer par Internet.</div>' +
+      '<div class="hint" style="margin-bottom:10px">Le relais garde les fichiers tranchés, rangés par commande, ' +
+        'et dit quels plateaux sont déjà sortis. Il publie tout ça sur le canal ci-dessus : ' +
+        'la bibliothèque se lit et se coche de n\'importe où, sans rien régler ici.<br><br>' +
+        'L\'adresse et le jeton ne servent qu\'à l\'atelier, pour y parler en direct : ' +
+        'affichage instantané, aperçus des plateaux, et envoi d\'un fichier sur une machine — ' +
+        'ça, ça ne peut pas passer par Internet.</div>' +
       '<label class="field"><span>Adresse du relais</span>' +
         '<input type="text" name="biblioHost" value="' + esc(Biblio.hote()) + '" placeholder="10.1.2.60" autocapitalize="off" autocorrect="off">' +
         '<div class="hint">L\'adresse du Pi sur le réseau. Le port 8765 est ajouté tout seul. ' +
-          'Laisse vide pour ne pas utiliser la bibliothèque.</div>' +
+          'Facultatif : sans elle, la bibliothèque passe par le canal.</div>' +
       '</label>' +
       '<label class="field"><span>Jeton</span>' +
         '<input type="password" name="biblioToken" value="' + esc(Biblio.jeton()) + '" placeholder="…" autocapitalize="off" autocorrect="off">' +
-        '<div class="hint">Le même que dans relais.json du Pi. Il empêche un appareil de passage sur le wifi ' +
-          'de lancer une impression.</div>' +
+        '<div class="hint">Le même que dans relais.json du Pi. Il empêche un appareil de passage ' +
+          'de lancer une impression, et signe ce que tu coches à distance.</div>' +
       '</label>' +
       '<div class="btn-row">' +
         '<button class="btn" onclick="saveBiblio()">Enregistrer</button>' +

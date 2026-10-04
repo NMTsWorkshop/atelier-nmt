@@ -40,6 +40,113 @@ public class Relay {
         return sujet(c).length() > 0;
     }
 
+    /* ---------- la bibliothèque, par le canal ----------
+
+       Le service du relais ne répond que sur le réseau de l'atelier. Pour
+       que la bibliothèque soit lisible de n'importe où, le Pi la publie
+       sur le même canal que les relevés : compressée, découpée en
+       messages, et seulement quand elle change. */
+
+    static JSONObject bibliotheque(Context c) throws Exception {
+        String sujet = sujet(c);
+        if (sujet.length() == 0) return new JSONObject();
+        String url = "https://ntfy.sh/" + URLEncoder.encode(sujet, "UTF-8")
+                + "/json?poll=1&since=24h";
+        return biblioDepuis(lire(url));
+    }
+
+    /**
+     * Les morceaux arrivent dans l'ordre mais plusieurs versions peuvent
+     * cohabiter sur le canal : on ne garde que la dernière complète.
+     */
+    static JSONObject biblioDepuis(String corps) throws Exception {
+        String derniere = "";
+        java.util.HashMap<String, java.util.TreeMap<Integer, String>> paquets =
+                new java.util.HashMap<String, java.util.TreeMap<Integer, String>>();
+        java.util.HashMap<String, Integer> attendus = new java.util.HashMap<String, Integer>();
+
+        for (String ligne : String.valueOf(corps).split("\n")) {
+            ligne = ligne.trim();
+            if (ligne.length() == 0) continue;
+            try {
+                JSONObject l = new JSONObject(ligne);
+                if (!"message".equals(l.optString("event"))) continue;
+                JSONObject charge = new JSONObject(l.optString("message", "{}"));
+                if (!"biblio".equals(charge.optString("t"))) continue;
+                String e = charge.optString("e");
+                if (e.length() == 0) continue;
+                if (!paquets.containsKey(e)) {
+                    paquets.put(e, new java.util.TreeMap<Integer, String>());
+                    attendus.put(e, charge.optInt("lots", 1));
+                }
+                paquets.get(e).put(charge.optInt("lot", 1), charge.optString("d"));
+                if (paquets.get(e).size() >= attendus.get(e)) derniere = e;
+            } catch (Exception ignored) {
+            }
+        }
+        if (derniere.length() == 0) return new JSONObject();
+
+        StringBuilder serre = new StringBuilder();
+        for (String m : paquets.get(derniere).values()) serre.append(m);
+        byte[] brut = android.util.Base64.decode(serre.toString(), android.util.Base64.DEFAULT);
+
+        java.util.zip.InflaterInputStream in =
+                new java.util.zip.InflaterInputStream(new java.io.ByteArrayInputStream(brut));
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        byte[] tampon = new byte[8192];
+        int n;
+        while ((n = in.read(tampon)) > 0) out.write(tampon, 0, n);
+        in.close();
+
+        JSONObject index = new JSONObject(new String(out.toByteArray(), "UTF-8"));
+        index.put("ok", true);
+        index.put("canal", true);        // lu par le canal, pas en direct
+        return index;
+    }
+
+    /* ---------- les ordres, dans l'autre sens ----------
+
+       Hors de l'atelier, l'app ne peut pas appeler le relais : elle publie
+       un ordre sur le canal, et le relais l'applique à sa relève suivante,
+       dans la minute. Le sujet ne protège que la lecture, alors un ordre
+       porte une signature calculée avec le jeton. */
+
+    private static final String[] CHAMPS_SIGNES = {
+            "id", "at", "quoi", "chemin", "plateau", "fait", "n", "commande", "machine"
+    };
+
+    static String signer(String jeton, JSONObject ordre) {
+        StringBuilder corps = new StringBuilder();
+        for (int i = 0; i < CHAMPS_SIGNES.length; i++) {
+            if (i > 0) corps.append('\u001f');
+            Object v = ordre.opt(CHAMPS_SIGNES[i]);
+            if (v == null || v == JSONObject.NULL) continue;
+            if (v instanceof Boolean) corps.append(((Boolean) v) ? "1" : "0");
+            else corps.append(String.valueOf(v));
+        }
+        try {
+            javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+            mac.init(new javax.crypto.spec.SecretKeySpec(
+                    String.valueOf(jeton == null ? "" : jeton).getBytes("UTF-8"), "HmacSHA256"));
+            byte[] signature = mac.doFinal(corps.toString().getBytes("UTF-8"));
+            StringBuilder hex = new StringBuilder();
+            for (byte b : signature) hex.append(String.format("%02x", b));
+            return hex.substring(0, 32);
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /** Publie un ordre signé. L'appelant fournit « quoi » et ses champs. */
+    static void ordre(Context c, JSONObject ordre, String jeton) throws Exception {
+        ordre.put("t", "ordre");
+        ordre.put("id", Long.toString(System.currentTimeMillis(), 36)
+                + Integer.toString((int) (Math.random() * 46655), 36));
+        ordre.put("at", System.currentTimeMillis());
+        ordre.put("sig", signer(jeton, ordre));
+        publier(c, ordre.toString());
+    }
+
     /**
      * Dernier relevé publié, rangé par adresse IP.
      * Renvoie un objet vide si le relais n'a rien publié récemment.

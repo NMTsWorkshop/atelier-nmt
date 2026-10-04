@@ -158,6 +158,8 @@ PATCHES = [
      '  public boolean has(String k){ return false; }\n'
      '  public boolean optBoolean(String k, boolean d){ return d; }\n'
      '  public boolean optBoolean(String k){ return false; }\n'
+     '  public Object opt(String k){ return null; }\n'
+     '  public static final Object NULL = new Object();\n'
      '  public int length(){ return 0; }\n'
      '  public int optInt(String k){ return 0; }\n'
      '  public int optInt(String k, int d){ return d; }\n'
