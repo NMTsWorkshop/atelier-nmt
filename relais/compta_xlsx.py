@@ -70,7 +70,7 @@ def charger_reglages():
         print("compta.json vient d'être créé. Renseigne-le puis relance.")
         sys.exit(1)
 
-    with open(REGLAGES, encoding="utf-8") as f:
+    with open(REGLAGES, encoding="utf-8-sig") as f:
         r = json.load(f)
     if not r.get("sujet") or not r.get("tableur"):
         print("compta.json : il manque 'sujet' ou 'tableur'.")
