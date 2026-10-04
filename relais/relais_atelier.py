@@ -277,7 +277,23 @@ def lire_bambu(m, duree=15):
                         "color": "#" + c[:6] if len(c) >= 6 else ""})
 
     fichier = p.get("subtask_name") or p.get("gcode_file") or ""
+
+    # Ce que la machine dit d'elle-même, gardé tel quel. Un .gcode.3mf peut
+    # contenir plusieurs plateaux, et rien dans la documentation publique ne
+    # dit si la P1S annonce lequel elle imprime. On enregistre donc ses
+    # champs bruts : une vraie impression multi-plateaux tranchera.
+    brut = {}
+    for champ in ("gcode_file", "subtask_name", "subtask_id", "task_id",
+                  "print_type", "job_id", "mc_print_sub_stage", "layer_num",
+                  "total_layer_num"):
+        if p.get(champ) not in (None, ""):
+            brut[champ] = p.get(champ)
+    for champ in p:
+        if "plate" in champ.lower() and p.get(champ) not in (None, ""):
+            brut[champ] = p.get(champ)
+
     return {"ok": True, "kind": "bambu", "state": normalise(p.get("gcode_state")),
+            "brut": brut,
             "file": fichier, "percent": int(p.get("mc_percent", -1)),
             "remaining": int(p.get("mc_remaining_time", -1)),
             "nozzle": p.get("nozzle_temper", 0), "bed": p.get("bed_temper", 0),
@@ -341,7 +357,11 @@ def relever(machines):
 
 
 def publier(sujet, etats):
-    corps = json.dumps({"v": 1, "at": int(time.time() * 1000), "machines": etats},
+    # les champs bruts des machines servent au diagnostic sur place ; ntfy
+    # limite un message à quelques kilo-octets, ils n'y vont pas
+    legers = dict((k, dict((c, v) for c, v in e.items() if c != "brut"))
+                  for k, e in etats.items())
+    corps = json.dumps({"v": 1, "at": int(time.time() * 1000), "machines": legers},
                        ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(SERVEUR + sujet, data=corps, method="POST")
     req.add_header("Content-Type", "application/json")

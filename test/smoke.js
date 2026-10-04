@@ -232,30 +232,55 @@ const errors = [];
   });
   await page.waitForTimeout(300);
 
-  /* La bibliothèque vit sur le Pi : en navigateur on bouchonne le pont
-     Android pour que l'écran se dessine quand même, avec de quoi voir
-     les trois états d'un fichier (jamais imprimé, en cours, fait). */
+  /* La bibliotheque vit sur le Pi : en navigateur on bouchonne le pont
+     Android pour que l'ecran se dessine quand meme, avec une commande qui
+     s'etale sur les deux familles et un 3mf a trois plateaux. */
   console.log('\n— bibliothèque —');
   await page.evaluate(() => {
+    const plat = (idx, min, g, objets, faits) => ({
+      idx: idx, minutes: min, grammes: g, objets: objets, vignette: 'Metadata/plate_' + idx + '.png',
+      exemplaires: 1, faits: faits, reste: faits ? 0 : 1,
+      dernier: faits ? Date.now() - 7200000 : 0, machines: faits ? ['P1S 1'] : []
+    });
+    const casque = {
+      chemin: 'p1s/1045 Mando/casque_jetpack.gcode.3mf', famille: 'p1s',
+      nom: 'casque_jetpack.gcode.3mf', dossier: '1045 Mando', commande: '1045 Mando',
+      taille: 48234567, modifie: Date.now() - 86400000, multi: true,
+      plateaux: [plat(1, 307, 186, ['casque_coque', 'casque_visiere'], 1),
+                 plat(2, 121, 74, ['jetpack_gauche'], 0),
+                 plat(3, 121, 74, ['jetpack_droit'], 0)],
+      exemplaires: 3, faits: 1, reste: 2, dernier: Date.now() - 7200000,
+      machines: ['P1S 1'], minutes: 549
+    };
+    const socle = {
+      chemin: 'k2/1045 Mando/socle.gcode', famille: 'k2', nom: 'socle.gcode',
+      dossier: '1045 Mando', commande: '1045 Mando', taille: 2411000,
+      modifie: Date.now() - 3600000, multi: false,
+      plateaux: [{ idx: 0, minutes: 0, grammes: 0, objets: [], vignette: '',
+                   exemplaires: 1, faits: 0, reste: 1, dernier: 0, machines: [] }],
+      exemplaires: 1, faits: 0, reste: 1, dernier: 0, machines: [], minutes: 0
+    };
+    const blaster = {
+      chemin: 'p1s/blaster.gcode.3mf', famille: 'p1s', nom: 'blaster.gcode.3mf',
+      dossier: '', commande: '', taille: 9123000, modifie: Date.now() - 172800000,
+      multi: false,
+      plateaux: [{ idx: 1, minutes: 190, grammes: 95, objets: ['blaster'], vignette: '',
+                   exemplaires: 1, faits: 2, reste: 0, dernier: Date.now() - 90000000,
+                   machines: ['P1S 1', 'P1S 2'] }],
+      exemplaires: 1, faits: 2, reste: 0, dernier: Date.now() - 90000000,
+      machines: ['P1S 1', 'P1S 2'], minutes: 190
+    };
     const index = {
       ok: true, racine: '/opt/relais-atelier/gcodes', familles: ['k2', 'p1s'],
-      fichiers: [
-        { chemin: 'k2/casques/mando_x3.gcode', famille: 'k2', nom: 'mando_x3.gcode',
-          dossier: 'casques', taille: 48234567, modifie: Date.now() - 86400000,
-          exemplaires: 3, faits: 1, reste: 2, dernier: Date.now() - 7200000,
-          machines: ['K2 Plus 1'], minutes: 312 },
-        { chemin: 'k2/support.gcode', famille: 'k2', nom: 'support.gcode', dossier: '',
-          taille: 2411000, modifie: Date.now() - 3600000,
-          exemplaires: 1, faits: 0, reste: 1, dernier: 0, machines: [], minutes: 0 },
-        { chemin: 'p1s/blaster.gcode.3mf', famille: 'p1s', nom: 'blaster.gcode.3mf', dossier: '',
-          taille: 9123000, modifie: Date.now() - 172800000,
-          exemplaires: 1, faits: 2, reste: 0, dernier: Date.now() - 90000000,
-          machines: ['P1S 1', 'P1S 2'], minutes: 640 }
-      ]
+      fichiers: [socle, casque, blaster],
+      commandes: [{ nom: '1045 Mando', fichiers: 2, familles: ['k2', 'p1s'],
+                    plateaux: 4, faits: 1, reste: 3, minutes: 549,
+                    dernier: Date.now() - 7200000, chemins: [socle.chemin, casque.chemin],
+                    termine: false }]
     };
     const historique = { ok: true, lignes: [
-      { machine: 'K2 Plus 1', fichier: 'mando_x3.gcode', etat: 'fini',
-        fin: Date.now() - 7200000, minutes: 312 },
+      { machine: 'P1S 1', fichier: 'casque_jetpack.gcode.3mf', etat: 'fini',
+        fin: Date.now() - 7200000, minutes: 307 },
       { machine: 'P1S 2', fichier: 'blaster.gcode.3mf', etat: 'échec',
         fin: Date.now() - 86400000, minutes: 41 }
     ] };
@@ -266,6 +291,10 @@ const errors = [];
       biblioIndex: id => setTimeout(() => window.NMTcb(id, JSON.stringify(index)), 10),
       biblioHistory: (n, id) => setTimeout(() => window.NMTcb(id, JSON.stringify(historique)), 10),
       biblioCopies: (c, n, id) => setTimeout(() => window.NMTcb(id, '{"ok":true}'), 10),
+      biblioPlateCopies: (c, p, n, id) => setTimeout(() => window.NMTcb(id, '{"ok":true}'), 10),
+      biblioMark: (c, p, f, m, id) => setTimeout(() => window.NMTcb(id, '{"ok":true}'), 10),
+      biblioOrder: (c, n, id) => setTimeout(() => window.NMTcb(id, '{"ok":true}'), 10),
+      biblioThumb: (c, p, id) => setTimeout(() => window.NMTcb(id, '{"ok":false}'), 10),
       biblioPush: (c, m, l, id) => setTimeout(() => window.NMTcb(id, '{"ok":true,"lance":true}'), 10),
       testBiblio: id => setTimeout(() => window.NMTcb(id, '{"ok":true,"fichiers":3}'), 10)
     });
@@ -279,6 +308,18 @@ const errors = [];
     if (n !== 3) throw new Error('3 fichiers attendus, ' + n + ' affichés');
   });
 
+  await step('la commande regroupe les deux familles', async () => {
+    const tete = await page.textContent('#view .cmd-head');
+    if (!/1045 Mando/.test(tete)) throw new Error('commande absente : ' + tete);
+    if (!/1 plateau sur 4/.test(tete)) throw new Error('avancement faux : ' + tete);
+    if (!/K2 \+ P1S/.test(tete)) throw new Error('familles absentes : ' + tete);
+  });
+
+  await step('ce qui n\'a pas de commande est à part', async () => {
+    const titres = await page.$$eval('#view .sec-title', e => e.map(x => x.textContent));
+    if (!titres.some(t => /Hors commande/.test(t))) throw new Error('section manquante');
+  });
+
   await step('la recherche filtre sans perdre le curseur', async () => {
     await page.fill('#bib-q', 'blaster');
     await page.waitForTimeout(150);
@@ -290,7 +331,16 @@ const errors = [];
     await page.waitForTimeout(120);
   });
 
-  await step('le filtre « à imprimer » écarte ce qui est fait', async () => {
+  await step('chercher par commande marche aussi', async () => {
+    await page.fill('#bib-q', '1045');
+    await page.waitForTimeout(150);
+    const vus = await page.$$eval('#view [data-bib]', e => e.filter(x => x.style.display !== 'none').length);
+    if (vus !== 2) throw new Error('2 fichiers attendus pour 1045, ' + vus);
+    await page.fill('#bib-q', '');
+    await page.waitForTimeout(120);
+  });
+
+  await step('le filtre « à sortir » écarte ce qui est fait', async () => {
     await page.click('#view .chip:nth-child(2)');
     await page.waitForTimeout(200);
     const n = await page.$$eval('#view [data-bib]', e => e.length);
@@ -299,13 +349,30 @@ const errors = [];
     await page.waitForTimeout(200);
   });
 
-  await step('la fiche d\'un fichier s\'ouvre', async () => {
-    await page.click('#view [data-bib]');
-    await page.waitForTimeout(250);
-    const t = await page.textContent('.sheet h2');
-    if (!/mando/i.test(t)) throw new Error('mauvaise fiche : ' + t);
-    await page.screenshot({ path: OUT + '/biblio-fiche.png' });
-    await page.evaluate(() => closeSheet());
+  await step('les plateaux d\'un 3mf sont listés un par un', async () => {
+    await page.click('#view [data-bib*="casque_jetpack"]');
+    await page.waitForTimeout(300);
+    const n = await page.$$eval('.sheet .plateau', e => e.length);
+    if (n !== 3) throw new Error('3 plateaux attendus, ' + n);
+    const fini = await page.$$eval('.sheet .plateau.fini', e => e.length);
+    if (fini !== 1) throw new Error('1 plateau déjà sorti attendu, ' + fini);
+    const t = await page.textContent('.sheet .plateau .s');
+    if (!/casque_coque/.test(t)) throw new Error('objets du plateau absents : ' + t);
+    await page.screenshot({ path: OUT + '/biblio-plateaux.png' });
+  });
+
+  await step('cocher un plateau le signale au relais', async () => {
+    let vu = null;
+    await page.evaluate(() => { window.__mark = null; });
+    await page.evaluate(() => {
+      const vrai = window.NMT.biblioMark;
+      window.NMT.biblioMark = (c, p, f, m, id) => { window.__mark = [c, p, f]; vrai(c, p, f, m, id); };
+    });
+    await page.click('.sheet .plateau:nth-of-type(2) .btn.primary');
+    await page.waitForTimeout(400);
+    vu = await page.evaluate(() => window.__mark);
+    if (!vu) throw new Error('rien envoyé au relais');
+    if (vu[1] !== 2 || vu[2] !== true) throw new Error('mauvais plateau : ' + JSON.stringify(vu));
   });
 
   await step('l\'historique de la farm s\'affiche', async () => {

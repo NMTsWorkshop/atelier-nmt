@@ -32,6 +32,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # nombre d'exemplaires écrit dans le nom du fichier
@@ -72,7 +73,8 @@ class Bibliotheque(object):
     def __init__(self, racine, familles):
         self.racine = os.path.abspath(os.path.expanduser(racine))
         self.familles = list(familles) or ["k2", "p1s"]
-        self.reglages = os.path.join(self.racine, "exemplaires.json")
+        self.etat_chemin = os.path.join(self.racine, "biblio.json")
+        self.ancien_etat = os.path.join(self.racine, "exemplaires.json")
         self.journal = os.path.join(self.racine, "historique.jsonl")
         for f in self.familles:
             try:
@@ -80,30 +82,101 @@ class Bibliotheque(object):
             except OSError:
                 pass
 
-    # --- exemplaires demandés, quand l'app les a fixés à la main --------
+    # --- ce que l'app a fixé à la main --------------------------------
+    #
+    # biblio.json garde ce qu'aucun fichier ne peut dire : à quelle
+    # commande un fichier appartient quand son dossier ne le dit pas, et
+    # quels plateaux sont sortis quand la machine ne l'annonce pas.
 
-    def _surcharges(self):
+    def etat(self):
         try:
-            with open(self.reglages, encoding="utf-8") as f:
+            with open(self.etat_chemin, encoding="utf-8") as f:
                 d = json.load(f)
-            return d if isinstance(d, dict) else {}
+            if isinstance(d, dict) and "fichiers" in d:
+                return d
         except Exception:
-            return {}
+            pass
+        # première lecture : on reprend l'ancien exemplaires.json s'il existe
+        fichiers = {}
+        try:
+            with open(self.ancien_etat, encoding="utf-8") as f:
+                for rel, n in (json.load(f) or {}).items():
+                    fichiers[rel] = {"exemplaires": int(n)}
+        except Exception:
+            pass
+        return {"fichiers": fichiers}
 
-    def fixer_exemplaires(self, chemin, nombre):
+    def _ecrire_etat(self, d):
+        provisoire = self.etat_chemin + ".tmp"
+        with open(provisoire, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=1)
+        os.replace(provisoire, self.etat_chemin)
+
+    def _modifier(self, chemin, modifier):
         chemin = self.verifier(chemin)
         rel = os.path.relpath(chemin, self.racine).replace(os.sep, "/")
         with VERROU:
-            d = self._surcharges()
-            if nombre is None or int(nombre) <= 0:
-                d.pop(rel, None)
-            else:
-                d[rel] = int(nombre)
-            provisoire = self.reglages + ".tmp"
-            with open(provisoire, "w", encoding="utf-8") as f:
-                json.dump(d, f, ensure_ascii=False, indent=1)
-            os.replace(provisoire, self.reglages)
+            d = self.etat()
+            entree = d["fichiers"].setdefault(rel, {})
+            modifier(entree)
+            if not entree:
+                d["fichiers"].pop(rel, None)
+            self._ecrire_etat(d)
         return rel
+
+    def fixer_exemplaires(self, chemin, nombre, plateau=None):
+        def faire(e):
+            if plateau is None:
+                if nombre is None or int(nombre) <= 0:
+                    e.pop("exemplaires", None)
+                else:
+                    e["exemplaires"] = int(nombre)
+                return
+            p = e.setdefault("plateaux", {}).setdefault(str(int(plateau)), {})
+            if nombre is None or int(nombre) <= 0:
+                p.pop("exemplaires", None)
+            else:
+                p["exemplaires"] = int(nombre)
+            if not p:
+                e["plateaux"].pop(str(int(plateau)), None)
+            if not e.get("plateaux"):
+                e.pop("plateaux", None)
+        return self._modifier(chemin, faire)
+
+    def fixer_commande(self, chemin, nom):
+        def faire(e):
+            nom_propre = str(nom or "").strip()
+            if nom_propre:
+                e["commande"] = nom_propre
+            else:
+                e.pop("commande", None)
+        return self._modifier(chemin, faire)
+
+    def marquer(self, chemin, plateau, fait=True, machine=""):
+        """« Celui-là, il est sorti » — ou l'inverse quand on s'est trompé."""
+        quand = int(time.time() * 1000)
+
+        def faire(e):
+            p = e.setdefault("plateaux", {}).setdefault(str(int(plateau)), {})
+            faits = int(p.get("faits", 0))
+            if fait:
+                p["faits"] = faits + 1
+                p["dernier"] = quand
+                if machine:
+                    noms = p.setdefault("machines", [])
+                    if machine not in noms:
+                        noms.append(machine)
+            else:
+                p["faits"] = max(0, faits - 1)
+                if p["faits"] == 0:
+                    p.pop("faits", None)
+                    p.pop("dernier", None)
+                    p.pop("machines", None)
+            if not p:
+                e["plateaux"].pop(str(int(plateau)), None)
+            if not e.get("plateaux"):
+                e.pop("plateaux", None)
+        return self._modifier(chemin, faire)
 
     # --- chemins ------------------------------------------------------
 
@@ -121,7 +194,7 @@ class Bibliotheque(object):
 
     def index(self):
         comptes = self.comptes()
-        surcharges = self._surcharges()
+        etat = self.etat()["fichiers"]
         fichiers = []
         for famille in self.familles:
             dossier = os.path.join(self.racine, famille)
@@ -137,29 +210,98 @@ class Bibliotheque(object):
                         st = os.stat(entier)
                     except OSError:
                         continue
-                    cle = base_nom(nom)
-                    passe = comptes.get(cle) or {}
-                    demande = surcharges.get(rel)
-                    if demande is None:
-                        m = EXEMPLAIRES.search(os.path.splitext(nom)[0])
-                        demande = int(m.group(1)) if m else 1
-                    faits = int(passe.get("faits", 0))
-                    fichiers.append({
-                        "chemin": rel,
-                        "famille": famille,
-                        "nom": nom,
-                        "dossier": os.path.dirname(rel).split("/", 1)[1] if "/" in os.path.dirname(rel) else "",
-                        "taille": st.st_size,
-                        "modifie": int(st.st_mtime * 1000),
-                        "exemplaires": int(demande),
-                        "faits": faits,
-                        "reste": max(0, int(demande) - faits),
-                        "dernier": passe.get("dernier") or 0,
-                        "machines": passe.get("machines") or [],
-                        "minutes": passe.get("minutes") or 0,
-                    })
-        fichiers.sort(key=lambda f: (f["famille"], f["chemin"].lower()))
-        return {"racine": self.racine, "familles": self.familles, "fichiers": fichiers}
+                    fichiers.append(self._fiche(rel, entier, st, famille,
+                                                etat.get(rel) or {}, comptes))
+        fichiers.sort(key=lambda f: (f["commande"] or "￿", f["famille"], f["chemin"].lower()))
+        return {"racine": self.racine, "familles": self.familles,
+                "fichiers": fichiers, "commandes": self._commandes(fichiers)}
+
+    def _fiche(self, rel, entier, st, famille, regle, comptes):
+        parts = rel.split("/")
+        dossier = "/".join(parts[1:-1])
+        nom = parts[-1]
+
+        # le sous-dossier fait la commande, sauf si l'app en a décidé autrement
+        commande = regle.get("commande")
+        if commande is None:
+            commande = parts[1] if len(parts) > 2 else ""
+
+        liste = plateaux(entier)
+        passe = comptes.get(base_nom(nom)) or {}
+        demande_fichier = regle.get("exemplaires")
+        if demande_fichier is None:
+            m = EXEMPLAIRES.search(os.path.splitext(nom)[0])
+            demande_fichier = int(m.group(1)) if m else 1
+        regles_plateaux = regle.get("plateaux") or {}
+
+        if len(liste) > 1:
+            # plusieurs plateaux : chacun se compte à part, et seule l'app
+            # sait aujourd'hui lequel est sorti
+            sorties = []
+            for p in liste:
+                r = regles_plateaux.get(str(p["idx"])) or {}
+                voulu = int(r.get("exemplaires", demande_fichier))
+                faits = int(r.get("faits", 0))
+                sorties.append(dict(p, exemplaires=voulu, faits=faits,
+                                    reste=max(0, voulu - faits),
+                                    dernier=r.get("dernier", 0),
+                                    machines=r.get("machines") or []))
+        else:
+            # un seul plateau : c'est le fichier entier, et l'historique du
+            # relais suffit à savoir s'il est sorti
+            r = regles_plateaux.get("0") or regles_plateaux.get("1") or {}
+            faits = int(passe.get("faits", 0)) + int(r.get("faits", 0))
+            dernier = max(int(passe.get("dernier", 0)), int(r.get("dernier", 0)))
+            machines = list(passe.get("machines") or [])
+            for m in (r.get("machines") or []):
+                if m not in machines:
+                    machines.append(m)
+            seul = liste[0] if liste else {"idx": 0, "minutes": 0, "grammes": 0,
+                                           "objets": [], "vignette": ""}
+            sorties = [dict(seul, exemplaires=demande_fichier, faits=faits,
+                            reste=max(0, demande_fichier - faits),
+                            dernier=dernier, machines=machines)]
+
+        return {
+            "chemin": rel, "famille": famille, "nom": nom, "dossier": dossier,
+            "commande": commande,
+            "taille": st.st_size, "modifie": int(st.st_mtime * 1000),
+            "multi": len(liste) > 1,
+            "plateaux": sorties,
+            "exemplaires": sum(p["exemplaires"] for p in sorties),
+            "faits": sum(min(p["faits"], p["exemplaires"]) for p in sorties),
+            "reste": sum(p["reste"] for p in sorties),
+            "dernier": max([p["dernier"] for p in sorties] or [0]),
+            "machines": [m for p in sorties for m in p["machines"]],
+            "minutes": sum(p["minutes"] for p in sorties),
+        }
+
+    def _commandes(self, fichiers):
+        """Une commande n'est finie que quand ses plateaux sont tous sortis,
+        K2 et Bambu confondues : c'est tout l'intérêt de les regrouper."""
+        par_nom = {}
+        for f in fichiers:
+            if not f["commande"]:
+                continue
+            c = par_nom.setdefault(f["commande"], {
+                "nom": f["commande"], "fichiers": 0, "familles": [],
+                "plateaux": 0, "faits": 0, "reste": 0, "minutes": 0,
+                "dernier": 0, "chemins": []})
+            c["fichiers"] += 1
+            c["plateaux"] += sum(p["exemplaires"] for p in f["plateaux"])
+            c["faits"] += f["faits"]
+            c["reste"] += f["reste"]
+            c["minutes"] += f["minutes"]
+            c["dernier"] = max(c["dernier"], f["dernier"])
+            c["chemins"].append(f["chemin"])
+            if f["famille"] not in c["familles"]:
+                c["familles"].append(f["famille"])
+        sorties = []
+        for c in par_nom.values():
+            c["termine"] = c["reste"] == 0
+            sorties.append(c)
+        sorties.sort(key=lambda c: (c["termine"], c["nom"].lower()))
+        return sorties
 
     # --- l'historique --------------------------------------------------
 
@@ -402,6 +544,16 @@ class Service(BaseHTTPRequestHandler):
                                             "machines": self.ctx.etats})
             if route.path == "/biblio":
                 return self._repondre(200, dict(self.ctx.biblio.index(), ok=True))
+            if route.path == "/vignette":
+                chemin = (params.get("chemin") or [""])[0]
+                idx = int((params.get("plateau") or ["1"])[0])
+                octets = vignette(self.ctx.biblio, chemin, idx)
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", str(len(octets)))
+                self.end_headers()
+                self.wfile.write(octets)
+                return
             if route.path == "/historique":
                 n = int((params.get("n") or ["200"])[0])
                 return self._repondre(200, {"ok": True,
@@ -417,7 +569,17 @@ class Service(BaseHTTPRequestHandler):
         corps = self._corps()
         try:
             if route.path == "/exemplaires":
-                rel = self.ctx.biblio.fixer_exemplaires(corps.get("chemin"), corps.get("n"))
+                rel = self.ctx.biblio.fixer_exemplaires(
+                    corps.get("chemin"), corps.get("n"), corps.get("plateau"))
+                return self._repondre(200, {"ok": True, "chemin": rel})
+            if route.path == "/marquer":
+                rel = self.ctx.biblio.marquer(
+                    corps.get("chemin"), corps.get("plateau", 1),
+                    bool(corps.get("fait", True)), corps.get("machine") or "")
+                return self._repondre(200, {"ok": True, "chemin": rel})
+            if route.path == "/commande":
+                rel = self.ctx.biblio.fixer_commande(corps.get("chemin"),
+                                                     corps.get("commande"))
                 return self._repondre(200, {"ok": True, "chemin": rel})
             if route.path == "/pousser":
                 res = pousser(self.ctx.biblio, self.ctx.machines,
@@ -480,9 +642,11 @@ def suivre(biblio, etats):
         if phase in ("printing", "paused") and fichier:
             if suivi is None or suivi.get("fichier") != fichier:
                 EN_COURS[cle] = {"fichier": fichier, "debut": etat.get("at"),
-                                 "pourcent": pourcent}
+                                 "pourcent": pourcent, "brut": etat.get("brut") or {}}
             else:
                 suivi["pourcent"] = max(suivi.get("pourcent", -1), pourcent)
+                if etat.get("brut"):
+                    suivi["brut"] = etat["brut"]
             continue
 
         if suivi is None:
@@ -503,7 +667,106 @@ def suivre(biblio, etats):
                  "debut": debut, "fin": etat.get("at"),
                  "minutes": max(0, int(((etat.get("at") or 0) - (debut or 0)) / 60000)),
                  "pourcent": suivi.get("pourcent", -1)}
+        # ce que la machine disait d'elle-même pendant l'impression : c'est
+        # là-dedans qu'on cherchera de quoi reconnaître le plateau imprimé
+        if suivi.get("brut"):
+            ligne["brut"] = suivi["brut"]
         biblio.noter(ligne)
         ajouts.append(ligne)
         EN_COURS.pop(cle, None)
     return ajouts
+
+
+# ----------------------------------------------------------------------
+# les plateaux d'un fichier Bambu
+# ----------------------------------------------------------------------
+#
+# Un .gcode.3mf exporté par Bambu Studio peut contenir plusieurs plateaux,
+# chacun avec son propre gcode dans Metadata/plate_N.gcode. C'est une
+# impression chacun : les compter séparément est la seule façon de savoir
+# ce qui reste à sortir pour une commande.
+#
+# slice_info.config, à côté, donne pour chaque plateau son poids et sa
+# durée prévue. S'il manque ou qu'il a changé de forme, on se rabat sur la
+# simple présence des gcodes : mieux vaut une liste sans chiffres qu'un
+# fichier qu'on refuse de lire.
+
+PLATEAU_GCODE = re.compile(r"(?:^|/)Metadata/plate_(\d+)\.gcode$", re.I)
+PLATEAU_IMAGE = re.compile(r"(?:^|/)Metadata/plate_(\d+)(?:_small)?\.png$", re.I)
+
+_CACHE_PLATEAUX = {}
+
+
+def plateaux(chemin):
+    """[{idx, minutes, grammes, objets, vignette}] pour un 3mf, [] sinon.
+
+    Le résultat est gardé tant que le fichier ne bouge pas : ouvrir chaque
+    zip à chaque listage rendrait l'écran lent dès quelques dizaines de
+    fichiers."""
+    if not chemin.lower().endswith(".3mf"):
+        return []
+    try:
+        st = os.stat(chemin)
+    except OSError:
+        return []
+    cle = (st.st_mtime_ns, st.st_size)
+    garde = _CACHE_PLATEAUX.get(chemin)
+    if garde and garde[0] == cle:
+        return garde[1]
+
+    trouves = {}
+    try:
+        with zipfile.ZipFile(chemin) as z:
+            noms = z.namelist()
+            for nom in noms:
+                m = PLATEAU_GCODE.search(nom)
+                if m:
+                    trouves[int(m.group(1))] = {"idx": int(m.group(1)), "minutes": 0,
+                                                "grammes": 0, "objets": [], "vignette": ""}
+            for nom in noms:
+                m = PLATEAU_IMAGE.search(nom)
+                if m and int(m.group(1)) in trouves and not trouves[int(m.group(1))]["vignette"]:
+                    trouves[int(m.group(1))]["vignette"] = nom
+            if trouves:
+                for nom in noms:
+                    if nom.lower().endswith("slice_info.config"):
+                        _lire_slice_info(z.read(nom).decode("utf-8", "replace"), trouves)
+                        break
+    except Exception:
+        trouves = {}
+
+    out = [trouves[k] for k in sorted(trouves)]
+    _CACHE_PLATEAUX[chemin] = (cle, out)
+    return out
+
+
+def _lire_slice_info(xml, trouves):
+    """slice_info.config est un petit XML : une balise <plate> par plateau,
+    des <metadata key= value=> dedans. On n'en lit que trois choses."""
+    for bloc in re.findall(r"<plate\b.*?</plate>", xml, re.S):
+        idx = re.search(r'key="index"\s+value="(\d+)"', bloc)
+        if not idx or int(idx.group(1)) not in trouves:
+            continue
+        p = trouves[int(idx.group(1))]
+        secondes = re.search(r'key="prediction"\s+value="([\d.]+)"', bloc)
+        if secondes:
+            p["minutes"] = int(round(float(secondes.group(1)) / 60.0))
+        poids = re.search(r'key="weight"\s+value="([\d.]+)"', bloc)
+        if poids:
+            p["grammes"] = int(round(float(poids.group(1))))
+        for obj in re.findall(r'<object\b[^>]*\bname="([^"]*)"', bloc):
+            nom = os.path.splitext(os.path.basename(obj))[0]
+            if nom and nom not in p["objets"]:
+                p["objets"].append(nom)
+        p["objets"] = p["objets"][:6]
+
+
+def vignette(biblio, chemin_relatif, idx):
+    """Les octets PNG de l'aperçu d'un plateau, pour que l'app montre ce
+    qu'elle propose d'imprimer au lieu d'un nom de fichier."""
+    entier = biblio.verifier(chemin_relatif)
+    for p in plateaux(entier):
+        if p["idx"] == int(idx) and p["vignette"]:
+            with zipfile.ZipFile(entier) as z:
+                return z.read(p["vignette"])
+    raise ValueError("pas d'aperçu pour ce plateau")

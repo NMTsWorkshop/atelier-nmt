@@ -69,7 +69,7 @@ function renderBiblio() {
     setTop('Fichiers', 'Lecture de la bibliothèque…');
     return '<div class="card"><div class="rowitem"><div class="grow">' +
       '<div class="t">Lecture de la bibliothèque…</div>' +
-      '<div class="s">Le relais liste les fichiers et leur historique.</div>' +
+      '<div class="s">Le relais liste les fichiers, les plateaux et leur historique.</div>' +
       '</div></div></div>';
   }
 
@@ -84,54 +84,78 @@ function renderBiblio() {
   }
 
   const tous = BIB.fichiers || [];
-  const aFaire = tous.filter(f => f.reste > 0).length;
+  const commandes = BIB.commandes || [];
+  const encours = commandes.filter(c => !c.termine).length;
+  const reste = tous.reduce((n, f) => n + f.reste, 0);
+
   setTop('Fichiers',
-    tous.length + ' fichier' + (tous.length > 1 ? 's' : '') +
-      (aFaire ? ' · ' + aFaire + ' à imprimer' : ' · tout est imprimé'),
+    (commandes.length
+      ? encours + ' commande' + (encours > 1 ? 's' : '') + ' en cours'
+      : tous.length + ' fichier' + (tous.length > 1 ? 's' : '')) +
+      (reste ? ' · ' + reste + ' plateau' + (reste > 1 ? 'x' : '') + ' à sortir' : ' · rien à sortir'),
     '<button class="tb-btn" onclick="biblioHistorique()">' + iconClock() + 'Historique</button>' +
     '<button class="tb-btn" onclick="biblioRafraichir()">' + iconSync() + '</button>');
 
   if (!tous.length) {
     return emptyState('Bibliothèque vide',
-      'Dépose tes fichiers tranchés dans le dossier partagé du relais, un sous-dossier par famille de machines.');
+      'Dépose tes fichiers tranchés dans le dossier partagé du relais. Un sous-dossier par commande, ' +
+      'sous k2 ou p1s selon la machine.');
   }
 
   const q = BIB_FILTRE.trim().toLowerCase();
   let out = '<div class="card tight">' +
-    '<input id="bib-q" type="search" placeholder="Chercher un fichier" ' +
+    '<input id="bib-q" type="search" placeholder="Chercher un fichier ou une commande" ' +
       'oninput="biblioChercher(this.value)" value="' + esc(BIB_FILTRE) + '">' +
     '<div class="chips" style="margin-top:8px">' +
       '<button type="button" class="chip' + (BIB_RESTE ? '' : ' on') + '" onclick="biblioFiltreReste(false)">Tout</button>' +
-      '<button type="button" class="chip' + (BIB_RESTE ? ' on' : '') + '" onclick="biblioFiltreReste(true)">À imprimer</button>' +
+      '<button type="button" class="chip' + (BIB_RESTE ? ' on' : '') + '" onclick="biblioFiltreReste(true)">À sortir</button>' +
     '</div></div>';
 
   const visibles = tous.filter(f => {
     if (BIB_RESTE && f.reste <= 0) return false;
     if (!q) return true;
-    return (f.chemin + ' ' + f.nom).toLowerCase().indexOf(q) >= 0;
+    return (f.chemin + ' ' + f.nom + ' ' + (f.commande || '')).toLowerCase().indexOf(q) >= 0;
   });
 
   if (!visibles.length) {
-    out += '<div class="card"><div class="rowitem"><div class="grow"><div class="t">Rien de ce nom</div>' +
-      '<div class="s">' + (BIB_RESTE ? 'Essaie sans le filtre « à imprimer ».' : 'Aucun fichier ne correspond.') +
+    return out + '<div class="card"><div class="rowitem"><div class="grow"><div class="t">Rien de ce nom</div>' +
+      '<div class="s">' + (BIB_RESTE ? 'Essaie sans le filtre « à sortir ».' : 'Aucun fichier ne correspond.') +
       '</div></div></div></div>';
-    return out;
   }
 
-  const parFamille = {};
-  visibles.forEach(f => { (parFamille[f.famille] = parFamille[f.famille] || []).push(f); });
-
-  (BIB.familles || Object.keys(parFamille)).forEach(fam => {
-    const liste = parFamille[fam];
-    if (!liste || !liste.length) return;
-    const reste = liste.filter(f => f.reste > 0).length;
-    out += '<div class="sec-title" data-fam="' + esc(fam) + '">' + esc(familleLabel(fam)) +
-      ' <span class="norm">— ' + liste.length + ' fichier' + (liste.length > 1 ? 's' : '') +
-      (reste ? ', ' + reste + ' à imprimer' : '') + '</span></div>';
-    out += '<div class="stack" data-fam="' + esc(fam) + '">' + liste.map(ficheFichier).join('') + '</div>';
+  /* une commande n'est finie que quand ses plateaux sont tous sortis, K2 et
+     Bambu confondues : c'est ce que ce regroupement donne à voir */
+  commandes.forEach(c => {
+    const liste = visibles.filter(f => f.commande === c.nom);
+    if (!liste.length) return;
+    out += enteteCommande(c) +
+      '<div class="stack" data-grp="' + esc(c.nom) + '">' + liste.map(ficheFichier).join('') + '</div>';
   });
 
+  const orphelins = visibles.filter(f => !f.commande);
+  if (orphelins.length) {
+    out += '<div class="sec-title" data-grp="">Hors commande ' +
+      '<span class="norm">— ' + orphelins.length + ' fichier' + (orphelins.length > 1 ? 's' : '') + '</span></div>' +
+      '<div class="stack" data-grp="">' + orphelins.map(ficheFichier).join('') + '</div>';
+  }
+
   return out;
+}
+
+function enteteCommande(c) {
+  const machines = c.familles.map(familleCourte).join(' + ');
+  return '<div class="cmd-head" data-grp="' + esc(c.nom) + '">' +
+    '<div class="grow"><div class="cmd-nom">' + esc(c.nom) + '</div>' +
+    '<div class="cmd-sub">' + c.faits + ' plateau' + (c.faits > 1 ? 'x' : '') + ' sur ' + c.plateaux +
+      ' · ' + esc(machines) +
+      (c.minutes ? ' · ' + fmtDurShort(c.minutes * 60000) + ' de machine' : '') + '</div></div>' +
+    badge(c.termine ? 'ok' : (c.faits ? 'warn' : 'acc'),
+          c.termine ? 'Terminée' : (c.faits ? 'En cours' : 'À faire')) +
+    '</div>' + gauge(c.plateaux ? (c.faits / c.plateaux) * 100 : 0, c.termine ? 'ok' : 'warn');
+}
+
+function familleCourte(f) {
+  return { k2: 'K2', p1s: 'P1S' }[f] || String(f).toUpperCase();
 }
 
 function biblioFiltreReste(v) {
@@ -148,11 +172,15 @@ function biblioChercher(valeur) {
     const va = !q || carte.getAttribute('data-bib').indexOf(q) >= 0;
     carte.style.display = va ? '' : 'none';
   });
-  $$('#view .stack[data-fam]').forEach(pile => {
+  $$('#view .stack[data-grp]').forEach(pile => {
+    const grp = pile.getAttribute('data-grp');
     const reste = $$('[data-bib]', pile).some(c => c.style.display !== 'none');
     pile.style.display = reste ? '' : 'none';
-    const titre = $('#view .sec-title[data-fam="' + pile.getAttribute('data-fam') + '"]');
-    if (titre) titre.style.display = reste ? '' : 'none';
+    $$('#view [data-grp]').forEach(tete => {
+      if (tete !== pile && tete.getAttribute('data-grp') === grp) {
+        tete.style.display = reste ? '' : 'none';
+      }
+    });
   });
 }
 
@@ -160,7 +188,7 @@ function biblioChercher(valeur) {
 
 function etatFichier(f) {
   if (f.reste <= 0 && f.faits > 0) {
-    return { cls: 'ok', mot: f.faits > 1 ? 'Fait ×' + f.faits : 'Fait' };
+    return { cls: 'ok', mot: f.multi ? 'Tous sortis' : (f.faits > 1 ? 'Fait ×' + f.faits : 'Fait') };
   }
   if (f.faits === 0) {
     return { cls: 'acc', mot: f.exemplaires > 1 ? 'À faire ×' + f.exemplaires : 'Jamais imprimé' };
@@ -171,16 +199,19 @@ function etatFichier(f) {
 function ficheFichier(f) {
   const e = etatFichier(f);
   const parts = [];
-  if (f.dossier) parts.push(f.dossier);
+  if (f.multi) parts.push(f.plateaux.length + ' plateaux');
+  if (f.dossier && !f.commande) parts.push(f.dossier);
   parts.push(fmtOctets(f.taille));
+  if (f.minutes) parts.push(fmtDurShort(f.minutes * 60000));
   if (f.faits > 0 && f.dernier) {
     parts.push('dernière le ' + fmtDate(f.dernier) +
       (f.machines.length ? ' · ' + f.machines.join(', ') : ''));
   }
-  return '<div class="card click" data-bib="' + esc((f.chemin + ' ' + f.nom).toLowerCase()) + '"' +
+  return '<div class="card click" data-bib="' +
+    esc((f.chemin + ' ' + f.nom + ' ' + (f.commande || '')).toLowerCase()) + '"' +
     ' onclick="ficheFichierSheet(' + JSON.stringify(f.chemin).replace(/"/g, '&quot;') + ')">' +
     '<div class="rowitem"><div class="grow">' +
-      '<div class="t">' + esc(nomCourt(f.nom)) + '</div>' +
+      '<div class="t">' + esc(nomCourt(f.nom)) + ' ' + badge('info', familleCourte(f.famille)) + '</div>' +
       '<div class="s">' + esc(parts.join(' · ')) + '</div>' +
     '</div>' + badge(e.cls, e.mot) + '</div></div>';
 }
@@ -203,32 +234,45 @@ function fmtOctets(o) {
 
 /* ---------- la fiche détaillée ---------- */
 
+function fichierDe(chemin) {
+  return (BIB && BIB.fichiers || []).find(x => x.chemin === chemin);
+}
+
 function ficheFichierSheet(chemin) {
-  const f = (BIB && BIB.fichiers || []).find(x => x.chemin === chemin);
+  const f = fichierDe(chemin);
   if (!f) return;
   const dest = Biblio.destinataires(f.famille);
+  const cle = JSON.stringify(chemin).replace(/"/g, '&quot;');
 
   let html = '<h2>' + esc(nomCourt(f.nom)) + '</h2>' +
     '<div class="sub">' + esc(f.chemin) + '</div>';
 
-  html += '<div class="card tight" style="margin-top:10px">' +
-    ligneInfo('Famille', familleLabel(f.famille)) +
+  html += '<div class="card tight">' +
+    ligneInfo('Machines', familleLabel(f.famille)) +
+    ligneInfo('Commande', f.commande || 'aucune') +
     ligneInfo('Taille', fmtOctets(f.taille)) +
+    (f.minutes ? ligneInfo('Durée prévue', fmtDurShort(f.minutes * 60000)) : '') +
     ligneInfo('Déposé le', fmtDate(f.modifie)) +
-    ligneInfo('Imprimé', f.faits === 0 ? 'jamais'
-      : f.faits + ' fois' + (f.minutes ? ' · ' + fmtDurShort(f.minutes * 60000) + ' de machine' : '')) +
-    (f.faits && f.dernier ? ligneInfo('Dernière', fmtDate(f.dernier) +
-      (f.machines.length ? ' · ' + f.machines.join(', ') : '')) : '') +
-    '</div>';
+    '</div>' +
+    '<div class="btn-row"><button class="btn ghost" onclick="biblioRattacher(' + cle + ')">' +
+      (f.commande ? 'Changer de commande' : 'Rattacher à une commande') + '</button></div>';
 
-  html += '<div class="sec-title">Exemplaires voulus</div>' +
-    '<div class="card tight"><div class="rowitem">' +
-      '<button class="btn ghost" onclick="biblioExemplaires(' + JSON.stringify(chemin).replace(/"/g, '&quot;') + ',-1)">−</button>' +
-      '<div class="grow" style="text-align:center"><div class="t" id="bib-ex">' + f.exemplaires + '</div>' +
-      '<div class="s">' + (f.reste > 0 ? 'il en reste ' + f.reste : 'compte atteint') + '</div></div>' +
-      '<button class="btn ghost" onclick="biblioExemplaires(' + JSON.stringify(chemin).replace(/"/g, '&quot;') + ',1)">+</button>' +
-    '</div></div>';
+  /* ---- les plateaux ---- */
+  if (f.multi) {
+    html += '<div class="sec-title">Plateaux</div><div class="stack">' +
+      f.plateaux.map(p => ligneplateau(chemin, p)).join('') + '</div>';
+  } else {
+    const p = f.plateaux[0];
+    html += '<div class="sec-title">Exemplaires voulus</div>' +
+      '<div class="card tight"><div class="rowitem">' +
+        '<button class="btn ghost" onclick="biblioExemplaires(' + cle + ',-1)">−</button>' +
+        '<div class="grow" style="text-align:center"><div class="t" id="bib-ex">' + p.exemplaires + '</div>' +
+        '<div class="s">' + (p.faits ? p.faits + ' sorti' + (p.faits > 1 ? 's' : '') : 'aucun sorti') + '</div></div>' +
+        '<button class="btn ghost" onclick="biblioExemplaires(' + cle + ',1)">+</button>' +
+      '</div></div>';
+  }
 
+  /* ---- envoyer ---- */
   html += '<div class="sec-title">Envoyer sur une machine</div>';
   if (!dest.length) {
     html += '<div class="card tight"><div class="s">Aucune machine de cette famille dans le parc.</div></div>';
@@ -236,24 +280,64 @@ function ficheFichierSheet(chemin) {
     html += '<div class="stack">';
     dest.forEach(m => {
       const moonraker = m.printer.kind === 'moonraker';
-      const c = JSON.stringify(chemin).replace(/"/g, '&quot;');
       const n = JSON.stringify(m.name).replace(/"/g, '&quot;');
       html += '<div class="card tight"><div class="rowitem"><div class="grow">' +
         '<div class="t">' + esc(m.name) + '</div>' +
         '<div class="s">' + esc(m.model || '') + '</div></div>' +
-        '<button class="btn ghost" onclick="biblioPousser(' + c + ',' + n + ',false)">Déposer</button>' +
-        (moonraker ? '<button class="btn primary" onclick="biblioPousser(' + c + ',' + n + ',true)">Lancer</button>' : '') +
+        '<button class="btn ghost" onclick="biblioPousser(' + cle + ',' + n + ',false)">Déposer</button>' +
+        (moonraker ? '<button class="btn primary" onclick="biblioPousser(' + cle + ',' + n + ',true)">Lancer</button>' : '') +
         '</div></div>';
     });
     html += '</div>';
-    if (dest.some(m => m.printer.kind === 'bambu')) {
+    if (f.multi) {
+      html += '<div class="note">Le fichier part entier, ses plateaux avec. Tu choisis le plateau ' +
+        'sur l\'écran de la machine, puis tu le coches ici — la machine ne dit pas encore lequel ' +
+        'elle a fait.</div>';
+    } else if (dest.some(m => m.printer.kind === 'bambu')) {
       html += '<div class="note">Sur les Bambu, le fichier est déposé sur la carte de la machine : ' +
         'il se lance ensuite d\'un geste sur son écran. Lancer d\'ici reviendrait à choisir ' +
         'le plateau et les bobines à l\'aveugle.</div>';
     }
   }
 
-  sheet(html);
+  sheet(html, () => { if (f.multi) chargerApercus(f); });
+}
+
+function ligneplateau(chemin, p) {
+  const cle = JSON.stringify(chemin).replace(/"/g, '&quot;');
+  const fini = p.reste <= 0;
+  const infos = [];
+  if (p.minutes) infos.push(fmtDurShort(p.minutes * 60000));
+  if (p.grammes) infos.push(p.grammes + ' g');
+  if (p.exemplaires > 1) infos.push(p.faits + ' sur ' + p.exemplaires);
+  const objets = (p.objets || []).join(', ');
+
+  return '<div class="card tight plateau' + (fini ? ' fini' : '') + '" data-plateau="' + p.idx + '">' +
+    '<div class="rowitem">' +
+      '<img class="vignette" id="vg-' + p.idx + '" alt="" style="display:none">' +
+      '<div class="grow">' +
+        '<div class="t">Plateau ' + p.idx + '</div>' +
+        '<div class="s">' + esc(objets || infos.join(' · ')) + '</div>' +
+        (objets && infos.length ? '<div class="s">' + esc(infos.join(' · ')) + '</div>' : '') +
+      '</div>' +
+      (fini
+        ? '<button class="btn ghost" onclick="biblioMarquer(' + cle + ',' + p.idx + ',false)">Annuler</button>'
+        : '<button class="btn primary" onclick="biblioMarquer(' + cle + ',' + p.idx + ',true)">Fait</button>') +
+    '</div></div>';
+}
+
+/* les aperçus arrivent du relais un par un : la feuille s'affiche tout de
+   suite et les images se posent après */
+function chargerApercus(f) {
+  f.plateaux.forEach(p => {
+    Biblio.apercu(f.chemin, p.idx).then(res => {
+      if (!res || !res.ok || !res.png) return;
+      const img = document.getElementById('vg-' + p.idx);
+      if (!img) return;
+      img.src = 'data:image/png;base64,' + res.png;
+      img.style.display = '';
+    }).catch(() => {});
+  });
 }
 
 function ligneInfo(cle, valeur) {
@@ -264,21 +348,84 @@ function ligneInfo(cle, valeur) {
 /* ---------- actions ---------- */
 
 function biblioExemplaires(chemin, delta) {
-  const f = (BIB && BIB.fichiers || []).find(x => x.chemin === chemin);
-  if (!f) return;
-  const voulu = Math.max(1, Math.min(999, f.exemplaires + delta));
-  if (voulu === f.exemplaires) return;
+  const f = fichierDe(chemin);
+  if (!f || !f.plateaux.length) return;
+  const p = f.plateaux[0];
+  const voulu = Math.max(1, Math.min(999, p.exemplaires + delta));
+  if (voulu === p.exemplaires) return;
+  p.exemplaires = voulu;
+  p.reste = Math.max(0, voulu - p.faits);
   f.exemplaires = voulu;
-  f.reste = Math.max(0, voulu - f.faits);
+  f.reste = p.reste;
   const el = $('#bib-ex');
   if (el) el.textContent = voulu;
   Biblio.exemplaires(chemin, voulu).then(res => {
     if (!res || !res.ok) toast((res && res.error) || 'réglage refusé', 'bad');
+    else biblioCharger(true);
   }).catch(e => toast(e.message || 'réglage refusé', 'bad'));
 }
 
+function biblioMarquer(chemin, plateau, fait) {
+  const f = fichierDe(chemin);
+  const nom = f ? nomCourt(f.nom) : chemin;
+  Biblio.marquer(chemin, plateau, fait, '').then(res => {
+    if (!res || !res.ok) {
+      toast((res && res.error) || 'refusé par le relais', 'bad');
+      return;
+    }
+    toast(fait ? 'Plateau ' + plateau + ' de ' + nom + ' marqué fait'
+               : 'Plateau ' + plateau + ' remis à faire', 'ok');
+    closeSheet();
+    biblioCharger();
+  }).catch(e => toast(e.message || 'refusé', 'bad'));
+}
+
+/* Le dossier fait la commande par défaut. Ce rattachement-là sert aux
+   fichiers rangés ailleurs, ou quand une commande déborde sur un autre
+   dossier. */
+function biblioRattacher(chemin) {
+  const f = fichierDe(chemin);
+  if (!f) return;
+  const connues = (BIB.commandes || []).map(c => c.nom);
+  const ouvertes = DB.orders
+    .filter(o => o.status !== 'shipped')
+    .map(o => comptaRef(o).replace(/^#/, '') + (o.customer ? ' ' + o.customer : ''));
+  ouvertes.forEach(n => { if (connues.indexOf(n) < 0) connues.push(n); });
+
+  sheet('<h2>Rattacher à une commande</h2>' +
+    '<div class="sub">' + esc(nomCourt(f.nom)) + '</div>' +
+    '<label class="field"><span>Commande</span>' +
+      '<input type="text" name="cmd" value="' + esc(f.commande || '') + '" placeholder="1045 Mando">' +
+      '<div class="hint">Vide pour la détacher. Par défaut c\'est le nom du sous-dossier.</div>' +
+    '</label>' +
+    (connues.length
+      ? '<div class="chips">' + connues.slice(0, 12).map(n =>
+          '<button type="button" class="chip" data-v="' + esc(n) + '">' + esc(n) + '</button>').join('') +
+        '</div>'
+      : '') +
+    '<div class="sheet-actions">' +
+      '<button class="btn ghost" data-x="no">Annuler</button>' +
+      '<button class="btn primary" data-x="ok">Enregistrer</button>' +
+    '</div>',
+    root => {
+      $$('.chip', root).forEach(c => {
+        c.onclick = () => { $('[name=cmd]', root).value = c.getAttribute('data-v'); };
+      });
+      $('[data-x=no]', root).onclick = closeSheet;
+      $('[data-x=ok]', root).onclick = () => {
+        const v = $('[name=cmd]', root).value.trim();
+        closeSheet();
+        Biblio.rattacher(chemin, v).then(res => {
+          if (!res || !res.ok) { toast((res && res.error) || 'refusé', 'bad'); return; }
+          toast(v ? 'Rattaché à ' + v : 'Détaché', 'ok');
+          biblioCharger();
+        }).catch(e => toast(e.message || 'refusé', 'bad'));
+      };
+    });
+}
+
 function biblioPousser(chemin, machine, lancer) {
-  const f = (BIB && BIB.fichiers || []).find(x => x.chemin === chemin);
+  const f = fichierDe(chemin);
   const nom = f ? nomCourt(f.nom) : chemin;
   const faire = () => {
     closeSheet();
@@ -301,7 +448,6 @@ function biblioPousser(chemin, machine, lancer) {
   }
   faire();
 }
-
 
 /* ---------- l'historique de la farm ----------
 

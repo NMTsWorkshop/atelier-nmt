@@ -390,6 +390,14 @@ const Biblio = {
   index() { return nativeCall('biblioIndex', []); },
   historique(n) { return nativeCall('biblioHistory', [n || 200]); },
   exemplaires(chemin, n) { return nativeCall('biblioCopies', [chemin, n]); },
+  exemplairesPlateau(chemin, plateau, n) {
+    return nativeCall('biblioPlateCopies', [chemin, plateau, n]);
+  },
+  marquer(chemin, plateau, fait, machine) {
+    return nativeCall('biblioMark', [chemin, plateau, !!fait, machine || '']);
+  },
+  rattacher(chemin, commande) { return nativeCall('biblioOrder', [chemin, commande || '']); },
+  apercu(chemin, plateau) { return nativeCall('biblioThumb', [chemin, plateau]); },
   pousser(chemin, machine, lancer) {
     return nativeCall('biblioPush', [chemin, machine, !!lancer]);
   },

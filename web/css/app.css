@@ -177,6 +177,20 @@ textarea{resize:vertical;min-height:70px}
 .rowitem .s{font-size:12px;color:var(--txt-3);margin-top:1px}
 
 /* ---------- bibliothèque ---------- */
+.cmd-head{
+  display:flex;align-items:center;gap:10px;
+  margin:18px 2px 7px;
+}
+.cmd-head:first-child{margin-top:4px}
+.cmd-nom{font-size:15px;font-weight:700}
+.cmd-sub{font-size:11.5px;color:var(--txt-3);margin-top:2px}
+.cmd-head + .gauge{margin:0 2px 10px}
+.plateau .vignette{
+  width:46px;height:46px;border-radius:9px;object-fit:cover;flex:none;
+  background:var(--bg-3);border:1px solid var(--line-soft);
+}
+.plateau.fini{opacity:.62}
+.plateau.fini .t{text-decoration:line-through;text-decoration-color:var(--txt-3)}
 .note{
   font-size:11.5px;color:var(--txt-3);line-height:1.45;
   margin:8px 2px 0;

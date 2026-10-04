@@ -517,6 +517,44 @@ public class Bridge {
     }
 
     @JavascriptInterface
+    public void biblioPlateCopies(final String chemin, final int plateau,
+                                  final int combien, final String cbId) {
+        new Thread(new Runnable() {
+            public void run() {
+                callBack(cbId, Biblio.exemplairesPlateau(act, chemin, plateau, combien).toString());
+            }
+        }).start();
+    }
+
+    @JavascriptInterface
+    public void biblioMark(final String chemin, final int plateau,
+                           final boolean fait, final String machine, final String cbId) {
+        new Thread(new Runnable() {
+            public void run() {
+                callBack(cbId, Biblio.marquer(act, chemin, plateau, fait, machine).toString());
+            }
+        }).start();
+    }
+
+    @JavascriptInterface
+    public void biblioOrder(final String chemin, final String nom, final String cbId) {
+        new Thread(new Runnable() {
+            public void run() {
+                callBack(cbId, Biblio.commande(act, chemin, nom).toString());
+            }
+        }).start();
+    }
+
+    @JavascriptInterface
+    public void biblioThumb(final String chemin, final int plateau, final String cbId) {
+        new Thread(new Runnable() {
+            public void run() {
+                callBack(cbId, Biblio.apercu(act, chemin, plateau).toString());
+            }
+        }).start();
+    }
+
+    @JavascriptInterface
     public void testBiblio(final String cbId) {
         new Thread(new Runnable() {
             public void run() {

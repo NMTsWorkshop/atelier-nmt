@@ -154,6 +154,77 @@ public class Biblio {
         }
     }
 
+    static JSONObject exemplairesPlateau(Context c, String chemin, int plateau, int combien) {
+        try {
+            JSONObject o = new JSONObject();
+            o.put("chemin", chemin);
+            o.put("plateau", plateau);
+            o.put("n", combien);
+            return appel(c, "/exemplaires", o, DELAI_LECTURE);
+        } catch (Exception e) {
+            return erreur(String.valueOf(e.getMessage()));
+        }
+    }
+
+    /** « Celui-là est sorti » — ou l'inverse quand on s'est trompé. */
+    static JSONObject marquer(Context c, String chemin, int plateau,
+                              boolean fait, String machine) {
+        try {
+            JSONObject o = new JSONObject();
+            o.put("chemin", chemin);
+            o.put("plateau", plateau);
+            o.put("fait", fait);
+            o.put("machine", machine == null ? "" : machine);
+            return appel(c, "/marquer", o, DELAI_LECTURE);
+        } catch (Exception e) {
+            return erreur(String.valueOf(e.getMessage()));
+        }
+    }
+
+    static JSONObject commande(Context c, String chemin, String nom) {
+        try {
+            JSONObject o = new JSONObject();
+            o.put("chemin", chemin);
+            o.put("commande", nom == null ? "" : nom);
+            return appel(c, "/commande", o, DELAI_LECTURE);
+        } catch (Exception e) {
+            return erreur(String.valueOf(e.getMessage()));
+        }
+    }
+
+    /**
+     * L'aperçu d'un plateau, en base64 pour que la page l'affiche sans
+     * refaire l'appel elle-même — le jeton ne quitte pas le Java.
+     */
+    static JSONObject apercu(Context c, String chemin, int plateau) {
+        HttpURLConnection co = null;
+        try {
+            String url = base(c) + "/vignette?chemin="
+                    + java.net.URLEncoder.encode(chemin, "UTF-8") + "&plateau=" + plateau;
+            co = (HttpURLConnection) new URL(url).openConnection();
+            co.setConnectTimeout(4000);
+            co.setReadTimeout(DELAI_LECTURE);
+            String j = jeton(c);
+            if (j.length() > 0) co.setRequestProperty("Authorization", "Bearer " + j);
+            if (co.getResponseCode() != 200) return erreur("pas d'aperçu");
+            InputStream in = co.getInputStream();
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            byte[] tampon = new byte[8192];
+            int n;
+            while ((n = in.read(tampon)) > 0) out.write(tampon, 0, n);
+            in.close();
+            JSONObject o = new JSONObject();
+            o.put("ok", true);
+            o.put("png", android.util.Base64.encodeToString(
+                    out.toByteArray(), android.util.Base64.NO_WRAP));
+            return o;
+        } catch (Throwable t) {
+            return erreur(String.valueOf(t.getMessage()));
+        } finally {
+            if (co != null) co.disconnect();
+        }
+    }
+
     static JSONObject pousser(Context c, String chemin, String machine, boolean lancer) {
         try {
             JSONObject o = new JSONObject();
