@@ -354,6 +354,61 @@ const Relais = {
 };
 
 /* ============================================================
+   Bibliothèque — les gcodes rangés sur le Pi
+   ============================================================
+
+   Les fichiers tranchés ne vivent qu'à un seul endroit, sur le Pi,
+   rangés par famille de machines. On les liste, on voit lesquels ont
+   déjà été imprimés, et on les envoie à une machine sans repasser par
+   le PC.
+
+   À la différence du relevé des machines, qui passe par ntfy et marche
+   de partout, ça ne répond qu'à l'atelier : les fichiers pèsent des
+   dizaines de mégaoctets et n'ont rien à faire sur Internet. */
+
+const Biblio = {
+  ok() { return Native.ok() && typeof window.NMT.biblioHost === 'function'; },
+
+  hote() {
+    if (!this.ok()) return '';
+    try { return window.NMT.biblioHost() || ''; } catch (e) { return ''; }
+  },
+
+  jeton() {
+    if (!this.ok()) return '';
+    try { return window.NMT.biblioToken() || ''; } catch (e) { return ''; }
+  },
+
+  save(hote, jeton) {
+    if (!this.ok()) return false;
+    try { window.NMT.setBiblio(String(hote || ''), String(jeton || '')); return true; }
+    catch (e) { return false; }
+  },
+
+  regle() { return this.ok() && this.hote().length > 0; },
+
+  index() { return nativeCall('biblioIndex', []); },
+  historique(n) { return nativeCall('biblioHistory', [n || 200]); },
+  exemplaires(chemin, n) { return nativeCall('biblioCopies', [chemin, n]); },
+  pousser(chemin, machine, lancer) {
+    return nativeCall('biblioPush', [chemin, machine, !!lancer]);
+  },
+  test() { return nativeCall('testBiblio', []); },
+
+  /* la famille d'une machine décide quels fichiers lui vont */
+  famille(machine) {
+    const p = machine && machine.printer;
+    if (!p) return '';
+    return p.kind === 'moonraker' ? 'k2' : 'p1s';
+  },
+
+  /* les machines du parc qui peuvent recevoir ce fichier */
+  destinataires(famille) {
+    return DB.machines.filter(m => m.printer && this.famille(m) === famille);
+  }
+};
+
+/* ============================================================
    Compta — ce que l'app envoie au tableur Argent.xlsx
    ============================================================
 

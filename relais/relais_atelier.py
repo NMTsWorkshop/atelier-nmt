@@ -3,17 +3,23 @@
 leur état sur Internet, pour que l'application y accède de n'importe où.
 
 Tourne sur un petit appareil resté allumé à l'atelier (Raspberry Pi).
-Il n'ouvre aucun port : seules des connexions sortantes en HTTPS partent
-vers ntfy.sh. Rien n'est jamais envoyé aux imprimantes, c'est de la
-lecture seule.
+
+Vers Internet, il ne fait que sortir : il publie l'état des machines sur
+ntfy.sh en HTTPS, et rien n'entre. Sur le réseau local, il ouvre en plus
+un petit service (port 8765) qui sert la bibliothèque de gcodes et
+l'historique des impressions au téléphone, et qui sait déposer un fichier
+sur une machine. Ce service n'est joignable que depuis la maison.
 
 Réglages dans relais.json, à côté de ce fichier :
 
 {
   "sujet": "nmt-atelier-xxxxxxxx",
   "periode": 60,
+  "biblio": "/opt/relais-atelier/gcodes",
+  "port_api": 8765,
+  "jeton": "xxxxxxxxxxxxxxxx",
   "machines": [
-    {"nom": "K2 Plus", "type": "moonraker", "hote": "10.1.3.3"},
+    {"nom": "K2 Plus", "type": "moonraker", "hote": "10.1.2.57"},
     {"nom": "Bambu 1", "type": "bambu", "hote": "10.1.3.11",
      "serie": "01P00C462500170", "code": "xxxxxxxx"}
   ]
@@ -30,6 +36,8 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+
+import biblio as bibliotheque
 
 ICI = os.path.dirname(os.path.abspath(__file__))
 SERVEUR = "https://ntfy.sh/"
@@ -356,13 +364,46 @@ def charger_reglages():
     return c
 
 
+def demarrer_api(c, machines):
+    """Ouvre le service du réseau local. S'il ne peut pas s'ouvrir, le
+    relais continue à publier : la bibliothèque n'est qu'un supplément."""
+    racine = c.get("biblio") or os.path.join(ICI, "gcodes")
+    familles = []
+    for m in machines:
+        f = bibliotheque.famille_de(m)
+        if f not in familles:
+            familles.append(f)
+    biblio = bibliotheque.Bibliotheque(racine, familles)
+    contexte = bibliotheque.Contexte(biblio, machines, c.get("jeton"))
+    port = int(c.get("port_api", 8765))
+    try:
+        bibliotheque.servir(contexte, port)
+        print("Bibliothèque servie sur http://%s:%d — %s%s"
+              % (bibliotheque.adresse_locale(), port, biblio.racine,
+                 "" if c.get("jeton") else " (aucun jeton : réseau local seul)"),
+              flush=True)
+    except Exception as e:
+        print("Service local non ouvert (%s) : le relais publie quand même."
+              % e, file=sys.stderr, flush=True)
+        contexte = None
+    return biblio, contexte
+
+
 def main():
     c = charger_reglages()
     periode = max(30, int(c.get("periode", 60)))
     unique = "--une-fois" in sys.argv
+    machines = c.get("machines") or []
+    biblio, contexte = demarrer_api(c, machines)
     while True:
         debut = time.time()
-        etats = relever(c.get("machines") or [])
+        etats = relever(machines)
+        if contexte is not None:
+            contexte.etats = etats
+        for ligne in bibliotheque.suivre(biblio, etats):
+            print("%s — %s : %s %s en %d min"
+                  % (time.strftime("%H:%M:%S"), ligne["machine"], ligne["etat"],
+                     ligne["fichier"], ligne["minutes"]), flush=True)
         joignables = sum(1 for e in etats.values() if e.get("ok"))
         datees = sum(1 for e in etats.values() if e.get("stale"))
         try:

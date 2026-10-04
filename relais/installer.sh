@@ -5,8 +5,8 @@
 #   bash installer.sh
 #
 # Ne touche à rien d'autre que /opt/relais-atelier et à son service systemd.
-# Si relais.json existe déjà, il est laissé tel quel : relancer l'installeur
-# met seulement le programme à jour.
+# Si relais.json existe déjà, ses valeurs sont gardées : relancer l'installeur
+# met le programme à jour et ajoute seulement les réglages qui manquent.
 
 set -e
 
@@ -35,6 +35,7 @@ fi
 
 sudo mkdir -p "$DOSSIER"
 sudo curl -fsSL "$BASE/relais_atelier.py" -o "$DOSSIER/relais_atelier.py"
+sudo curl -fsSL "$BASE/biblio.py" -o "$DOSSIER/biblio.py"
 sudo curl -fsSL "$BASE/relais-atelier.service" -o /etc/systemd/system/relais-atelier@.service
 sudo chown -R "$USER:$USER" "$DOSSIER"
 echo "Programme installé dans $DOSSIER."
@@ -63,6 +64,95 @@ JSON
 fi
 
 echo
+# --- bibliothèque de gcodes -------------------------------------------------
+#
+# Les réglages qui manquent sont ajoutés sans toucher aux autres : un relais
+# déjà configuré garde son sujet et ses codes d'accès.
+
+python3 - "$DOSSIER" <<'REGLAGES'
+import json, os, secrets, sys
+
+dossier = sys.argv[1]
+chemin = os.path.join(dossier, "relais.json")
+with open(chemin, encoding="utf-8-sig") as f:
+    c = json.load(f)
+
+ajouts = []
+if not c.get("biblio"):
+    c["biblio"] = os.path.join(dossier, "gcodes")
+    ajouts.append("biblio")
+if not c.get("port_api"):
+    c["port_api"] = 8765
+    ajouts.append("port_api")
+if not c.get("jeton"):
+    c["jeton"] = secrets.token_urlsafe(18)
+    ajouts.append("jeton")
+
+if ajouts:
+    with open(chemin, "w", encoding="utf-8") as f:
+        json.dump(c, f, ensure_ascii=False, indent=2)
+    print("relais.json complete : " + ", ".join(ajouts))
+else:
+    print("relais.json a deja tout ce qu'il faut.")
+
+racine = c["biblio"]
+for m in c.get("machines") or []:
+    f = (m.get("famille") or ("k2" if m.get("type") == "moonraker" else "p1s")).lower()
+    os.makedirs(os.path.join(racine, f), exist_ok=True)
+print("Bibliotheque : " + racine)
+REGLAGES
+
+chmod 600 "$DOSSIER/relais.json"
+
+lire_reglage() {
+  python3 -c "import json,io;print(json.load(io.open('$DOSSIER/relais.json',encoding='utf-8-sig')).get('$1',''))"
+}
+
+RACINE=$(lire_reglage biblio)
+ADRESSE=$(hostname -I | awk '{print $1}')
+
+# --- partage réseau, pour déposer les gcodes depuis le PC -------------------
+#
+# Sans lui, il faudrait copier chaque fichier en ligne de commande. Avec, la
+# bibliothèque s'ouvre comme un lecteur réseau depuis Windows et on y
+# enregistre directement depuis le trancheur.
+
+if [ "${1:-}" = "--sans-partage" ]; then
+  echo "Partage réseau laissé de côté."
+elif grep -q "^\[gcodes\]" /etc/samba/smb.conf 2>/dev/null; then
+  echo "Partage réseau déjà en place."
+else
+  echo
+  echo "Le partage réseau permet d'enregistrer un fichier tranché depuis le PC"
+  echo "directement dans la bibliothèque, comme sur un lecteur réseau."
+  printf "L'installer ? [O/n] "
+  read -r reponse </dev/tty 2>/dev/null || reponse="n"
+  case "$reponse" in
+    [nN]*) echo "Partage laissé de côté." ;;
+    *)
+      sudo apt-get install -y samba >/dev/null
+      sudo tee -a /etc/samba/smb.conf >/dev/null <<SAMBA
+
+[gcodes]
+   comment = Bibliotheque de gcodes de l'atelier
+   path = $RACINE
+   browseable = yes
+   read only = no
+   guest ok = no
+   valid users = $USER
+   create mask = 0664
+   directory mask = 0775
+SAMBA
+      echo
+      echo "Choisis le mot de passe que le PC demandera pour ce partage :"
+      sudo smbpasswd -a "$USER"
+      sudo systemctl restart smbd
+      echo "Partage prêt. Depuis Windows : \\\\$ADRESSE\\gcodes"
+      ;;
+  esac
+fi
+
+echo
 echo "=== Reste à faire, à la main ==="
 echo
 echo "1. Remplir les trois A-REMPLIR :"
@@ -76,4 +166,11 @@ echo
 echo "3. Le lancer en permanence :"
 echo "     sudo systemctl enable --now relais-atelier@$USER"
 echo "     journalctl -u relais-atelier@$USER -f"
+echo
+echo "4. Dans l'app, Réglages > Bibliothèque de gcodes :"
+echo "     adresse : $ADRESSE"
+echo "     jeton   : $(lire_reglage jeton)"
+echo
+echo "5. Déposer les fichiers tranchés dans $RACINE,"
+echo "   un sous-dossier par famille de machines (k2, p1s)."
 echo

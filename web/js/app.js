@@ -7,6 +7,7 @@ let TAB = 'machines';
 const VIEWS = {
   machines: renderMachines,
   stock: renderStock,
+  biblio: renderBiblio,
   orders: renderOrders,
   profiles: renderProfiles,
   settings: renderSettings

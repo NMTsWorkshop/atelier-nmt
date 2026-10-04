@@ -462,6 +462,69 @@ public class Bridge {
         }).start();
     }
 
+    /* ---------- bibliothèque de gcodes ---------- */
+
+    @JavascriptInterface
+    public String biblioHost() {
+        return Biblio.hote(act);
+    }
+
+    @JavascriptInterface
+    public String biblioToken() {
+        return Biblio.jeton(act);
+    }
+
+    @JavascriptInterface
+    public void setBiblio(String hote, String jeton) {
+        Biblio.regler(act, hote, jeton);
+    }
+
+    @JavascriptInterface
+    public void biblioIndex(final String cbId) {
+        new Thread(new Runnable() {
+            public void run() {
+                callBack(cbId, Biblio.index(act).toString());
+            }
+        }).start();
+    }
+
+    @JavascriptInterface
+    public void biblioHistory(final int combien, final String cbId) {
+        new Thread(new Runnable() {
+            public void run() {
+                callBack(cbId, Biblio.historique(act, combien).toString());
+            }
+        }).start();
+    }
+
+    @JavascriptInterface
+    public void biblioCopies(final String chemin, final int combien, final String cbId) {
+        new Thread(new Runnable() {
+            public void run() {
+                callBack(cbId, Biblio.exemplaires(act, chemin, combien).toString());
+            }
+        }).start();
+    }
+
+    @JavascriptInterface
+    public void biblioPush(final String chemin, final String machine,
+                           final boolean lancer, final String cbId) {
+        new Thread(new Runnable() {
+            public void run() {
+                callBack(cbId, Biblio.pousser(act, chemin, machine, lancer).toString());
+            }
+        }).start();
+    }
+
+    @JavascriptInterface
+    public void testBiblio(final String cbId) {
+        new Thread(new Runnable() {
+            public void run() {
+                callBack(cbId, Biblio.test(act).toString());
+            }
+        }).start();
+    }
+
     private void callBack(final String cbId, final String payload) {
         web.post(new Runnable() {
             public void run() {

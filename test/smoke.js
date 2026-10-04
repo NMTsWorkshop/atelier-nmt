@@ -44,7 +44,7 @@ const errors = [];
   };
 
   console.log('\n— navigation —');
-  for (const t of ['stock', 'orders', 'profiles', 'settings', 'machines']) {
+  for (const t of ['stock', 'biblio', 'orders', 'profiles', 'settings', 'machines']) {
     await step('onglet ' + t, async () => {
       await page.click(`#tabbar .tab[data-tab=${t}]`);
       await page.waitForTimeout(120);
@@ -232,7 +232,91 @@ const errors = [];
   });
   await page.waitForTimeout(300);
 
-  for (const t of ['machines', 'stock', 'orders', 'profiles']) {
+  /* La bibliothèque vit sur le Pi : en navigateur on bouchonne le pont
+     Android pour que l'écran se dessine quand même, avec de quoi voir
+     les trois états d'un fichier (jamais imprimé, en cours, fait). */
+  console.log('\n— bibliothèque —');
+  await page.evaluate(() => {
+    const index = {
+      ok: true, racine: '/opt/relais-atelier/gcodes', familles: ['k2', 'p1s'],
+      fichiers: [
+        { chemin: 'k2/casques/mando_x3.gcode', famille: 'k2', nom: 'mando_x3.gcode',
+          dossier: 'casques', taille: 48234567, modifie: Date.now() - 86400000,
+          exemplaires: 3, faits: 1, reste: 2, dernier: Date.now() - 7200000,
+          machines: ['K2 Plus 1'], minutes: 312 },
+        { chemin: 'k2/support.gcode', famille: 'k2', nom: 'support.gcode', dossier: '',
+          taille: 2411000, modifie: Date.now() - 3600000,
+          exemplaires: 1, faits: 0, reste: 1, dernier: 0, machines: [], minutes: 0 },
+        { chemin: 'p1s/blaster.gcode.3mf', famille: 'p1s', nom: 'blaster.gcode.3mf', dossier: '',
+          taille: 9123000, modifie: Date.now() - 172800000,
+          exemplaires: 1, faits: 2, reste: 0, dernier: Date.now() - 90000000,
+          machines: ['P1S 1', 'P1S 2'], minutes: 640 }
+      ]
+    };
+    const historique = { ok: true, lignes: [
+      { machine: 'K2 Plus 1', fichier: 'mando_x3.gcode', etat: 'fini',
+        fin: Date.now() - 7200000, minutes: 312 },
+      { machine: 'P1S 2', fichier: 'blaster.gcode.3mf', etat: 'échec',
+        fin: Date.now() - 86400000, minutes: 41 }
+    ] };
+    window.NMT = Object.assign(window.NMT || {}, {
+      biblioHost: () => '10.1.2.60',
+      biblioToken: () => 'secret',
+      setBiblio: () => {},
+      biblioIndex: id => setTimeout(() => window.NMTcb(id, JSON.stringify(index)), 10),
+      biblioHistory: (n, id) => setTimeout(() => window.NMTcb(id, JSON.stringify(historique)), 10),
+      biblioCopies: (c, n, id) => setTimeout(() => window.NMTcb(id, '{"ok":true}'), 10),
+      biblioPush: (c, m, l, id) => setTimeout(() => window.NMTcb(id, '{"ok":true,"lance":true}'), 10),
+      testBiblio: id => setTimeout(() => window.NMTcb(id, '{"ok":true,"fichiers":3}'), 10)
+    });
+    BIB = null; BIB_ERREUR = '';
+  });
+
+  await step('la bibliothèque se remplit', async () => {
+    await page.click('#tabbar .tab[data-tab=biblio]');
+    await page.waitForTimeout(400);
+    const n = await page.$$eval('#view [data-bib]', e => e.length);
+    if (n !== 3) throw new Error('3 fichiers attendus, ' + n + ' affichés');
+  });
+
+  await step('la recherche filtre sans perdre le curseur', async () => {
+    await page.fill('#bib-q', 'blaster');
+    await page.waitForTimeout(150);
+    const vus = await page.$$eval('#view [data-bib]', e => e.filter(x => x.style.display !== 'none').length);
+    if (vus !== 1) throw new Error('1 résultat attendu, ' + vus);
+    const actif = await page.evaluate(() => document.activeElement && document.activeElement.id);
+    if (actif !== 'bib-q') throw new Error('le champ a perdu le curseur');
+    await page.fill('#bib-q', '');
+    await page.waitForTimeout(120);
+  });
+
+  await step('le filtre « à imprimer » écarte ce qui est fait', async () => {
+    await page.click('#view .chip:nth-child(2)');
+    await page.waitForTimeout(200);
+    const n = await page.$$eval('#view [data-bib]', e => e.length);
+    if (n !== 2) throw new Error('2 fichiers attendus, ' + n);
+    await page.click('#view .chip:nth-child(1)');
+    await page.waitForTimeout(200);
+  });
+
+  await step('la fiche d\'un fichier s\'ouvre', async () => {
+    await page.click('#view [data-bib]');
+    await page.waitForTimeout(250);
+    const t = await page.textContent('.sheet h2');
+    if (!/mando/i.test(t)) throw new Error('mauvaise fiche : ' + t);
+    await page.screenshot({ path: OUT + '/biblio-fiche.png' });
+    await page.evaluate(() => closeSheet());
+  });
+
+  await step('l\'historique de la farm s\'affiche', async () => {
+    await page.click('#tb-actions .tb-btn');
+    await page.waitForTimeout(400);
+    const n = await page.$$eval('.sheet .rowitem', e => e.length);
+    if (n < 2) throw new Error('historique vide');
+    await page.evaluate(() => closeSheet());
+  });
+
+  for (const t of ['machines', 'stock', 'biblio', 'orders', 'profiles']) {
     await page.click(`#tabbar .tab[data-tab=${t}]`);
     await page.waitForTimeout(250);
     await page.screenshot({ path: OUT + '/' + t + '.png' });

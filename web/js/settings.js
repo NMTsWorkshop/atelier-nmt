@@ -45,6 +45,29 @@ function renderSettings() {
       '<div class="hint" id="relais-out" style="margin-top:9px"></div>' +
     '</div>';
 
+  /* ---- bibliothèque de gcodes ---- */
+  out += '<div class="sec-title">Bibliothèque de gcodes</div>' +
+    '<div class="card">' +
+      '<div class="hint" style="margin-bottom:10px">Le relais garde les fichiers tranchés, rangés par famille de machines, ' +
+        'et dit lesquels ont déjà été imprimés. Ça ne répond que sur le réseau de l\'atelier : ' +
+        'les fichiers pèsent trop pour passer par Internet.</div>' +
+      '<label class="field"><span>Adresse du relais</span>' +
+        '<input type="text" name="biblioHost" value="' + esc(Biblio.hote()) + '" placeholder="10.1.2.60" autocapitalize="off" autocorrect="off">' +
+        '<div class="hint">L\'adresse du Pi sur le réseau. Le port 8765 est ajouté tout seul. ' +
+          'Laisse vide pour ne pas utiliser la bibliothèque.</div>' +
+      '</label>' +
+      '<label class="field"><span>Jeton</span>' +
+        '<input type="password" name="biblioToken" value="' + esc(Biblio.jeton()) + '" placeholder="…" autocapitalize="off" autocorrect="off">' +
+        '<div class="hint">Le même que dans relais.json du Pi. Il empêche un appareil de passage sur le wifi ' +
+          'de lancer une impression.</div>' +
+      '</label>' +
+      '<div class="btn-row">' +
+        '<button class="btn" onclick="saveBiblio()">Enregistrer</button>' +
+        '<button class="btn primary" onclick="testBiblio()">Tester</button>' +
+      '</div>' +
+      '<div class="hint" id="biblio-out" style="margin-top:9px"></div>' +
+    '</div>';
+
   /* ---- tableur de compta ---- */
   if (sujet) {
     const envoye = DB.settings.comptaSentAt;
@@ -216,6 +239,51 @@ function saveRelais(silencieux) {
   if (!silencieux) toast(el.value.trim() ? 'Relais enregistré' : 'Relais désactivé', 'ok');
   render();
   return true;
+}
+
+function saveBiblio(silencieux) {
+  const h = $('[name=biblioHost]'), j = $('[name=biblioToken]');
+  if (!h || !j) return false;
+  if (!Biblio.save(h.value, j.value)) {
+    toast('La bibliothèque ne marche que dans l\'app Android', 'bad');
+    return false;
+  }
+  BIB = null;
+  BIB_ERREUR = '';
+  if (!silencieux) toast(h.value.trim() ? 'Bibliothèque enregistrée' : 'Bibliothèque désactivée', 'ok');
+  render();
+  return true;
+}
+
+function testBiblio() {
+  /* comme pour le relais : on enregistre d'abord, et on ne retient la zone
+     de texte qu'après le redessin */
+  if (!saveBiblio(true)) return;
+  if (!Biblio.regle()) {
+    const vide = $('#biblio-out');
+    if (vide) vide.textContent = 'Aucune adresse enregistrée.';
+    return;
+  }
+  const out = $('#biblio-out');
+  if (out) out.textContent = 'Appel du relais…';
+  Biblio.test()
+    .then(r => {
+      const o = $('#biblio-out');
+      if (r && r.ok) {
+        toast(r.fichiers + ' fichier' + (r.fichiers > 1 ? 's' : '') + ' dans la bibliothèque', 'ok');
+        if (o) o.innerHTML = '<span style="color:var(--ok)">Relais joignable — ' + r.fichiers +
+          ' fichier(s)</span>' + (r.racine ? '<br>' + esc(r.racine) : '');
+      } else {
+        const m = (r && r.error) || 'sans réponse';
+        toast('Échec — ' + m, 'bad');
+        if (o) o.innerHTML = '<span style="color:var(--bad)">Échec — ' + esc(m) + '</span>';
+      }
+    })
+    .catch(e => {
+      toast('Échec — ' + e.message, 'bad');
+      const o = $('#biblio-out');
+      if (o) o.innerHTML = '<span style="color:var(--bad)">Échec — ' + esc(e.message) + '</span>';
+    });
 }
 
 function envoyerCompta() {
