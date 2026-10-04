@@ -203,6 +203,15 @@ public class Printers {
         out.put("file", file);
         out.put("percent", (int) Math.round(progress * 100));
 
+        /* Klipper met la raison dans print_stats.message quand il s'arrête
+           en erreur. C'est le texte le plus parlant qu'on puisse avoir. */
+        String msg = ps == null ? "" : ps.optString("message", "");
+        if ("error".equalsIgnoreCase(state) || "failed".equals(normalise(state))) {
+            out.put("erreur", msg.length() > 0 ? msg : "impression interrompue");
+        } else if (msg.length() > 0) {
+            out.put("message", msg);
+        }
+
         long remaining = -1;
         /* le plus fiable : la durée estimée par le trancheur, dans les
            métadonnées du fichier */
@@ -320,6 +329,9 @@ public class Printers {
         out.put("nozzle", p.optDouble("nozzle_temper", 0));
         out.put("bed", p.optDouble("bed_temper", 0));
 
+        String alerte = hmsTexte(p);
+        if (alerte != null) out.put("erreur", alerte);
+
         JSONArray slots = new JSONArray();
         JSONObject ams = p.optJSONObject("ams");
         if (ams != null) {
@@ -375,6 +387,102 @@ public class Printers {
             }
         }
         out.put("ams", slots);
+    }
+
+    /**
+     * Les ennuis d'une Bambu arrivent sous deux formes : « print_error », un
+     * code unique quand l'impression s'arrête, et « hms », la liste des
+     * alertes en cours. On garde la plus grave et on la rend lisible.
+     *
+     * Un code HMS s'écrit en quatre groupes de quatre chiffres hexa, et son
+     * premier groupe donne la gravité. Sans la table officielle des
+     * libellés, on affiche le code tel qu'il se cherche dans la
+     * documentation Bambu, précédé de sa gravité.
+     */
+    private static String hmsTexte(JSONObject p) {
+        int pire = 9;
+        String code = null;
+
+        JSONArray hms = p.optJSONArray("hms");
+        if (hms != null) {
+            for (int i = 0; i < hms.length(); i++) {
+                JSONObject h = hms.optJSONObject(i);
+                if (h == null) continue;
+                long attr = h.optLong("attr", 0);
+                long c = h.optLong("code", 0);
+                if (attr == 0 && c == 0) continue;
+                int gravite = (int) ((c >> 16) & 0xFFFFL);
+                if (gravite >= 4) continue;          // simple information
+                if (gravite < pire) {
+                    pire = gravite;
+                    code = String.format("%04X_%04X_%04X_%04X",
+                            (attr >> 16) & 0xFFFFL, attr & 0xFFFFL,
+                            (c >> 16) & 0xFFFFL, c & 0xFFFFL);
+                }
+            }
+        }
+
+        if (code != null) {
+            String g = pire == 1 ? "Panne" : pire == 2 ? "Incident" : "Alerte";
+            return g + " " + code;
+        }
+
+        long erreur = p.optLong("print_error", 0);
+        if (erreur != 0) return String.format("Erreur d'impression %08X", erreur);
+        return null;
+    }
+
+    /* ---------- commandes envoyées à une machine ---------- */
+
+    /**
+     * Met en pause, reprend ou annule l'impression en cours.
+     * Action attendue : « pause », « resume » ou « cancel ».
+     */
+    static JSONObject commande(JSONObject conf, String action) {
+        JSONObject out = new JSONObject();
+        try {
+            if (!"pause".equals(action) && !"resume".equals(action) && !"cancel".equals(action)) {
+                throw new Exception("action inconnue");
+            }
+            String kind = conf.optString("kind", "");
+            String absent = manquant(conf, kind);
+            if (absent != null) throw new Exception(absent);
+
+            if ("moonraker".equals(kind)) {
+                String base = "http://" + conf.getString("host") + ":" + conf.optInt("port", 7125);
+                postVide(base + "/printer/print/" + action);
+            } else {
+                JSONObject ordre = new JSONObject();
+                JSONObject print = new JSONObject();
+                print.put("sequence_id", String.valueOf(System.currentTimeMillis() % 100000));
+                print.put("command", "cancel".equals(action) ? "stop" : action);
+                ordre.put("print", print);
+                BambuClient.envoyer(conf.getString("host"), conf.getString("serial"),
+                        conf.getString("code"), ordre, 10);
+            }
+            out.put("ok", true);
+            out.put("action", action);
+        } catch (Throwable t) {
+            try {
+                out.put("ok", false);
+                out.put("error", lisible(t, conf.optString("host", "")));
+            } catch (Exception ignored) {
+            }
+        }
+        return out;
+    }
+
+    private static void postVide(String url) throws Exception {
+        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        c.setConnectTimeout(6000);
+        c.setReadTimeout(10000);
+        c.setRequestMethod("POST");
+        c.setDoOutput(true);
+        c.setFixedLengthStreamingMode(0);
+        c.getOutputStream().close();
+        int code = c.getResponseCode();
+        c.disconnect();
+        if (code < 200 || code >= 300) throw new Exception("HTTP " + code);
     }
 
     /** Bambu renvoie du RGBA en hexa (000000FF) ; on garde le RGB. */

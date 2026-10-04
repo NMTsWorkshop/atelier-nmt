@@ -70,8 +70,21 @@ function machineCard(m) {
               (fin ? ' · fin vers ' + fmtDayClock(fin) : '') +
             '</div>';
     actions =
+      pilotage(m, 'printing') +
       '<button class="btn sm ghost" onclick="pollPrinters()">Actualiser</button>' +
       '<button class="btn sm primary" onclick="finishJob(\'' + m.id + '\')">Terminer</button>';
+    if (live.file) sub = '<div class="card-meta nowrap" style="margin-top:6px;color:var(--txt-2)">' + esc(live.file) + '</div>';
+    return machineShell(m, cls, clock, sub, actions, sp, live);
+  }
+
+  /* la machine dit elle-même qu'elle est en pause */
+  if (live && live.state === 'paused') {
+    cls += ' paused';
+    clock = '<div class="clock">En pause</div>' +
+            '<div class="clock-sub">' + (live.percent >= 0 ? live.percent + ' %' : '') + '</div>';
+    actions =
+      pilotage(m, 'paused') +
+      '<button class="btn sm ghost" onclick="pollPrinters()">Actualiser</button>';
     if (live.file) sub = '<div class="card-meta nowrap" style="margin-top:6px;color:var(--txt-2)">' + esc(live.file) + '</div>';
     return machineShell(m, cls, clock, sub, actions, sp, live);
   }
@@ -123,6 +136,65 @@ function machineCard(m) {
   return machineShell(m, cls, clock, sub, actions, sp, live);
 }
 
+/* Panne annoncée par la machine : code HMS côté Bambu, message de Klipper
+   côté Creality. C'est l'information qui fait descendre à l'atelier, donc
+   elle passe avant tout le reste de la fiche. */
+function panneLigne(m) {
+  const p = (m.printer && m.printer.host) ? Printers.panne(m.id) : '';
+  if (!p) return '';
+  return '<div class="card-meta" style="margin-top:8px;color:var(--bad);font-weight:600">' +
+    esc(p) + '</div>';
+}
+
+/* Boutons de pilotage, seulement sur une machine branchée et jamais sur un
+   relevé périmé : agir d'après une image vieille d'une heure n'a pas de sens. */
+function pilotage(m, etat) {
+  if (!m.printer || !m.printer.host || !Printers.ok()) return '';
+  if (Printers.stale(m.id)) return '';
+  if (etat === 'printing') {
+    return '<button class="btn sm" onclick="piloter(\'' + m.id + '\',\'pause\')">Pause</button>' +
+           '<button class="btn sm ghost" onclick="piloter(\'' + m.id + '\',\'cancel\')">Arrêter</button>';
+  }
+  return '<button class="btn sm primary" onclick="piloter(\'' + m.id + '\',\'resume\')">Reprendre</button>' +
+         '<button class="btn sm ghost" onclick="piloter(\'' + m.id + '\',\'cancel\')">Arrêter</button>';
+}
+
+const PILOTAGE_MOTS = {
+  pause:  { verbe: 'Mettre en pause', fait: 'Mise en pause demandée' },
+  resume: { verbe: 'Reprendre',       fait: 'Reprise demandée' },
+  cancel: { verbe: 'Arrêter',         fait: 'Arrêt demandé' }
+};
+
+function piloter(id, action) {
+  const m = machineById(id);
+  if (!m) return;
+  const mots = PILOTAGE_MOTS[action];
+
+  const lancer = () => {
+    toast(mots.verbe + '…');
+    Printers.commande(m, action)
+      .then(r => {
+        if (r && r.ok) {
+          toast(mots.fait, 'ok');
+          /* la machine met une seconde ou deux à changer d'état */
+          setTimeout(() => pollPrinters(true), 2500);
+        } else {
+          toast('Échec — ' + ((r && r.error) || 'sans réponse'), 'bad');
+        }
+      })
+      .catch(e => toast('Échec — ' + e.message, 'bad'));
+  };
+
+  /* arrêter perd l'impression : on demande confirmation, les deux autres non */
+  if (action === 'cancel') {
+    confirmSheet('Arrêter l\'impression sur ' + m.name + ' ?',
+      'La pièce en cours est perdue et le filament déjà posé avec.',
+      'Arrêter', lancer, true);
+  } else {
+    lancer();
+  }
+}
+
 /* enveloppe commune : en-tête, ligne filament, rangée d'actions */
 function machineShell(m, cls, clock, sub, actions, sp, live) {
   const pr = profileById(m.profileId);
@@ -156,6 +228,7 @@ function machineShell(m, cls, clock, sub, actions, sp, live) {
           (Printers.reglage(m.id) ? 'Réglage à compléter — ' : 'Machine injoignable — ') +
           esc(err) + '</div>'
       : '') +
+    panneLigne(m) +
     amsLine(live) +
     '<div class="fil-line">' +
       (sp
@@ -643,12 +716,15 @@ function buildPrinter(chipVals, v) {
 }
 
 /* relève immédiate de toutes les machines branchées */
-function pollPrinters() {
+/* discret : relève de confirmation après une commande, sans le bilan
+   habituel — le message de la commande vient déjà de s'afficher */
+function pollPrinters(discret) {
   const btn = $('#poll-btn');
   if (btn) btn.textContent = '…';
   Printers.sync()
     .then(() => {
       render();
+      if (discret) return;
       const b = Printers.bilan();
       if (b.total === 0) {
         toast('Aucune machine n\'a d\'adresse réseau', 'warn');

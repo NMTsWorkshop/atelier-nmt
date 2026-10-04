@@ -78,6 +78,17 @@ function migrate() {
     o.material = o.material || ref.material || 'PLA';
     o.color = o.color || ref.color || '';
   });
+  /* adresses des Creality, changées en octobre 2026 */
+  if (!DB.settings.adresses202610) {
+    DB.settings.adresses202610 = Date.now();
+    (DB.machines || []).forEach(m => {
+      const p = m.printer;
+      if (!p || p.kind !== 'moonraker') return;
+      const neuve = DEMENAGEMENTS[p.host];
+      if (neuve) p.host = neuve;
+    });
+  }
+
   (DB.spools || []).forEach(s => {
     if (s.spoolSize === undefined) {
       s.spoolSize = s.initial || 1000;
@@ -285,6 +296,20 @@ const Printers = {
     return nativeCall('probePrinter', [JSON.stringify(conf)]);
   },
 
+  /* pause / resume / cancel sur la machine, à travers sa propre API */
+  commande(machine, action) {
+    const conf = Object.assign({ machineId: machine.id, name: machine.name },
+                               machine.printer || {});
+    return nativeCall('printerCommand', [JSON.stringify(conf), action]);
+  },
+
+  /* panne signalée par la machine elle-même : code HMS Bambu, message
+     Klipper. Vide quand tout va bien. */
+  panne(machineId) {
+    const s = PSTATES[machineId];
+    return (s && s.ok && s.erreur) ? s.erreur : '';
+  },
+
   /* un relevé reste affiché 24 h : hors du wifi, c'est lui qui fait foi,
      la fin estimée continue d'avancer à partir de l'heure où il a été pris */
   fresh(machineId) {
@@ -417,15 +442,24 @@ function fmtRemaining(min) {
    figurent pas ici et se saisissent une fois sur le téléphone. */
 
 const PARC = [
-  { name: 'K2 Plus',    model: 'Creality K2 Plus',
-    printer: { kind: 'moonraker', host: '10.1.3.3' } },
-  { name: 'Creality 2', model: 'Creality',
-    printer: { kind: 'moonraker', host: '10.1.3.2' } },
-  { name: 'Bambu 1',    model: 'Bambu Lab P1S',
-    printer: { kind: 'bambu', host: '10.1.3.11', serial: '01P00C462500170', code: '' } },
-  { name: 'Bambu 2',    model: 'Bambu Lab P1S',
-    printer: { kind: 'bambu', host: '10.1.3.10', serial: '01P09C510800409', code: '' } }
+  { name: 'K2 Plus 1', model: 'Creality K2 Plus',
+    printer: { kind: 'moonraker', host: '10.1.2.57' } },
+  { name: 'K2 Plus 2', model: 'Creality K2 Plus',
+    printer: { kind: 'moonraker', host: '10.1.2.59' } },
+  { name: 'P1S 1',     model: 'Bambu Lab P1S',
+    printer: { kind: 'bambu', host: '10.1.3.10', serial: '01P09C510800409', code: '' } },
+  { name: 'P1S 2',     model: 'Bambu Lab P1S',
+    printer: { kind: 'bambu', host: '10.1.3.11', serial: '01P00C462500170', code: '' } }
 ];
+
+/* Octobre 2026 : les deux Creality sont passées sur le sous-réseau des
+   postes de travail. Le parc ci-dessus ne sert qu'aux installations
+   neuves — les machines déjà créées vivent dans les réglages du
+   téléphone, et c'est la migration qui les rattrape. */
+const DEMENAGEMENTS = {
+  '10.1.3.3': '10.1.2.57',
+  '10.1.3.2': '10.1.2.59'
+};
 
 /* Posé une seule fois. Complète les machines déjà créées plutôt que
    d'en ajouter en double, et ne touche jamais à un code déjà saisi. */

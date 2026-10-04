@@ -28,6 +28,50 @@ import javax.net.ssl.X509TrustManager;
  */
 public class BambuClient {
 
+    /**
+     * Envoie un ordre à la machine, sans rien attendre en retour : la Bambu
+     * ne répond pas aux commandes, elle les applique et le prochain relevé
+     * le montre.
+     */
+    static void envoyer(String host, String serial, String code,
+                        JSONObject ordre, int timeoutSec) throws Exception {
+
+        MqttClient client = new MqttClient("ssl://" + host + ":8883",
+                "nmt-atelier-cmd-" + System.currentTimeMillis(), new MemoryPersistence());
+        try {
+            client.connect(options(code, timeoutSec));
+            client.publish("device/" + serial + "/request",
+                    ordre.toString().getBytes("UTF-8"), 0, false);
+            /* la publication est asynchrone : on laisse le paquet partir
+               avant de couper la connexion, sinon il reste dans le tampon */
+            Thread.sleep(600);
+        } finally {
+            try {
+                if (client.isConnected()) client.disconnect(2000);
+            } catch (Exception ignored) {
+            }
+            try {
+                client.close();
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private static MqttConnectOptions options(String code, int timeoutSec) throws Exception {
+        MqttConnectOptions opts = new MqttConnectOptions();
+        opts.setUserName("bblp");
+        opts.setPassword(code.toCharArray());
+        opts.setSocketFactory(trustAll());
+        opts.setConnectionTimeout(Math.max(5, timeoutSec));
+        opts.setKeepAliveInterval(30);
+        opts.setCleanSession(true);
+        opts.setAutomaticReconnect(false);
+        /* le certificat de la machine porte son numéro de série, pas son
+           adresse IP : la vérification de nom échouerait toujours */
+        opts.setHttpsHostnameVerificationEnabled(false);
+        return opts;
+    }
+
     static JSONObject fetch(String host, String serial, String code, int timeoutSec)
             throws Exception {
 
@@ -35,17 +79,7 @@ public class BambuClient {
         MqttClient client = new MqttClient(uri, "nmt-atelier-" + System.currentTimeMillis(),
                 new MemoryPersistence());
 
-        MqttConnectOptions opts = new MqttConnectOptions();
-        opts.setUserName("bblp");
-        opts.setPassword(code.toCharArray());
-        opts.setSocketFactory(trustAll());
-        opts.setConnectionTimeout(10);
-        opts.setKeepAliveInterval(30);
-        opts.setCleanSession(true);
-        opts.setAutomaticReconnect(false);
-        /* le certificat de la machine porte son numéro de série, pas son
-           adresse IP : la vérification de nom échouerait toujours */
-        opts.setHttpsHostnameVerificationEnabled(false);
+        MqttConnectOptions opts = options(code, 10);
 
         final JSONObject[] result = new JSONObject[1];
         final JSONObject[] partial = new JSONObject[1];

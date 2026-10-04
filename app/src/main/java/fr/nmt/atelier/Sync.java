@@ -141,6 +141,17 @@ public class Sync {
         String file = now.optString("file", "");
         String alarmId = "p-" + id;
 
+        /* Une erreur signalée par la machine prévient tout de suite, sans
+           attendre la fin théorique du job : c'est tout l'intérêt. On ne
+           notifie qu'au changement, sinon la même panne sonnerait tous les
+           quarts d'heure jusqu'à ce qu'on s'en occupe. */
+        String erreur = now.optString("erreur", "");
+        String avant = prev == null ? "" : prev.optString("erreur", "");
+        if (erreur.length() > 0 && !erreur.equals(avant)) {
+            Notifier.show(c, "e-" + id, name + " — " + erreur,
+                    file.length() > 0 ? file : "Touche pour voir la machine.");
+        }
+
         if ("printing".equals(is)) {
             long remaining = now.optLong("remaining", -1);
             if (remaining >= 0) {

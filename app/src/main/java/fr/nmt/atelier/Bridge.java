@@ -425,6 +425,27 @@ public class Bridge {
         }).start();
     }
 
+    /** Pause, reprise ou arrêt de l'impression en cours. */
+    @JavascriptInterface
+    public void printerCommand(final String confJson, final String action, final String cbId) {
+        new Thread(new Runnable() {
+            public void run() {
+                org.json.JSONObject out;
+                try {
+                    out = Printers.commande(new org.json.JSONObject(confJson), action);
+                } catch (Throwable t) {
+                    out = new org.json.JSONObject();
+                    try {
+                        out.put("ok", false);
+                        out.put("error", String.valueOf(t.getMessage()));
+                    } catch (Exception ignored) {
+                    }
+                }
+                callBack(cbId, out.toString());
+            }
+        }).start();
+    }
+
     /** Test d'une seule machine, pour l'écran de configuration. */
     @JavascriptInterface
     public void probePrinter(final String confJson, final String cbId) {
