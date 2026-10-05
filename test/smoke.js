@@ -298,6 +298,15 @@ const errors = [];
       biblioPush: (c, m, l, id) => setTimeout(() => window.NMTcb(id, '{"ok":true,"lance":true}'), 10),
       testBiblio: id => setTimeout(() => window.NMTcb(id, '{"ok":true,"fichiers":3}'), 10)
     });
+    /* des machines branchees : sans elles, aucune n'est proposee comme
+       destination et les boutons d'envoi n'ont rien a afficher */
+    DB.machines.push({ id: 'mk2', name: 'K2 Plus 1', model: 'Creality K2 Plus',
+      filamentId: '', profileId: '', status: 'idle', timer: null, job: null,
+      printer: { kind: 'moonraker', host: '10.1.2.57' } });
+    DB.machines.push({ id: 'mp1s', name: 'P1S 1', model: 'Bambu Lab P1S',
+      filamentId: '', profileId: '', status: 'idle', timer: null, job: null,
+      printer: { kind: 'bambu', host: '10.1.3.10', serial: 'X', code: '' } });
+    save();
     BIB = null; BIB_ERREUR = '';
   });
 
@@ -373,18 +382,20 @@ const errors = [];
     vu = await page.evaluate(() => window.__mark);
     if (!vu) throw new Error('rien envoyé au relais');
     if (vu[1] !== 2 || vu[2] !== true) throw new Error('mauvais plateau : ' + JSON.stringify(vu));
+    await page.evaluate(() => closeSheet());
+    await page.waitForTimeout(150);
   });
 
-  await step('à distance, l\'envoi est remplacé par une explication', async () => {
+  await step('à distance, l\'envoi passe par le relais', async () => {
     await page.evaluate(() => { BIB.canal = true; render(); });
     await page.waitForTimeout(200);
     const note = await page.textContent('#view .note');
-    if (!/réseau de l'atelier/.test(note)) throw new Error('bandeau absent : ' + note);
+    if (!/relais/.test(note)) throw new Error('bandeau absent : ' + note);
     await page.click('#view [data-bib*="casque_jetpack"]');
     await page.waitForTimeout(300);
     const txt = await page.textContent('.sheet');
-    if (/Déposer</.test(txt)) throw new Error('le bouton Déposer ne devrait pas être là');
-    if (!/pèse trop/.test(txt)) throw new Error('explication absente');
+    if (!/Déposer/.test(txt)) throw new Error('le bouton Déposer doit rester là');
+    if (!/c'est le relais qui enverra/i.test(txt)) throw new Error('explication absente');
     await page.evaluate(() => { closeSheet(); BIB.canal = false; render(); });
     await page.waitForTimeout(150);
   });

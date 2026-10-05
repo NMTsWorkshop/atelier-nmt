@@ -100,8 +100,8 @@ function renderBiblio() {
      par le canal du relais */
   let out = BIB.canal
     ? '<div class="note" style="margin:0 2px 12px">Lu par le relais, à distance. ' +
-      'Tout se voit et se coche ; déposer un fichier sur une machine demande d\'être ' +
-      'sur le réseau de l\'atelier.</div>'
+      'Tout marche, y compris envoyer un fichier sur une machine — c\'est le relais ' +
+      'qui s\'en charge, dans la minute.</div>'
     : '';
 
   if (!tous.length) {
@@ -282,10 +282,7 @@ function ficheFichierSheet(chemin) {
 
   /* ---- envoyer ---- */
   html += '<div class="sec-title">Envoyer sur une machine</div>';
-  if (BIB.canal) {
-    html += '<div class="card tight"><div class="s">Il faut être sur le réseau de l\'atelier : ' +
-      'un gcode pèse trop pour passer par le canal du relais.</div></div>';
-  } else if (!dest.length) {
+  if (!dest.length) {
     html += '<div class="card tight"><div class="s">Aucune machine de cette famille dans le parc.</div></div>';
   } else {
     html += '<div class="stack">';
@@ -300,6 +297,10 @@ function ficheFichierSheet(chemin) {
         '</div></div>';
     });
     html += '</div>';
+    if (BIB.canal) {
+      html += '<div class="note">C\'est le relais qui enverra le fichier : il l\'a déjà, et il est ' +
+        'sur le réseau des machines. Compte une minute avant qu\'il s\'y mette.</div>';
+    }
     if (f.multi) {
       html += '<div class="note">Le fichier part entier, ses plateaux avec. Tu choisis le plateau ' +
         'sur l\'écran de la machine, puis tu le coches ici — la machine ne dit pas encore lequel ' +
@@ -448,7 +449,10 @@ function biblioPousser(chemin, machine, lancer) {
     closeSheet();
     toast('Envoi de ' + nom + ' vers ' + machine + '…');
     Biblio.pousser(chemin, machine, lancer).then(res => {
-      if (res && res.ok) {
+      if (res && res.differe) {
+        toast('Demandé au relais — ' + nom + ' part vers ' + machine + ' dans la minute', 'ok');
+        setTimeout(() => biblioCharger(true), 70000);
+      } else if (res && res.ok) {
         toast(res.lance ? nom + ' lancé sur ' + machine : nom + ' déposé sur ' + machine, 'ok');
         biblioCharger(true);
       } else {
@@ -459,8 +463,9 @@ function biblioPousser(chemin, machine, lancer) {
 
   if (lancer) {
     confirmSheet('Lancer sur ' + machine + ' ?',
-      nom + ' part sur la machine et l\'impression démarre tout de suite. ' +
-      'Vérifie que le plateau est vide.', 'Lancer', faire);
+      nom + ' part sur la machine et l\'impression démarre' +
+      (BIB.canal ? ' dès que le relais aura relayé, dans la minute.' : ' tout de suite.') +
+      ' Vérifie que le plateau est vide.', 'Lancer', faire);
     return;
   }
   faire();
@@ -476,7 +481,8 @@ const ISSUES = {
   fini: { cls: 'ok', mot: 'fini' },
   'échec': { cls: 'bad', mot: 'échec' },
   interrompu: { cls: 'warn', mot: 'interrompu' },
-  'envoyé': { cls: 'info', mot: 'envoyé' }
+  'envoyé': { cls: 'info', mot: 'envoyé' },
+  'refusé': { cls: 'bad', mot: 'refusé' }
 };
 
 function biblioHistorique() {
@@ -506,6 +512,7 @@ function biblioHistorique() {
         html += '<div class="rowitem"><div class="grow">' +
           '<div class="t">' + esc(nomCourt(l.fichier)) + '</div>' +
           '<div class="s">' + esc(l.machine || '') + ' · ' + (quand ? fmtDate(quand) : '') + duree + '</div>' +
+          (l.pourquoi ? '<div class="s" style="color:var(--bad)">' + esc(l.pourquoi) + '</div>' : '') +
           '</div>' + badge(i.cls, i.mot) + '</div>';
       });
       html += '</div>';

@@ -855,7 +855,7 @@ PEREMPTION_ORDRE = 2 * 3600 * 1000
 # sérialisent pas le JSON de la même façon, et une signature qui dépend
 # d'un espace après les deux-points casserait au premier accent.
 CHAMPS_SIGNES = ("id", "at", "quoi", "chemin", "plateau", "fait", "n",
-                 "commande", "machine")
+                 "commande", "machine", "lancer")
 
 
 def signer(jeton, ordre):
@@ -871,7 +871,23 @@ def signer(jeton, ordre):
                     corps.encode("utf-8"), hashlib.sha256).hexdigest()[:32]
 
 
-def appliquer_ordre(biblio, ordre, jeton):
+def _pousser_a_part(biblio, machines, machine, chemin, lancer):
+    """L'envoi demandé à distance. Le résultat, bon ou mauvais, va dans
+    l'historique : c'est le seul endroit où l'app pourra le lire."""
+    try:
+        res = pousser(biblio, machines, machine, chemin, lancer)
+        print("%s — %s %s sur %s" % (time.strftime("%H:%M:%S"), res["etat"],
+                                     res["fichier"], res["machine"]), flush=True)
+    except Exception as e:
+        biblio.noter({"at": int(time.time() * 1000), "machine": machine,
+                      "fichier": os.path.basename(chemin), "etat": "refusé",
+                      "chemin": chemin, "pourquoi": str(e)[:200]})
+        print("%s — envoi vers %s impossible : %s"
+              % (time.strftime("%H:%M:%S"), machine, e), flush=True)
+    oublier_publication()
+
+
+def appliquer_ordre(biblio, ordre, jeton, machines=None):
     """Renvoie une phrase pour le journal, ou None si l'ordre est écarté."""
     ident = ordre.get("id")
     if not ident or ident in ORDRES_VUS:
@@ -887,6 +903,18 @@ def appliquer_ordre(biblio, ordre, jeton):
 
     quoi = ordre.get("quoi")
     chemin = ordre.get("chemin") or ""
+
+    if quoi == "pousser":
+        # Le fichier est déjà sur le Pi, et le Pi est sur le réseau des
+        # machines : le téléphone n'a qu'à dire lequel va où. L'envoi dure
+        # le temps qu'il dure, donc dans un fil à part — sinon la relève
+        # des machines s'arrêterait pendant la copie.
+        threading.Thread(target=_pousser_a_part,
+                         args=(biblio, machines or [], ordre.get("machine"),
+                               chemin, bool(ordre.get("lancer"))),
+                         daemon=True).start()
+        return "envoi de %s vers %s demandé" % (os.path.basename(chemin),
+                                                ordre.get("machine"))
     try:
         if quoi == "marquer":
             biblio.marquer(chemin, ordre.get("plateau", 1),

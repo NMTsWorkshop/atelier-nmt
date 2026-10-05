@@ -510,7 +510,8 @@ def main():
         if c.get("sujet"):
             try:
                 for ordre in lire_ordres(c["sujet"], derniers_ordres):
-                    dit = bibliotheque.appliquer_ordre(biblio, ordre, c.get("jeton"))
+                    dit = bibliotheque.appliquer_ordre(biblio, ordre,
+                                                       c.get("jeton"), machines)
                     if dit:
                         print("%s — %s" % (time.strftime("%H:%M:%S"), dit), flush=True)
                         bibliotheque.oublier_publication()

@@ -274,13 +274,20 @@ public class Biblio {
         }
     }
 
+    /**
+     * Envoyer un fichier sur une machine marche aussi de loin : le fichier
+     * est déjà sur le Pi, et le Pi est sur le réseau des machines. Le
+     * téléphone ne transporte rien, il dit seulement lequel va où.
+     */
     static JSONObject pousser(Context c, String chemin, String machine, boolean lancer) {
         try {
             JSONObject o = new JSONObject();
+            o.put("quoi", "pousser");
             o.put("chemin", chemin);
             o.put("machine", machine);
             o.put("lancer", lancer);
-            return appel(c, "/pousser", o, DELAI_ENVOI);
+            if (surPlace(c)) return appel(c, "/pousser", o, DELAI_ENVOI);
+            return parLeCanal(c, o);
         } catch (Exception e) {
             return erreur(String.valueOf(e.getMessage()));
         }

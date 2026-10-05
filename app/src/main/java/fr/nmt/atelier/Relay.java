@@ -112,7 +112,8 @@ public class Relay {
        porte une signature calculée avec le jeton. */
 
     private static final String[] CHAMPS_SIGNES = {
-            "id", "at", "quoi", "chemin", "plateau", "fait", "n", "commande", "machine"
+            "id", "at", "quoi", "chemin", "plateau", "fait", "n", "commande",
+            "machine", "lancer"
     };
 
     static String signer(String jeton, JSONObject ordre) {
