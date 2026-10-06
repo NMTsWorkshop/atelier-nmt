@@ -508,10 +508,10 @@ public class Bridge {
 
     @JavascriptInterface
     public void biblioPush(final String chemin, final String machine,
-                           final boolean lancer, final String cbId) {
+                           final boolean lancer, final int plateau, final String cbId) {
         new Thread(new Runnable() {
             public void run() {
-                callBack(cbId, Biblio.pousser(act, chemin, machine, lancer).toString());
+                callBack(cbId, Biblio.pousser(act, chemin, machine, lancer, plateau).toString());
             }
         }).start();
     }

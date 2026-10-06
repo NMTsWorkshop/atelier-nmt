@@ -398,8 +398,8 @@ const Biblio = {
   },
   rattacher(chemin, commande) { return nativeCall('biblioOrder', [chemin, commande || '']); },
   apercu(chemin, plateau) { return nativeCall('biblioThumb', [chemin, plateau]); },
-  pousser(chemin, machine, lancer) {
-    return nativeCall('biblioPush', [chemin, machine, !!lancer]);
+  pousser(chemin, machine, lancer, plateau) {
+    return nativeCall('biblioPush', [chemin, machine, !!lancer, plateau || 1]);
   },
   test() { return nativeCall('testBiblio', []); },
 

@@ -287,13 +287,12 @@ function ficheFichierSheet(chemin) {
   } else {
     html += '<div class="stack">';
     dest.forEach(m => {
-      const moonraker = m.printer.kind === 'moonraker';
       const n = JSON.stringify(m.name).replace(/"/g, '&quot;');
       html += '<div class="card tight"><div class="rowitem"><div class="grow">' +
         '<div class="t">' + esc(m.name) + '</div>' +
         '<div class="s">' + esc(m.model || '') + '</div></div>' +
         '<button class="btn ghost" onclick="biblioPousser(' + cle + ',' + n + ',false)">Déposer</button>' +
-        (moonraker ? '<button class="btn primary" onclick="biblioPousser(' + cle + ',' + n + ',true)">Lancer</button>' : '') +
+        '<button class="btn primary" onclick="biblioPousser(' + cle + ',' + n + ',true)">Lancer</button>' +
         '</div></div>';
     });
     html += '</div>';
@@ -302,13 +301,14 @@ function ficheFichierSheet(chemin) {
         'sur le réseau des machines. Compte une minute avant qu\'il s\'y mette.</div>';
     }
     if (f.multi) {
-      html += '<div class="note">Le fichier part entier, ses plateaux avec. Tu choisis le plateau ' +
-        'sur l\'écran de la machine, puis tu le coches ici — la machine ne dit pas encore lequel ' +
+      html += '<div class="note">Le fichier part entier, ses plateaux avec. Lancer te demandera ' +
+        'lequel imprimer ; ensuite tu le coches ici, la machine ne dit pas encore lequel ' +
         'elle a fait.</div>';
-    } else if (dest.some(m => m.printer.kind === 'bambu')) {
-      html += '<div class="note">Sur les Bambu, le fichier est déposé sur la carte de la machine : ' +
-        'il se lance ensuite d\'un geste sur son écran. Lancer d\'ici reviendrait à choisir ' +
-        'le plateau et les bobines à l\'aveugle.</div>';
+    }
+    if (dest.some(m => m.printer.kind === 'bambu')) {
+      html += '<div class="note">Sur les Bambu, la commande de lancement n\'est pas documentée : ' +
+        'si un réglage ne lui plaît pas, la machine l\'ignore sans rien dire. Le fichier reste ' +
+        'alors sur sa carte et se lance depuis son écran.</div>';
     }
   }
 
@@ -442,13 +442,32 @@ function biblioRattacher(chemin) {
     });
 }
 
-function biblioPousser(chemin, machine, lancer) {
+function biblioPousser(chemin, machine, lancer, plateau) {
   const f = fichierDe(chemin);
   const nom = f ? nomCourt(f.nom) : chemin;
+
+  /* un fichier à plusieurs plateaux ne dit pas lequel lancer : on demande,
+     plutôt que d'en choisir un à sa place */
+  if (lancer && f && f.multi && !plateau) {
+    const c = JSON.stringify(chemin).replace(/"/g, '&quot;');
+    const n = JSON.stringify(machine).replace(/"/g, '&quot;');
+    sheet('<h2>Quel plateau lancer ?</h2>' +
+      '<div class="sub">' + esc(nom) + ' sur ' + esc(machine) + '</div>' +
+      '<div class="stack">' + f.plateaux.map(p =>
+        '<div class="card tight click" onclick="biblioPousser(' + c + ',' + n + ',true,' + p.idx + ')">' +
+        '<div class="rowitem"><div class="grow">' +
+          '<div class="t">Plateau ' + p.idx + (p.reste <= 0 ? ' — déjà sorti' : '') + '</div>' +
+          '<div class="s">' + esc((p.objets || []).join(', ') ||
+            [p.minutes ? fmtDurShort(p.minutes * 60000) : '', p.grammes ? p.grammes + ' g' : '']
+              .filter(Boolean).join(' · ')) + '</div>' +
+        '</div></div></div>').join('') + '</div>');
+    return;
+  }
+
   const faire = () => {
     closeSheet();
     toast('Envoi de ' + nom + ' vers ' + machine + '…');
-    Biblio.pousser(chemin, machine, lancer).then(res => {
+    Biblio.pousser(chemin, machine, lancer, plateau || 1).then(res => {
       if (res && res.differe) {
         toast('Demandé au relais — ' + nom + ' part vers ' + machine + ' dans la minute', 'ok');
         setTimeout(() => biblioCharger(true), 70000);
@@ -463,7 +482,8 @@ function biblioPousser(chemin, machine, lancer) {
 
   if (lancer) {
     confirmSheet('Lancer sur ' + machine + ' ?',
-      nom + ' part sur la machine et l\'impression démarre' +
+      nom + (plateau && f && f.multi ? ', plateau ' + plateau : '') +
+      ' part sur la machine et l\'impression démarre' +
       (BIB.canal ? ' dès que le relais aura relayé, dans la minute.' : ' tout de suite.') +
       ' Vérifie que le plateau est vide.', 'Lancer', faire);
     return;

@@ -30,6 +30,7 @@ import json
 import os
 import re
 import socket
+import struct
 import ssl
 import threading
 import time
@@ -421,11 +422,73 @@ class _FtpImplicite(ftplib.FTP_TLS):
         self._enveloppe = valeur
 
 
-def pousser_bambu(machine, chemin, nom, lancer):
-    """On dépose le fichier sur la carte SD de la machine. On ne lance pas
-    l'impression d'ici : la commande Bambu embarque le type de plateau, la
-    calibration et le choix des bobines, et se tromper coûte une pièce.
-    Le fichier déposé se lance d'un geste sur l'écran de la machine."""
+# Ce que la commande de lancement Bambu embarque, et qu'aucune
+# documentation officielle ne décrit — tout vient du reverse engineering de
+# la communauté. Les valeurs ci-dessous sont les plus neutres possibles :
+# on laisse faire ce que le fichier prévoit et on n'ajoute pas de
+# calibration que l'utilisateur n'a pas demandée. Chaque machine peut les
+# changer dans relais.json, sous « lancement », sans attendre une version
+# de l'app.
+DEFAUTS_LANCEMENT = {
+    "timelapse": False,
+    "bed_leveling": True,
+    "flow_cali": False,
+    "vibration_cali": False,
+    "layer_inspect": False,
+    "use_ams": True,
+}
+
+
+def lancer_bambu(machine, nom, plateau=1):
+    """Demande à la machine d'imprimer un plateau d'un fichier déjà déposé.
+
+    Si un seul champ ne lui plaît pas, la machine ignore la commande sans
+    rien dire : le fichier reste sur sa carte et se lance à la main. C'est
+    le pire cas, et il est sans conséquence."""
+    from relais_atelier import _mqtt_longueur, _mqtt_texte, _paquet
+
+    reglages = dict(DEFAUTS_LANCEMENT)
+    reglages.update(machine.get("lancement") or {})
+    idx = max(1, int(plateau or 1))
+
+    ordre = {"print": dict(reglages,
+                           sequence_id=str(int(time.time()) % 100000),
+                           command="project_file",
+                           param="Metadata/plate_%d.gcode" % idx,
+                           subtask_name=nom,
+                           plate_idx=idx - 1,
+                           # on dépose à la racine de la carte, c'est là que
+                           # l'écran de la machine va les chercher
+                           url="file:///sdcard/%s" % nom)}
+
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    s = ctx.wrap_socket(socket.create_connection((machine["hote"], 8883), timeout=10))
+    try:
+        tete = _mqtt_texte("MQTT") + bytes([4, 0xC2]) + struct.pack(">H", 30)
+        corps = (_mqtt_texte("relais-envoi-%d" % int(time.time()))
+                 + _mqtt_texte("bblp") + _mqtt_texte(machine.get("code") or ""))
+        s.sendall(bytes([0x10]) + _mqtt_longueur(len(tete + corps)) + tete + corps)
+        t, b = _paquet(s)
+        if t != 2 or b[1] != 0:
+            raise Exception("refusée par la machine — code d'accès LAN ou numéro de série")
+
+        charge = json.dumps(ordre, ensure_ascii=False).encode("utf-8")
+        pub = _mqtt_texte("device/%s/request" % machine["serie"]) + charge
+        s.sendall(bytes([0x30]) + _mqtt_longueur(len(pub)) + pub)
+        time.sleep(0.8)          # laisser le paquet partir avant de raccrocher
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
+    return idx
+
+
+def pousser_bambu(machine, chemin, nom, lancer, plateau=1):
+    """Dépose le fichier sur la carte de la machine, et le lance si on le
+    demande."""
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
@@ -445,10 +508,13 @@ def pousser_bambu(machine, chemin, nom, lancer):
                 ftp.close()
             except Exception:
                 pass
-    return "déposé"
+    if not lancer:
+        return "déposé"
+    lancer_bambu(machine, nom, plateau)
+    return "lancé"
 
 
-def pousser(biblio, machines, nom_machine, chemin_relatif, lancer=False):
+def pousser(biblio, machines, nom_machine, chemin_relatif, lancer=False, plateau=1):
     machine = None
     for m in machines:
         if m.get("nom") == nom_machine or m.get("hote") == nom_machine:
@@ -471,11 +537,13 @@ def pousser(biblio, machines, nom_machine, chemin_relatif, lancer=False):
     if machine["type"] == "moonraker":
         etat = pousser_moonraker(machine, entier, nom, lancer)
     else:
-        etat = pousser_bambu(machine, entier, nom, lancer)
+        etat = pousser_bambu(machine, entier, nom, lancer, plateau)
     biblio.noter({"at": int(time.time() * 1000), "machine": machine.get("nom"),
-                  "fichier": nom, "etat": "envoyé", "chemin": chemin_relatif})
+                  "fichier": nom, "etat": "lancé" if etat == "lancé" else "envoyé",
+                  "chemin": chemin_relatif,
+                  "plateau": int(plateau or 1) if lancer else None})
     return {"ok": True, "etat": etat, "machine": machine.get("nom"), "fichier": nom,
-            "lance": bool(lancer and machine["type"] == "moonraker")}
+            "lance": etat == "lancé"}
 
 
 # ----------------------------------------------------------------------
@@ -588,7 +656,7 @@ class Service(BaseHTTPRequestHandler):
             if route.path == "/pousser":
                 res = pousser(self.ctx.biblio, self.ctx.machines,
                               corps.get("machine"), corps.get("chemin"),
-                              bool(corps.get("lancer")))
+                              bool(corps.get("lancer")), corps.get("plateau", 1))
                 return self._repondre(200, res)
         except ValueError as e:
             return self._repondre(400, {"ok": False, "error": str(e)[:200]})
@@ -871,11 +939,11 @@ def signer(jeton, ordre):
                     corps.encode("utf-8"), hashlib.sha256).hexdigest()[:32]
 
 
-def _pousser_a_part(biblio, machines, machine, chemin, lancer):
+def _pousser_a_part(biblio, machines, machine, chemin, lancer, plateau=1):
     """L'envoi demandé à distance. Le résultat, bon ou mauvais, va dans
     l'historique : c'est le seul endroit où l'app pourra le lire."""
     try:
-        res = pousser(biblio, machines, machine, chemin, lancer)
+        res = pousser(biblio, machines, machine, chemin, lancer, plateau)
         print("%s — %s %s sur %s" % (time.strftime("%H:%M:%S"), res["etat"],
                                      res["fichier"], res["machine"]), flush=True)
     except Exception as e:
@@ -911,7 +979,8 @@ def appliquer_ordre(biblio, ordre, jeton, machines=None):
         # des machines s'arrêterait pendant la copie.
         threading.Thread(target=_pousser_a_part,
                          args=(biblio, machines or [], ordre.get("machine"),
-                               chemin, bool(ordre.get("lancer"))),
+                               chemin, bool(ordre.get("lancer")),
+                               ordre.get("plateau", 1)),
                          daemon=True).start()
         return "envoi de %s vers %s demandé" % (os.path.basename(chemin),
                                                 ordre.get("machine"))

@@ -295,7 +295,8 @@ const errors = [];
       biblioMark: (c, p, f, m, id) => setTimeout(() => window.NMTcb(id, '{"ok":true}'), 10),
       biblioOrder: (c, n, id) => setTimeout(() => window.NMTcb(id, '{"ok":true}'), 10),
       biblioThumb: (c, p, id) => setTimeout(() => window.NMTcb(id, '{"ok":false}'), 10),
-      biblioPush: (c, m, l, id) => setTimeout(() => window.NMTcb(id, '{"ok":true,"lance":true}'), 10),
+      biblioPush: (c, m, l, p, id) => { window.__push = [c, m, l, p];
+        setTimeout(() => window.NMTcb(id, '{"ok":true,"lance":true}'), 10); },
       testBiblio: id => setTimeout(() => window.NMTcb(id, '{"ok":true,"fichiers":3}'), 10)
     });
     /* des machines branchees : sans elles, aucune n'est proposee comme
@@ -397,6 +398,31 @@ const errors = [];
     if (!/Déposer/.test(txt)) throw new Error('le bouton Déposer doit rester là');
     if (!/c'est le relais qui enverra/i.test(txt)) throw new Error('explication absente');
     await page.evaluate(() => { closeSheet(); BIB.canal = false; render(); });
+    await page.waitForTimeout(150);
+  });
+
+  await step('lancer un multi-plateaux demande lequel', async () => {
+    await page.click('#view [data-bib*="casque_jetpack"]');
+    await page.waitForTimeout(300);
+    const boutons = await page.$$eval('.sheet .btn.primary', e => e.map(x => x.textContent));
+    if (!boutons.includes('Lancer')) throw new Error('pas de bouton Lancer : ' + boutons.join(','));
+    await page.evaluate(() => biblioPousser('p1s/1045 Mando/casque_jetpack.gcode.3mf', 'P1S 1', true));
+    await page.waitForTimeout(300);
+    const titre = await page.textContent('.sheet h2');
+    if (!/Quel plateau/.test(titre)) throw new Error('pas de choix de plateau : ' + titre);
+    const choix = await page.$$eval('.sheet .card.click', e => e.length);
+    if (choix !== 3) throw new Error('3 plateaux attendus, ' + choix);
+
+    await page.click('.sheet .card.click:nth-of-type(2)');
+    await page.waitForTimeout(250);
+    const conf = await page.textContent('.sheet');
+    if (!/plateau 2/.test(conf)) throw new Error('le plateau choisi n\'est pas repris : ' + conf);
+    await page.click('.sheet .btn.primary');
+    await page.waitForTimeout(400);
+    const vu = await page.evaluate(() => window.__push);
+    if (!vu) throw new Error('rien envoyé');
+    if (vu[2] !== true || vu[3] !== 2) throw new Error('mauvais envoi : ' + JSON.stringify(vu));
+    await page.evaluate(() => closeSheet());
     await page.waitForTimeout(150);
   });
 
