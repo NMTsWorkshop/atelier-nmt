@@ -937,7 +937,8 @@ def resume(index):
             plateaux_legers.append({k: v for k, v in p.items() if k != "vignette"})
         fichiers.append(dict(f, plateaux=plateaux_legers))
     return {"familles": index.get("familles") or [], "fichiers": fichiers,
-            "commandes": index.get("commandes") or []}
+            "commandes": index.get("commandes") or [],
+            "accuses": ACCUSES[-12:]}
 
 
 def lots_biblio(index, at=None):
@@ -980,6 +981,21 @@ def oublier_publication():
 ORDRES_VUS = []
 PEREMPTION_ORDRE = 2 * 3600 * 1000
 
+# Un ordre parti par le canal ne rend aucune reponse : l'app publie et s'en
+# va. Le relais consigne donc ce qu'il a fait de chaque ordre, et le joint à
+# l'index qu'il publie — c'est ainsi que l'app apprend si son geste a abouti,
+# et pourquoi quand il a échoué.
+ACCUSES = []
+
+
+def accuser(ident, ok, dit):
+    if not ident:
+        return
+    ACCUSES.append({"id": ident, "at": int(time.time() * 1000),
+                    "ok": bool(ok), "dit": dit})
+    del ACCUSES[:-30]
+    oublier_publication()
+
 
 # On signe une suite de champs séparés par un caractère qui n'apparaît
 # jamais dans un nom de fichier, et non du JSON : deux langages ne
@@ -1002,19 +1018,21 @@ def signer(jeton, ordre):
                     corps.encode("utf-8"), hashlib.sha256).hexdigest()[:32]
 
 
-def _pousser_a_part(biblio, machines, machine, chemin, lancer, plateau=1):
-    """L'envoi demandé à distance. Le résultat, bon ou mauvais, va dans
-    l'historique : c'est le seul endroit où l'app pourra le lire."""
+def _pousser_a_part(biblio, machines, machine, chemin, lancer, plateau=1, ident=None):
+    """L'envoi demandé à distance. Le résultat, bon ou mauvais, revient à
+    l'app par l'accusé joint au prochain index."""
     try:
         res = pousser(biblio, machines, machine, chemin, lancer, plateau)
         print("%s — %s %s sur %s" % (time.strftime("%H:%M:%S"), res["etat"],
                                      res["fichier"], res["machine"]), flush=True)
+        accuser(ident, True, "%s %s sur %s" % (res["fichier"], res["etat"], machine))
     except Exception as e:
         biblio.noter({"at": int(time.time() * 1000), "machine": machine,
                       "fichier": os.path.basename(chemin), "etat": "refusé",
                       "chemin": chemin, "pourquoi": str(e)[:200]})
         print("%s — envoi vers %s impossible : %s"
               % (time.strftime("%H:%M:%S"), machine, e), flush=True)
+        accuser(ident, False, str(e)[:150])
     oublier_publication()
 
 
@@ -1027,6 +1045,11 @@ def appliquer_ordre(biblio, ordre, jeton, machines=None):
     if abs(int(time.time() * 1000) - quand) > PEREMPTION_ORDRE:
         return None          # trop vieux : sans doute un message rejoué
     if jeton and not hmac.compare_digest(signer(jeton, ordre), str(ordre.get("sig") or "")):
+        # on le note comme vu : sans ça le même ordre serait rejugé à chaque
+        # relève et remplirait le journal
+        ORDRES_VUS.append(ident)
+        del ORDRES_VUS[:-200]
+        accuser(ident, False, "jeton de l'app différent de celui du relais")
         return "ordre refusé (signature)"
 
     ORDRES_VUS.append(ident)
@@ -1043,7 +1066,7 @@ def appliquer_ordre(biblio, ordre, jeton, machines=None):
         threading.Thread(target=_pousser_a_part,
                          args=(biblio, machines or [], ordre.get("machine"),
                                chemin, bool(ordre.get("lancer")),
-                               ordre.get("plateau", 1)),
+                               ordre.get("plateau", 1), ident),
                          daemon=True).start()
         return "envoi de %s vers %s demandé" % (os.path.basename(chemin),
                                                 ordre.get("machine"))
@@ -1051,17 +1074,28 @@ def appliquer_ordre(biblio, ordre, jeton, machines=None):
         if quoi == "marquer":
             biblio.marquer(chemin, ordre.get("plateau", 1),
                            bool(ordre.get("fait", True)), ordre.get("machine") or "")
-            return "plateau %s de %s : %s" % (
+            dit = "plateau %s de %s : %s" % (
                 ordre.get("plateau"), os.path.basename(chemin),
                 "fait" if ordre.get("fait", True) else "remis à faire")
+            accuser(ident, True, dit)
+            return dit
         if quoi == "exemplaires":
             biblio.fixer_exemplaires(chemin, ordre.get("n"), ordre.get("plateau"))
-            return "%s : %s exemplaire(s)" % (os.path.basename(chemin), ordre.get("n"))
+            dit = "%s : %s exemplaire(s)" % (os.path.basename(chemin), ordre.get("n"))
+            accuser(ident, True, dit)
+            return dit
         if quoi == "commande":
             biblio.fixer_commande(chemin, ordre.get("commande"))
-            return "%s rattaché à %s" % (os.path.basename(chemin),
-                                         ordre.get("commande") or "aucune commande")
+            dit = "%s rattaché à %s" % (os.path.basename(chemin),
+                                        ordre.get("commande") or "aucune commande")
+            accuser(ident, True, dit)
+            return dit
+        if quoi == "ping":
+            # sert au bouton Tester de l'app : il prouve que le jeton passe
+            accuser(ident, True, "jeton accepté")
+            return "test du jeton depuis l'app : accepté"
     except ValueError as e:
+        accuser(ident, False, str(e)[:150])
         return "ordre impossible : %s" % e
     return None
 

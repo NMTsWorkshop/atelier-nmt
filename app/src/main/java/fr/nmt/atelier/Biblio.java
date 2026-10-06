@@ -187,11 +187,29 @@ public class Biblio {
     private static JSONObject parLeCanal(Context c, JSONObject ordre) {
         try {
             if (!Relay.actif(c)) return erreur("aucun relais configuré");
-            Relay.ordre(c, ordre, jeton(c));
+            if (jeton(c).length() == 0) {
+                // sans jeton l'ordre partirait et le relais le jetterait sans
+                // que personne ne le sache : autant refuser tout de suite
+                return erreur("il manque le jeton du relais — Réglages, "
+                        + "Bibliothèque de gcodes");
+            }
+            String ident = Relay.ordre(c, ordre, jeton(c));
             JSONObject o = new JSONObject();
             o.put("ok", true);
             o.put("differe", true);
+            o.put("id", ident);
             return o;
+        } catch (Throwable t) {
+            return erreur(String.valueOf(t.getMessage()));
+        }
+    }
+
+    /** Un ordre sans effet, juste pour savoir si le jeton passe. */
+    static JSONObject verifierJeton(Context c) {
+        try {
+            JSONObject o = new JSONObject();
+            o.put("quoi", "ping");
+            return parLeCanal(c, o);
         } catch (Throwable t) {
             return erreur(String.valueOf(t.getMessage()));
         }
@@ -295,20 +313,49 @@ public class Biblio {
         }
     }
 
-    /** Pour l'écran des réglages : le relais répond-il, et le jeton passe-t-il ? */
+    /**
+     * Pour l'écran des réglages. Il y a deux chemins et un jeton, et l'ancien
+     * test ne regardait que le premier : hors du réseau de l'atelier il
+     * annonçait un échec alors que tout marchait par le canal.
+     */
     static JSONObject test(Context c) {
-        JSONObject vivant = appel(c, "/vivant", null, 6000);
-        if (!vivant.optBoolean("ok")) return vivant;
-        JSONObject index = index(c);
-        if (!index.optBoolean("ok")) return index;
         JSONObject out = new JSONObject();
         try {
-            out.put("ok", true);
+            boolean direct = actif(c) && appel(c, "/vivant", null, 5000).optBoolean("ok");
+            out.put("direct", direct);
+            out.put("adresse", hote(c));
+
+            JSONObject index = index(c);
+            out.put("lecture", index.optBoolean("ok"));
+            out.put("canal", index.optBoolean("canal"));
             out.put("fichiers", index.optJSONArray("fichiers") == null
                     ? 0 : index.optJSONArray("fichiers").length());
-            out.put("racine", index.optString("racine"));
-        } catch (Exception ignored) {
+            if (!index.optBoolean("ok")) out.put("error", index.optString("error"));
+
+            out.put("jeton", jeton(c).length() > 0);
+            if (jeton(c).length() > 0 && !direct) {
+                // le jeton ne se vérifie qu'en faisant le tour : on publie un
+                // ordre sans effet, le relais l'accusera à sa prochaine relève
+                JSONObject ping = verifierJeton(c);
+                out.put("ping", ping.optString("id"));
+                if (!ping.optBoolean("ok")) out.put("error", ping.optString("error"));
+            }
+            out.put("ok", index.optBoolean("ok"));
+        } catch (Exception e) {
+            return erreur(String.valueOf(e.getMessage()));
         }
         return out;
+    }
+
+    /** L'accusé que le relais a joint à son index pour cet ordre, s'il est arrivé. */
+    static JSONObject accuse(Context c, String ident) {
+        JSONObject index = index(c);
+        org.json.JSONArray liste = index.optJSONArray("accuses");
+        if (liste == null) return new JSONObject();
+        for (int i = liste.length() - 1; i >= 0; i--) {
+            JSONObject a = liste.optJSONObject(i);
+            if (a != null && ident.equals(a.optString("id"))) return a;
+        }
+        return new JSONObject();
     }
 }

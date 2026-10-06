@@ -315,6 +315,8 @@ const errors = [];
       biblioThumb: (c, p, id) => setTimeout(() => window.NMTcb(id, '{"ok":false}'), 10),
       biblioPush: (c, m, l, p, id) => { window.__push = [c, m, l, p];
         setTimeout(() => window.NMTcb(id, '{"ok":true,"lance":true}'), 10); },
+      biblioAck: (ident, id) => setTimeout(() => window.NMTcb(id,
+        JSON.stringify({ id: ident, ok: true, dit: 'casque lancé sur P1S 1' })), 10),
       testBiblio: id => setTimeout(() => window.NMTcb(id, '{"ok":true,"fichiers":3}'), 10)
     });
     /* des machines branchees : sans elles, aucune n'est proposee comme
@@ -462,6 +464,40 @@ const errors = [];
     if (vu[2] !== true || vu[3] !== 2) throw new Error('mauvais envoi : ' + JSON.stringify(vu));
     await page.evaluate(() => closeSheet());
     await page.waitForTimeout(150);
+  });
+
+  await step('sans jeton, l\'écran prévient au lieu de laisser faire', async () => {
+    await page.evaluate(() => {
+      window.NMT.biblioToken = () => '';
+      BIB.canal = true; render();
+    });
+    await page.waitForTimeout(200);
+    const vu = await page.textContent('#view');
+    if (!/Jeton manquant/.test(vu)) throw new Error('aucun avertissement');
+    if (!/refusera/.test(vu)) throw new Error('conséquence pas dite');
+    await page.evaluate(() => {
+      window.NMT.biblioToken = () => 'secret';
+      BIB.canal = false; render();
+    });
+    await page.waitForTimeout(150);
+  });
+
+  await step('un ordre différé rend compte de son sort', async () => {
+    await page.evaluate(() => {
+      const vrai = window.NMT.biblioPush;
+      window.NMT.biblioPush = (c, m, l, p, id) => setTimeout(() => window.NMTcb(id,
+        JSON.stringify({ ok: true, differe: true, id: 'ord-1' })), 10);
+      window.__toasts = [];
+      const vraiToast = window.toast;
+      window.toast = (m, k) => { window.__toasts.push(m); vraiToast(m, k); };
+    });
+    await page.evaluate(() => biblioPousser('p1s/blaster.gcode.3mf', 'P1S 1', false));
+    await page.waitForTimeout(300);
+    const premier = await page.evaluate(() => window.__toasts.join(' | '));
+    if (!/Demandé au relais/.test(premier)) throw new Error('pas d\'accusé immédiat : ' + premier);
+    /* l'accusé arrive après le premier essai, à 20 s : on force le temps */
+    await page.waitForFunction(() => window.__toasts.some(t => /lancé sur P1S 1/.test(t)),
+                               null, { timeout: 40000 });
   });
 
   await step('l\'historique de la farm s\'affiche', async () => {

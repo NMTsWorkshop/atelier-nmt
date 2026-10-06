@@ -555,6 +555,15 @@ public class Bridge {
     }
 
     @JavascriptInterface
+    public void biblioAck(final String ident, final String cbId) {
+        new Thread(new Runnable() {
+            public void run() {
+                callBack(cbId, Biblio.accuse(act, ident).toString());
+            }
+        }).start();
+    }
+
+    @JavascriptInterface
     public void testBiblio(final String cbId) {
         new Thread(new Runnable() {
             public void run() {

@@ -138,14 +138,19 @@ public class Relay {
         }
     }
 
-    /** Publie un ordre signé. L'appelant fournit « quoi » et ses champs. */
-    static void ordre(Context c, JSONObject ordre, String jeton) throws Exception {
+    /**
+     * Publie un ordre signé et renvoie son identifiant : c'est par lui que
+     * l'app reconnaîtra l'accusé que le relais joindra à son prochain index.
+     */
+    static String ordre(Context c, JSONObject ordre, String jeton) throws Exception {
+        String ident = Long.toString(System.currentTimeMillis(), 36)
+                + Integer.toString((int) (Math.random() * 46655), 36);
         ordre.put("t", "ordre");
-        ordre.put("id", Long.toString(System.currentTimeMillis(), 36)
-                + Integer.toString((int) (Math.random() * 46655), 36));
+        ordre.put("id", ident);
         ordre.put("at", System.currentTimeMillis());
         ordre.put("sig", signer(jeton, ordre));
         publier(c, ordre.toString());
+        return ident;
     }
 
     /**

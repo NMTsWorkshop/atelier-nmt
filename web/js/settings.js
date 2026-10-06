@@ -269,18 +269,59 @@ function testBiblio() {
   }
   const out = $('#biblio-out');
   if (out) out.textContent = 'Appel du relais…';
+  /* Il y a deux chemins et un jeton. L'ancien test ne regardait que le
+     chemin direct, et annonçait un échec hors de l'atelier alors que tout
+     marchait par le canal : on rend compte des trois séparément. */
   Biblio.test()
     .then(r => {
       const o = $('#biblio-out');
-      if (r && r.ok) {
-        toast(r.fichiers + ' fichier' + (r.fichiers > 1 ? 's' : '') + ' dans la bibliothèque', 'ok');
-        if (o) o.innerHTML = '<span style="color:var(--ok)">Relais joignable — ' + r.fichiers +
-          ' fichier(s)</span>' + (r.racine ? '<br>' + esc(r.racine) : '');
+      const lignes = [];
+
+      if (r.direct) {
+        lignes.push('<span style="color:var(--ok)">Relais joignable en direct ' +
+          '— affichage instantané et aperçus des plateaux.</span>');
+      } else if (r.adresse) {
+        lignes.push('<span style="color:var(--txt-3)">Pas de réponse directe de ' +
+          esc(r.adresse) + '. Normal hors du réseau de l\'atelier, ou si le ' +
+          'pare-feu sépare ton wifi du Pi.</span>');
       } else {
-        const m = (r && r.error) || 'sans réponse';
-        toast('Échec — ' + m, 'bad');
-        if (o) o.innerHTML = '<span style="color:var(--bad)">Échec — ' + esc(m) + '</span>';
+        lignes.push('<span style="color:var(--txt-3)">Aucune adresse : tout passe par le canal.</span>');
       }
+
+      if (r.lecture) {
+        lignes.push('<span style="color:var(--ok)">Bibliothèque lue' +
+          (r.canal ? ' par le canal' : ' en direct') + ' — ' + r.fichiers + ' fichier(s).</span>');
+      } else {
+        lignes.push('<span style="color:var(--bad)">Bibliothèque illisible — ' +
+          esc(r.error || 'sans réponse') + '</span>');
+      }
+
+      if (!r.jeton) {
+        lignes.push('<span style="color:var(--bad)">Aucun jeton : tu peux voir, ' +
+          'mais le relais refusera tout envoi et tout plateau coché.</span>');
+        toast('Il manque le jeton', 'bad');
+      } else if (r.ping) {
+        lignes.push('<span style="color:var(--txt-3)" id="biblio-ping">Jeton envoyé au ' +
+          'relais, réponse dans la minute…</span>');
+        Biblio.suivreOrdre(r.ping).then(a => {
+          const el = $('#biblio-ping');
+          if (!el) return;
+          if (a && a.ok) {
+            el.outerHTML = '<span style="color:var(--ok)">Jeton accepté par le relais.</span>';
+            toast('Tout est bon', 'ok');
+          } else {
+            el.outerHTML = '<span style="color:var(--bad)">Jeton refusé par le relais — ' +
+              esc((a && a.dit) || 'pas de réponse') + '</span>';
+            toast('Jeton refusé', 'bad');
+          }
+        }).catch(() => {});
+        toast('Lecture bonne, je vérifie le jeton', 'ok');
+      } else {
+        lignes.push('<span style="color:var(--ok)">Jeton enregistré.</span>');
+        toast('Tout est bon', 'ok');
+      }
+
+      if (o) o.innerHTML = lignes.join('<br>');
     })
     .catch(e => {
       toast('Échec — ' + e.message, 'bad');

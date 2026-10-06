@@ -402,6 +402,25 @@ const Biblio = {
     return nativeCall('biblioPush', [chemin, machine, !!lancer, plateau || 1]);
   },
   test() { return nativeCall('testBiblio', []); },
+  accuse(id) { return nativeCall('biblioAck', [id]); },
+
+  /* Un ordre parti par le canal n'a pas de réponse immédiate : le relais
+     l'applique à sa relève suivante et joint un accusé à son index. On va le
+     chercher, au lieu de laisser l'utilisateur deviner. */
+  suivreOrdre(id, quand) {
+    if (!id) return Promise.resolve(null);
+    const essais = [20000, 25000, 30000, 40000];
+    const prochain = (i) => new Promise(resolve => {
+      if (i >= essais.length) { resolve(null); return; }
+      setTimeout(() => {
+        this.accuse(id).then(a => {
+          if (a && a.id) resolve(a);
+          else prochain(i + 1).then(resolve);
+        }).catch(() => prochain(i + 1).then(resolve));
+      }, essais[i]);
+    });
+    return prochain(0);
+  },
 
   /* la famille d'une machine décide quels fichiers lui vont */
   famille(machine) {

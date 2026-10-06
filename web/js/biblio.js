@@ -104,6 +104,18 @@ function renderBiblio() {
       'qui s\'en charge, dans la minute.</div>'
     : '';
 
+  /* sans jeton on peut tout voir et rien faire : le relais refuse les ordres
+     non signés, et sans ce bandeau on ne l'apprend jamais */
+  if (BIB.canal && !Biblio.jeton()) {
+    out = '<div class="card tight" style="margin-bottom:12px;border-color:var(--bad)">' +
+      '<div class="rowitem"><div class="grow">' +
+      '<div class="t">Jeton manquant</div>' +
+      '<div class="s">Tu peux voir la bibliothèque, mais le relais refusera tout ' +
+      'envoi et tout plateau coché. Le jeton est affiché par pi-10-verif.bat.</div>' +
+      '</div><button class="btn primary" onclick="go(\'settings\')">Réglages</button>' +
+      '</div></div>';
+  }
+
   if (!tous.length) {
     return out + emptyState('Bibliothèque vide',
       'Dépose tes fichiers tranchés dans le dossier partagé du relais. Un sous-dossier par commande, ' +
@@ -377,6 +389,22 @@ function ligneInfo(cle, valeur) {
 
 /* ---------- actions ---------- */
 
+/* Un ordre passé par le canal n'a pas de réponse immédiate. Plutôt que de
+   laisser un « demandé » sans suite, on attend l'accusé que le relais joint
+   à son index et on dit ce qui s'est réellement passé. */
+function attendreAccuse(id, quoi) {
+  if (!id) { setTimeout(() => biblioCharger(true), 70000); return; }
+  Biblio.suivreOrdre(id).then(a => {
+    biblioCharger(true);
+    if (!a) {
+      toast('Toujours pas de réponse du relais pour ' + quoi, 'bad');
+      return;
+    }
+    toast(a.ok ? (a.dit || quoi) : 'Refusé — ' + (a.dit || 'sans raison'),
+          a.ok ? 'ok' : 'bad');
+  }).catch(() => biblioCharger(true));
+}
+
 function biblioExemplaires(chemin, delta) {
   const f = fichierDe(chemin);
   if (!f || !f.plateaux.length) return;
@@ -405,11 +433,9 @@ function biblioMarquer(chemin, plateau, fait) {
     }
     const mot = fait ? 'Plateau ' + plateau + ' de ' + nom + ' marqué fait'
                      : 'Plateau ' + plateau + ' remis à faire';
-    toast(res.differe ? mot + ' — le relais suit dans la minute' : mot, 'ok');
+    toast(mot, 'ok');
     closeSheet();
-    /* à distance l'ordre met une relève à arriver : on laisse au relais le
-       temps de l'appliquer avant de relire, sinon on réaffiche l'ancien état */
-    if (res.differe) setTimeout(() => biblioCharger(), 70000);
+    if (res.differe) attendreAccuse(res.id, mot);
     else biblioCharger();
   }).catch(e => toast(e.message || 'refusé', 'bad'));
 }
@@ -451,9 +477,8 @@ function biblioRattacher(chemin) {
         closeSheet();
         Biblio.rattacher(chemin, v).then(res => {
           if (!res || !res.ok) { toast((res && res.error) || 'refusé', 'bad'); return; }
-          toast((v ? 'Rattaché à ' + v : 'Détaché') +
-                (res.differe ? ' — le relais suit dans la minute' : ''), 'ok');
-          if (res.differe) setTimeout(() => biblioCharger(), 70000);
+          toast(v ? 'Rattaché à ' + v : 'Détaché', 'ok');
+          if (res.differe) attendreAccuse(res.id, v ? 'rattachement à ' + v : 'détachement');
           else biblioCharger();
         }).catch(e => toast(e.message || 'refusé', 'bad'));
       };
@@ -487,8 +512,8 @@ function biblioPousser(chemin, machine, lancer, plateau) {
     toast('Envoi de ' + nom + ' vers ' + machine + '…');
     Biblio.pousser(chemin, machine, lancer, plateau || 1).then(res => {
       if (res && res.differe) {
-        toast('Demandé au relais — ' + nom + ' part vers ' + machine + ' dans la minute', 'ok');
-        setTimeout(() => biblioCharger(true), 70000);
+        toast('Demandé au relais — ' + nom + ' part vers ' + machine, 'ok');
+        attendreAccuse(res.id, nom + ' vers ' + machine);
       } else if (res && res.ok) {
         toast(res.lance ? nom + ' lancé sur ' + machine : nom + ' déposé sur ' + machine, 'ok');
         biblioCharger(true);
