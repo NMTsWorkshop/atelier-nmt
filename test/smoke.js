@@ -209,6 +209,18 @@ const errors = [];
 
   console.log('\n— persistance —');
   await step('rechargement de la page', async () => {
+    /* save() est synchrone mais l'action qui le declenche ne l'est pas
+       toujours : on attend que le stockage porte bien l'etat courant,
+       sinon le rechargement part trop tot et le test ment */
+    await page.waitForFunction(() => {
+      try {
+        const brut = localStorage.getItem('nmt_atelier_v1');
+        if (!brut) return false;
+        const d = JSON.parse(brut);
+        return (d.machines || []).length === 1 && (d.spools || []).length === 2
+            && (d.orders || []).length === 1;
+      } catch (e) { return false; }
+    }, null, { timeout: 5000 });
     await page.reload();
     await page.waitForTimeout(300);
     const n = await page.evaluate(() => DB.machines.length + '/' + DB.spools.length + '/' + DB.orders.length);
@@ -237,18 +249,21 @@ const errors = [];
      s'etale sur les deux familles et un 3mf a trois plateaux. */
   console.log('\n— bibliothèque —');
   await page.evaluate(() => {
-    const plat = (idx, min, g, objets, faits) => ({
+    const plat = (idx, min, g, objets, faits, etat) => ({
       idx: idx, minutes: min, grammes: g, objets: objets, vignette: 'Metadata/plate_' + idx + '.png',
       exemplaires: 1, faits: faits, reste: faits ? 0 : 1,
-      dernier: faits ? Date.now() - 7200000 : 0, machines: faits ? ['P1S 1'] : []
+      dernier: faits ? Date.now() - 7200000 : 0, machines: faits ? ['P1S 1'] : [],
+      refaire: etat === 'refaire', etat: etat || (faits ? 'fait' : 'attente'),
+      machine_en_cours: etat === 'encours' ? 'P1S 2' : ''
     });
     const casque = {
       chemin: 'p1s/1045 Mando/casque_jetpack.gcode.3mf', famille: 'p1s',
       nom: 'casque_jetpack.gcode.3mf', dossier: '1045 Mando', commande: '1045 Mando',
       taille: 48234567, modifie: Date.now() - 86400000, multi: true,
-      plateaux: [plat(1, 307, 186, ['casque_coque', 'casque_visiere'], 1),
-                 plat(2, 121, 74, ['jetpack_gauche'], 0),
-                 plat(3, 121, 74, ['jetpack_droit'], 0)],
+      plateaux: [plat(1, 307, 186, ['casque_coque', 'casque_visiere'], 1, 'fait'),
+                 plat(2, 121, 74, ['jetpack_gauche'], 0, 'attente'),
+                 plat(3, 121, 74, ['jetpack_droit'], 0, 'encours')],
+      encours: true,
       exemplaires: 3, faits: 1, reste: 2, dernier: Date.now() - 7200000,
       machines: ['P1S 1'], minutes: 549
     };
@@ -257,7 +272,9 @@ const errors = [];
       dossier: '1045 Mando', commande: '1045 Mando', taille: 2411000,
       modifie: Date.now() - 3600000, multi: false,
       plateaux: [{ idx: 0, minutes: 0, grammes: 0, objets: [], vignette: '',
-                   exemplaires: 1, faits: 0, reste: 1, dernier: 0, machines: [] }],
+                   exemplaires: 1, faits: 0, reste: 1, dernier: 0, machines: [],
+                   refaire: true, etat: 'refaire', machine_en_cours: '' }],
+      refaire: true,
       exemplaires: 1, faits: 0, reste: 1, dernier: 0, machines: [], minutes: 0
     };
     const blaster = {
@@ -266,7 +283,8 @@ const errors = [];
       multi: false,
       plateaux: [{ idx: 1, minutes: 190, grammes: 95, objets: ['blaster'], vignette: '',
                    exemplaires: 1, faits: 2, reste: 0, dernier: Date.now() - 90000000,
-                   machines: ['P1S 1', 'P1S 2'] }],
+                   machines: ['P1S 1', 'P1S 2'], refaire: false, etat: 'fait',
+                   machine_en_cours: '' }],
       exemplaires: 1, faits: 2, reste: 0, dernier: Date.now() - 90000000,
       machines: ['P1S 1', 'P1S 2'], minutes: 190
     };
@@ -276,7 +294,7 @@ const errors = [];
       commandes: [{ nom: '1045 Mando', fichiers: 2, familles: ['k2', 'p1s'],
                     plateaux: 4, faits: 1, reste: 3, minutes: 549,
                     dernier: Date.now() - 7200000, chemins: [socle.chemin, casque.chemin],
-                    termine: false }]
+                    encours: 1, refaire: 1, termine: false }]
     };
     const historique = { ok: true, lignes: [
       { machine: 'P1S 1', fichier: 'casque_jetpack.gcode.3mf', etat: 'fini',
@@ -399,6 +417,26 @@ const errors = [];
     if (!/c'est le relais qui enverra/i.test(txt)) throw new Error('explication absente');
     await page.evaluate(() => { closeSheet(); BIB.canal = false; render(); });
     await page.waitForTimeout(150);
+  });
+
+  await step('chaque plateau montre où il en est', async () => {
+    await page.click('#view [data-bib*="casque_jetpack"]');
+    await page.waitForTimeout(300);
+    const lignes = await page.$$eval('.sheet .plateau', e => e.map(x => x.textContent));
+    if (!/Sorti/.test(lignes[0])) throw new Error('plateau 1 pas sorti : ' + lignes[0]);
+    if (!/À faire/.test(lignes[1])) throw new Error('plateau 2 pas à faire : ' + lignes[1]);
+    if (!/En cours/.test(lignes[2])) throw new Error('plateau 3 pas en cours : ' + lignes[2]);
+    if (!/P1S 2/.test(lignes[2])) throw new Error('machine absente : ' + lignes[2]);
+    const boutons = await page.$$eval('.sheet .plateau .btn', e => e.length);
+    if (boutons !== 2) throw new Error('le plateau en cours ne doit pas avoir de bouton, vu ' + boutons);
+    await page.screenshot({ path: OUT + '/biblio-plateaux.png' });
+    await page.evaluate(() => closeSheet());
+    await page.waitForTimeout(150);
+  });
+
+  await step('la commande signale ce qui est à refaire', async () => {
+    const tete = await page.textContent('#view .cmd-head');
+    if (!/À refaire/.test(tete)) throw new Error('en-tête : ' + tete);
   });
 
   await step('lancer un multi-plateaux demande lequel', async () => {

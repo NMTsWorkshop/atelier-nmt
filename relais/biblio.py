@@ -167,6 +167,7 @@ class Bibliotheque(object):
             if fait:
                 p["faits"] = faits + 1
                 p["dernier"] = quand
+                p.pop("refaire", None)
                 if machine:
                     noms = p.setdefault("machines", [])
                     if machine not in noms:
@@ -194,6 +195,39 @@ class Bibliotheque(object):
         if not os.path.isfile(voulu):
             raise ValueError("fichier introuvable : %s" % chemin)
         return voulu
+
+    def chemins_par_nom(self):
+        """{nom réduit: [chemins]} — juste de quoi relier ce qu'annonce une
+        machine à un fichier de la bibliothèque. Beaucoup plus léger que
+        l'index complet, qui relit tout l'historique."""
+        out = {}
+        for famille in self.familles:
+            dossier = os.path.join(self.racine, famille)
+            if not os.path.isdir(dossier):
+                continue
+            for base, _dirs, noms in os.walk(dossier):
+                for nom in noms:
+                    if not nom.lower().endswith(EXTENSIONS) or nom.startswith("."):
+                        continue
+                    rel = os.path.relpath(os.path.join(base, nom),
+                                          self.racine).replace(os.sep, "/")
+                    out.setdefault(base_nom(nom), []).append(rel)
+        return out
+
+    def marquer_refaire(self, chemin, plateau, refaire=True):
+        """Un plateau qui s'est mal terminé reste signalé tant qu'il n'est
+        pas ressorti : c'est le seul moyen de ne pas oublier de le refaire."""
+        def faire(e):
+            p = e.setdefault("plateaux", {}).setdefault(str(int(plateau)), {})
+            if refaire:
+                p["refaire"] = True
+            else:
+                p.pop("refaire", None)
+            if not p:
+                e["plateaux"].pop(str(int(plateau)), None)
+            if not e.get("plateaux"):
+                e.pop("plateaux", None)
+        return self._modifier(chemin, faire)
 
     # --- l'index ------------------------------------------------------
 
@@ -250,7 +284,8 @@ class Bibliotheque(object):
                 sorties.append(dict(p, exemplaires=voulu, faits=faits,
                                     reste=max(0, voulu - faits),
                                     dernier=r.get("dernier", 0),
-                                    machines=r.get("machines") or []))
+                                    machines=r.get("machines") or [],
+                                    refaire=bool(r.get("refaire"))))
         else:
             # un seul plateau : c'est le fichier entier, et l'historique du
             # relais suffit à savoir s'il est sorti
@@ -265,10 +300,21 @@ class Bibliotheque(object):
                                            "objets": [], "vignette": ""}
             sorties = [dict(seul, exemplaires=demande_fichier, faits=faits,
                             reste=max(0, demande_fichier - faits),
-                            dernier=dernier, machines=machines)]
+                            dernier=dernier, machines=machines,
+                            refaire=bool(r.get("refaire")))]
+
+        tournent = en_cours_ici(rel)
+        for p in sorties:
+            p["machine_en_cours"] = tournent.get(p["idx"], "")
+            p["etat"] = ("encours" if p["machine_en_cours"]
+                         else "refaire" if p["refaire"]
+                         else "fait" if p["reste"] <= 0
+                         else "attente")
 
         return {
             "chemin": rel, "famille": famille, "nom": nom, "dossier": dossier,
+            "encours": any(p["etat"] == "encours" for p in sorties),
+            "refaire": any(p["etat"] == "refaire" for p in sorties),
             "commande": commande,
             "taille": st.st_size, "modifie": int(st.st_mtime * 1000),
             "multi": len(liste) > 1,
@@ -291,7 +337,7 @@ class Bibliotheque(object):
             c = par_nom.setdefault(f["commande"], {
                 "nom": f["commande"], "fichiers": 0, "familles": [],
                 "plateaux": 0, "faits": 0, "reste": 0, "minutes": 0,
-                "dernier": 0, "chemins": []})
+                "dernier": 0, "chemins": [], "encours": 0, "refaire": 0})
             c["fichiers"] += 1
             c["plateaux"] += sum(p["exemplaires"] for p in f["plateaux"])
             c["faits"] += f["faits"]
@@ -299,6 +345,10 @@ class Bibliotheque(object):
             c["minutes"] += f["minutes"]
             c["dernier"] = max(c["dernier"], f["dernier"])
             c["chemins"].append(f["chemin"])
+            if f.get("encours"):
+                c["encours"] = c.get("encours", 0) + 1
+            if f.get("refaire"):
+                c["refaire"] = c.get("refaire", 0) + 1
             if f["famille"] not in c["familles"]:
                 c["familles"].append(f["famille"])
         sorties = []
@@ -538,6 +588,9 @@ def pousser(biblio, machines, nom_machine, chemin_relatif, lancer=False, plateau
         etat = pousser_moonraker(machine, entier, nom, lancer)
     else:
         etat = pousser_bambu(machine, entier, nom, lancer, plateau)
+    if etat == "lancé":
+        # on vient de lancer : on sait quel plateau tourne, la machine non
+        noter_lancement(machine.get("nom"), chemin_relatif, plateau, nom)
     biblio.noter({"at": int(time.time() * 1000), "machine": machine.get("nom"),
                   "fichier": nom, "etat": "lancé" if etat == "lancé" else "envoyé",
                   "chemin": chemin_relatif,
@@ -713,8 +766,13 @@ def suivre(biblio, etats):
 
         if phase in ("printing", "paused") and fichier:
             if suivi is None or suivi.get("fichier") != fichier:
+                chemin, plateau = resoudre_plateau(biblio, nom, fichier,
+                                                   etat.get("brut") or {})
                 EN_COURS[cle] = {"fichier": fichier, "debut": etat.get("at"),
-                                 "pourcent": pourcent, "brut": etat.get("brut") or {}}
+                                 "pourcent": pourcent, "brut": etat.get("brut") or {},
+                                 "machine": nom, "chemin": chemin, "plateau": plateau}
+                if chemin:
+                    oublier_publication()      # l'app doit voir « en cours »
             else:
                 suivi["pourcent"] = max(suivi.get("pourcent", -1), pourcent)
                 if etat.get("brut"):
@@ -743,6 +801,11 @@ def suivre(biblio, etats):
         # là-dedans qu'on cherchera de quoi reconnaître le plateau imprimé
         if suivi.get("brut"):
             ligne["brut"] = suivi["brut"]
+        if suivi.get("chemin"):
+            ligne["chemin"] = suivi["chemin"]
+            ligne["plateau"] = suivi.get("plateau")
+            conclure_plateau(biblio, suivi["chemin"], suivi.get("plateau") or 1,
+                             issue, nom)
         biblio.noter(ligne)
         ajouts.append(ligne)
         EN_COURS.pop(cle, None)
@@ -1001,3 +1064,98 @@ def appliquer_ordre(biblio, ordre, jeton, machines=None):
     except ValueError as e:
         return "ordre impossible : %s" % e
     return None
+
+
+# ----------------------------------------------------------------------
+# quel plateau est en train de sortir
+# ----------------------------------------------------------------------
+#
+# Une machine annonce un fichier, pas un plateau. Pour suivre un fichier
+# multi-plateaux il faut retrouver lequel tourne, et il y a trois façons
+# d'y arriver, de la plus sûre à la moins sûre :
+#
+#   1. c'est le relais qui a lancé : il sait exactement quoi et lequel ;
+#   2. la machine nomme le plateau dans ses champs bruts
+#      (« Metadata/plate_3.gcode ») — vrai sur certaines versions ;
+#   3. le fichier n'a qu'un plateau : c'est forcément celui-là.
+#
+# Quand aucune ne marche — un multi-plateaux lancé depuis l'écran d'une
+# machine qui ne dit pas lequel — on reste sur le fichier, et le plateau
+# se coche à la main comme avant.
+
+ATTENDU = {}
+PEREMPTION_ATTENTE = 15 * 60
+
+
+def en_cours_ici(chemin_relatif):
+    """{plateau: machine} pour ce fichier, d'après ce qui tourne à l'instant.
+    C'est la seule information de l'index qui ne vienne pas du disque."""
+    out = {}
+    for suivi in EN_COURS.values():
+        if suivi.get("chemin") == chemin_relatif and suivi.get("plateau"):
+            out[int(suivi["plateau"])] = suivi.get("machine") or ""
+    return out
+
+
+def noter_lancement(nom_machine, chemin, plateau, fichier):
+    ATTENDU[nom_machine] = {"chemin": chemin, "plateau": int(plateau or 1),
+                            "fichier": fichier, "at": time.time()}
+
+
+def _plateau_annonce(brut):
+    """Le numéro de plateau que la machine donne d'elle-même, s'il y est."""
+    for valeur in (brut or {}).values():
+        m = re.search(r"plate_(\d+)", str(valeur))
+        if m:
+            return int(m.group(1))
+    for cle, valeur in (brut or {}).items():
+        if "plate" in cle.lower() and str(valeur).strip().lstrip("-").isdigit():
+            n = int(valeur)
+            return n + 1 if cle.lower().endswith("idx") else n
+    return None
+
+
+def resoudre_plateau(biblio, nom_machine, fichier, brut):
+    """(chemin, plateau) du plateau qui tourne, (None, None) si on ne sait pas."""
+    attendu = ATTENDU.get(nom_machine)
+    if attendu and (time.time() - attendu["at"]) < PEREMPTION_ATTENTE:
+        if base_nom(attendu["fichier"]) == base_nom(fichier):
+            # une intention ne vaut que pour l'impression qu'elle a lancée :
+            # la garder ferait attribuer la suivante au même plateau
+            ATTENDU.pop(nom_machine, None)
+            return attendu["chemin"], attendu["plateau"]
+
+    chemins = biblio.chemins_par_nom().get(base_nom(fichier)) or []
+    if len(chemins) != 1:
+        return None, None
+    chemin = chemins[0]
+
+    annonce = _plateau_annonce(brut)
+    if annonce:
+        return chemin, annonce
+
+    try:
+        liste = plateaux(biblio.verifier(chemin))
+    except ValueError:
+        return None, None
+    if len(liste) <= 1:
+        return chemin, (liste[0]["idx"] if liste else 1)
+    return None, None
+
+
+def conclure_plateau(biblio, chemin, plateau, issue, machine):
+    """Un plateau qui vient de finir : sorti, ou à refaire."""
+    try:
+        multi = len(plateaux(biblio.verifier(chemin))) > 1
+    except ValueError:
+        return
+    if issue == "fini":
+        if multi:
+            biblio.marquer(chemin, plateau, True, machine)
+        else:
+            # un fichier à un seul plateau est déjà compté par l'historique :
+            # le marquer en plus le ferait compter deux fois
+            biblio.marquer_refaire(chemin, plateau, False)
+    else:
+        biblio.marquer_refaire(chemin, plateau, True)
+    oublier_publication()

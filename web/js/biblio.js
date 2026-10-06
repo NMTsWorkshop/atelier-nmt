@@ -157,8 +157,9 @@ function enteteCommande(c) {
     '<div class="cmd-sub">' + c.faits + ' plateau' + (c.faits > 1 ? 'x' : '') + ' sur ' + c.plateaux +
       ' · ' + esc(machines) +
       (c.minutes ? ' · ' + fmtDurShort(c.minutes * 60000) + ' de machine' : '') + '</div></div>' +
-    badge(c.termine ? 'ok' : (c.faits ? 'warn' : 'acc'),
-          c.termine ? 'Terminée' : (c.faits ? 'En cours' : 'À faire')) +
+    badge(c.refaire ? 'bad' : c.encours ? 'info' : c.termine ? 'ok' : c.faits ? 'warn' : 'acc',
+          c.refaire ? 'À refaire' : c.encours ? 'Sur machine' :
+          c.termine ? 'Terminée' : c.faits ? 'Entamée' : 'À faire') +
     '</div>' + gauge(c.plateaux ? (c.faits / c.plateaux) * 100 : 0, c.termine ? 'ok' : 'warn');
 }
 
@@ -194,7 +195,18 @@ function biblioChercher(valeur) {
 
 /* ---------- une ligne de fichier ---------- */
 
+/* l'état d'un plateau, tel que le relais le voit : ce qui tourne, ce qui
+   est sorti, ce qui s'est mal terminé, ce qui reste */
+const ETATS_PLATEAU = {
+  encours: { cls: 'info', mot: 'En cours' },
+  fait:    { cls: 'ok',   mot: 'Sorti' },
+  refaire: { cls: 'bad',  mot: 'À refaire' },
+  attente: { cls: 'acc',  mot: 'À faire' }
+};
+
 function etatFichier(f) {
+  if (f.encours) return { cls: 'info', mot: 'En cours' };
+  if (f.refaire) return { cls: 'bad', mot: 'À refaire' };
   if (f.reste <= 0 && f.faits > 0) {
     return { cls: 'ok', mot: f.multi ? 'Tous sortis' : (f.faits > 1 ? 'Fait ×' + f.faits : 'Fait') };
   }
@@ -317,24 +329,30 @@ function ficheFichierSheet(chemin) {
 
 function ligneplateau(chemin, p) {
   const cle = JSON.stringify(chemin).replace(/"/g, '&quot;');
-  const fini = p.reste <= 0;
+  const e = ETATS_PLATEAU[p.etat] || ETATS_PLATEAU.attente;
   const infos = [];
   if (p.minutes) infos.push(fmtDurShort(p.minutes * 60000));
   if (p.grammes) infos.push(p.grammes + ' g');
   if (p.exemplaires > 1) infos.push(p.faits + ' sur ' + p.exemplaires);
+  if (p.etat === 'encours' && p.machine_en_cours) infos.push('sur ' + p.machine_en_cours);
   const objets = (p.objets || []).join(', ');
 
-  return '<div class="card tight plateau' + (fini ? ' fini' : '') + '" data-plateau="' + p.idx + '">' +
+  /* pendant l'impression on ne propose rien : le relais conclura tout seul,
+     et un geste de trop ne ferait qu'embrouiller le compte */
+  let action = '';
+  if (p.etat === 'encours') action = '';
+  else if (p.etat === 'fait') action = '<button class="btn ghost" onclick="biblioMarquer(' + cle + ',' + p.idx + ',false)">Annuler</button>';
+  else action = '<button class="btn primary" onclick="biblioMarquer(' + cle + ',' + p.idx + ',true)">Fait</button>';
+
+  return '<div class="card tight plateau' + (p.etat === 'fait' ? ' fini' : '') +
+    '" data-plateau="' + p.idx + '">' +
     '<div class="rowitem">' +
       '<img class="vignette" id="vg-' + p.idx + '" alt="" style="display:none">' +
       '<div class="grow">' +
-        '<div class="t">Plateau ' + p.idx + '</div>' +
+        '<div class="t">Plateau ' + p.idx + ' ' + badge(e.cls, e.mot) + '</div>' +
         '<div class="s">' + esc(objets || infos.join(' · ')) + '</div>' +
         (objets && infos.length ? '<div class="s">' + esc(infos.join(' · ')) + '</div>' : '') +
-      '</div>' +
-      (fini
-        ? '<button class="btn ghost" onclick="biblioMarquer(' + cle + ',' + p.idx + ',false)">Annuler</button>'
-        : '<button class="btn primary" onclick="biblioMarquer(' + cle + ',' + p.idx + ',true)">Fait</button>') +
+      '</div>' + action +
     '</div></div>';
 }
 
