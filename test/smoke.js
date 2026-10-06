@@ -284,7 +284,7 @@ const errors = [];
       plateaux: [{ idx: 1, minutes: 190, grammes: 95, objets: ['blaster'], vignette: '',
                    exemplaires: 1, faits: 2, reste: 0, dernier: Date.now() - 90000000,
                    machines: ['P1S 1', 'P1S 2'], refaire: false, etat: 'fait',
-                   machine_en_cours: '' }],
+                   manuel: 0, machine_en_cours: '' }],
       exemplaires: 1, faits: 2, reste: 0, dernier: Date.now() - 90000000,
       machines: ['P1S 1', 'P1S 2'], minutes: 190
     };
@@ -313,8 +313,10 @@ const errors = [];
       biblioMark: (c, p, f, m, id) => setTimeout(() => window.NMTcb(id, '{"ok":true}'), 10),
       biblioOrder: (c, n, id) => setTimeout(() => window.NMTcb(id, '{"ok":true}'), 10),
       biblioThumb: (c, p, id) => setTimeout(() => window.NMTcb(id, '{"ok":false}'), 10),
-      biblioPush: (c, m, l, p, id) => { window.__push = [c, m, l, p];
+      biblioPush: (c, m, h, l, p, id) => { window.__push = [c, m, h, l, p];
         setTimeout(() => window.NMTcb(id, '{"ok":true,"lance":true}'), 10); },
+      biblioRedo: (c, p, r, id) => { window.__redo = [c, p, r];
+        setTimeout(() => window.NMTcb(id, '{"ok":true}'), 10); },
       biblioAck: (ident, id) => setTimeout(() => window.NMTcb(id,
         JSON.stringify({ id: ident, ok: true, dit: 'casque lancé sur P1S 1' })), 10),
       testBiblio: id => setTimeout(() => window.NMTcb(id, '{"ok":true,"fichiers":3}'), 10)
@@ -441,6 +443,46 @@ const errors = [];
     if (!/À refaire/.test(tete)) throw new Error('en-tête : ' + tete);
   });
 
+  await step('un fichier a un seul plateau se coche aussi', async () => {
+    await page.click('#view [data-bib*="socle"]');
+    await page.waitForTimeout(300);
+    const feuille = await page.textContent('.sheet');
+    if (!/Exemplaires voulus/.test(feuille)) throw new Error('fiche inattendue : ' + feuille);
+    const boutons = await page.$$eval('.sheet .btn', e => e.map(x => x.textContent));
+    if (!boutons.includes('Fait'))
+      throw new Error('rien pour le cocher à la main : ' + boutons.join(','));
+    await page.evaluate(() => { window.__marks = [];
+      const v = window.NMT.biblioMark;
+      window.NMT.biblioMark = (c, p, f, m, id) => { window.__marks.push([c, p, f]); v(c, p, f, m, id); }; });
+    await page.evaluate(() => biblioMarquer('k2/1045 Mando/socle.gcode', 0, true));
+    await page.waitForTimeout(300);
+    const vu = await page.evaluate(() => window.__marks);
+    if (!vu.length || vu[0][2] !== true)
+      throw new Error('le relais n\'a rien reçu : ' + JSON.stringify(vu));
+  });
+
+  await step('un plateau raté se signale à refaire', async () => {
+    await page.click('#view [data-bib*="socle"]');
+    await page.waitForTimeout(300);
+    const boutons = await page.$$eval('.sheet .btn', e => e.map(x => x.textContent));
+    if (!boutons.some(b => /refaire/i.test(b)))
+      throw new Error('rien pour le signaler raté : ' + boutons.join(','));
+    await page.evaluate(() => biblioRefaire('k2/1045 Mando/socle.gcode', 0, false));
+    await page.waitForTimeout(300);
+    const vu = await page.evaluate(() => window.__redo);
+    if (!vu || vu[2] !== false) throw new Error('mauvais ordre : ' + JSON.stringify(vu));
+  });
+
+  await step('ce qui est sorti tout seul ne propose pas d\'annuler', async () => {
+    await page.click('#view [data-bib*="blaster"]');
+    await page.waitForTimeout(300);
+    const boutons = await page.$$eval('.sheet .btn', e => e.map(x => x.textContent));
+    if (boutons.includes('Annuler'))
+      throw new Error('bouton sans effet proposé : ' + boutons.join(','));
+    await page.evaluate(() => closeSheet());
+    await page.waitForTimeout(150);
+  });
+
   await step('lancer un multi-plateaux demande lequel', async () => {
     await page.click('#view [data-bib*="casque_jetpack"]');
     await page.waitForTimeout(300);
@@ -461,7 +503,11 @@ const errors = [];
     await page.waitForTimeout(400);
     const vu = await page.evaluate(() => window.__push);
     if (!vu) throw new Error('rien envoyé');
-    if (vu[2] !== true || vu[3] !== 2) throw new Error('mauvais envoi : ' + JSON.stringify(vu));
+    if (vu[3] !== true || vu[4] !== 2) throw new Error('mauvais envoi : ' + JSON.stringify(vu));
+    /* l'adresse accompagne le nom : c'est elle qui fait le lien côté relais
+       quand la machine a été renommée sur le téléphone */
+    if (!/^\d+\.\d+\.\d+\.\d+$/.test(vu[2] || ''))
+      throw new Error('adresse de la machine absente : ' + JSON.stringify(vu));
     await page.evaluate(() => closeSheet());
     await page.waitForTimeout(150);
   });
@@ -485,7 +531,7 @@ const errors = [];
   await step('un ordre différé rend compte de son sort', async () => {
     await page.evaluate(() => {
       const vrai = window.NMT.biblioPush;
-      window.NMT.biblioPush = (c, m, l, p, id) => setTimeout(() => window.NMTcb(id,
+      window.NMT.biblioPush = (c, m, h, l, p, id) => setTimeout(() => window.NMTcb(id,
         JSON.stringify({ ok: true, differe: true, id: 'ord-1' })), 10);
       window.__toasts = [];
       const vraiToast = window.toast;

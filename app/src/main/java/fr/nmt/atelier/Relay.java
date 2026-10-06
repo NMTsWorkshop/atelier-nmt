@@ -113,7 +113,7 @@ public class Relay {
 
     private static final String[] CHAMPS_SIGNES = {
             "id", "at", "quoi", "chemin", "plateau", "fait", "n", "commande",
-            "machine", "lancer"
+            "machine", "lancer", "hote", "refaire"
     };
 
     static String signer(String jeton, JSONObject ordre) {

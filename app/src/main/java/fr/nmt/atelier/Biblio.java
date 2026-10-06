@@ -246,6 +246,21 @@ public class Biblio {
         }
     }
 
+    /** « Celui-là est raté » — pour ne pas l'oublier au moment de relancer. */
+    static JSONObject refaire(Context c, String chemin, int plateau, boolean refaire) {
+        try {
+            JSONObject o = new JSONObject();
+            o.put("quoi", "refaire");
+            o.put("chemin", chemin);
+            o.put("plateau", plateau);
+            o.put("refaire", refaire);
+            if (surPlace(c)) return appel(c, "/refaire", o, DELAI_LECTURE);
+            return parLeCanal(c, o);
+        } catch (Exception e) {
+            return erreur(String.valueOf(e.getMessage()));
+        }
+    }
+
     static JSONObject commande(Context c, String chemin, String nom) {
         try {
             JSONObject o = new JSONObject();
@@ -298,12 +313,15 @@ public class Biblio {
      * téléphone ne transporte rien, il dit seulement lequel va où.
      */
     static JSONObject pousser(Context c, String chemin, String machine,
-                              boolean lancer, int plateau) {
+                              String hote, boolean lancer, int plateau) {
         try {
             JSONObject o = new JSONObject();
             o.put("quoi", "pousser");
             o.put("chemin", chemin);
             o.put("machine", machine);
+            // le nom se renomme, l'adresse non : c'est elle qui fait le lien
+            // avec la machine que le relais connaît
+            o.put("hote", hote == null ? "" : hote);
             o.put("lancer", lancer);
             o.put("plateau", Math.max(1, plateau));
             if (surPlace(c)) return appel(c, "/pousser", o, DELAI_ENVOI);

@@ -282,6 +282,7 @@ class Bibliotheque(object):
                 voulu = int(r.get("exemplaires", demande_fichier))
                 faits = int(r.get("faits", 0))
                 sorties.append(dict(p, exemplaires=voulu, faits=faits,
+                                    manuel=faits,
                                     reste=max(0, voulu - faits),
                                     dernier=r.get("dernier", 0),
                                     machines=r.get("machines") or [],
@@ -298,7 +299,10 @@ class Bibliotheque(object):
                     machines.append(m)
             seul = liste[0] if liste else {"idx": 0, "minutes": 0, "grammes": 0,
                                            "objets": [], "vignette": ""}
+            # « manuel » : la part cochee a la main. Seule celle-la se
+            # decoche — ce que le relais a vu sortir, lui, est un fait.
             sorties = [dict(seul, exemplaires=demande_fichier, faits=faits,
+                            manuel=int(r.get("faits", 0)),
                             reste=max(0, demande_fichier - faits),
                             dernier=dernier, machines=machines,
                             refaire=bool(r.get("refaire")))]
@@ -564,14 +568,34 @@ def pousser_bambu(machine, chemin, nom, lancer, plateau=1):
     return "lancé"
 
 
-def pousser(biblio, machines, nom_machine, chemin_relatif, lancer=False, plateau=1):
-    machine = None
+def trouver_machine(machines, nom_machine, hote=""):
+    """Le nom d'une machine est ce que l'utilisateur a tapé sur son
+    telephone ; il derive du nom que le relais connait des qu'il la
+    renomme. L'adresse, elle, ne bouge pas : on joint dessus d'abord."""
+    nom = (nom_machine or "").strip()
+    adr = (hote or "").strip()
     for m in machines:
-        if m.get("nom") == nom_machine or m.get("hote") == nom_machine:
-            machine = m
-            break
+        if adr and m.get("hote") == adr:
+            return m
+    for m in machines:
+        if nom and (m.get("nom") == nom or m.get("hote") == nom):
+            return m
+    bas = nom.lower()
+    for m in machines:
+        if bas and str(m.get("nom") or "").strip().lower() == bas:
+            return m
+    return None
+
+
+def pousser(biblio, machines, nom_machine, chemin_relatif, lancer=False,
+            plateau=1, hote=""):
+    machine = trouver_machine(machines, nom_machine, hote)
     if machine is None:
-        raise ValueError("machine inconnue : %s" % nom_machine)
+        connues = ", ".join("%s (%s)" % (m.get("nom"), m.get("hote"))
+                            for m in machines) or "aucune"
+        raise ValueError("le relais ne connait pas %s%s — il a : %s"
+                         % (nom_machine, (" / " + hote) if hote else "",
+                            connues))
 
     entier = biblio.verifier(chemin_relatif)
     famille_fichier = os.path.relpath(entier, biblio.racine).replace(os.sep, "/").split("/")[0]
@@ -702,6 +726,11 @@ class Service(BaseHTTPRequestHandler):
                     corps.get("chemin"), corps.get("plateau", 1),
                     bool(corps.get("fait", True)), corps.get("machine") or "")
                 return self._repondre(200, {"ok": True, "chemin": rel})
+            if route.path == "/refaire":
+                rel = self.ctx.biblio.marquer_refaire(
+                    corps.get("chemin"), corps.get("plateau", 1),
+                    bool(corps.get("refaire", True)))
+                return self._repondre(200, {"ok": True, "chemin": rel})
             if route.path == "/commande":
                 rel = self.ctx.biblio.fixer_commande(corps.get("chemin"),
                                                      corps.get("commande"))
@@ -709,7 +738,8 @@ class Service(BaseHTTPRequestHandler):
             if route.path == "/pousser":
                 res = pousser(self.ctx.biblio, self.ctx.machines,
                               corps.get("machine"), corps.get("chemin"),
-                              bool(corps.get("lancer")), corps.get("plateau", 1))
+                              bool(corps.get("lancer")), corps.get("plateau", 1),
+                              corps.get("hote") or "")
                 return self._repondre(200, res)
         except ValueError as e:
             return self._repondre(400, {"ok": False, "error": str(e)[:200]})
@@ -1002,10 +1032,16 @@ def accuser(ident, ok, dit):
 # sérialisent pas le JSON de la même façon, et une signature qui dépend
 # d'un espace après les deux-points casserait au premier accent.
 CHAMPS_SIGNES = ("id", "at", "quoi", "chemin", "plateau", "fait", "n",
-                 "commande", "machine", "lancer")
+                 "commande", "machine", "lancer", "hote", "refaire")
+
+# Jusqu'a la 3.1 l'app signait sans "hote" ni "refaire". Un telephone pas
+# encore mis a jour doit continuer a marcher, sinon la mise a jour du
+# relais couperait la main a l'utilisateur sans explication.
+CHAMPS_SIGNES_3_1 = ("id", "at", "quoi", "chemin", "plateau", "fait", "n",
+                     "commande", "machine", "lancer")
 
 
-def signer(jeton, ordre):
+def signer(jeton, ordre, champs=CHAMPS_SIGNES):
     def valeur(cle):
         v = ordre.get(cle)
         if v is None:
@@ -1013,16 +1049,25 @@ def signer(jeton, ordre):
         if isinstance(v, bool):
             return "1" if v else "0"
         return str(v)
-    corps = "\u001f".join(valeur(c) for c in CHAMPS_SIGNES)
+    corps = "\u001f".join(valeur(c) for c in champs)
     return hmac.new(str(jeton or "").encode("utf-8"),
                     corps.encode("utf-8"), hashlib.sha256).hexdigest()[:32]
 
 
-def _pousser_a_part(biblio, machines, machine, chemin, lancer, plateau=1, ident=None):
+def signature_valide(jeton, ordre):
+    donnee = str(ordre.get("sig") or "")
+    for champs in (CHAMPS_SIGNES, CHAMPS_SIGNES_3_1):
+        if hmac.compare_digest(signer(jeton, ordre, champs), donnee):
+            return True
+    return False
+
+
+def _pousser_a_part(biblio, machines, machine, chemin, lancer, plateau=1,
+                    ident=None, hote=""):
     """L'envoi demandé à distance. Le résultat, bon ou mauvais, revient à
     l'app par l'accusé joint au prochain index."""
     try:
-        res = pousser(biblio, machines, machine, chemin, lancer, plateau)
+        res = pousser(biblio, machines, machine, chemin, lancer, plateau, hote)
         print("%s — %s %s sur %s" % (time.strftime("%H:%M:%S"), res["etat"],
                                      res["fichier"], res["machine"]), flush=True)
         accuser(ident, True, "%s %s sur %s" % (res["fichier"], res["etat"], machine))
@@ -1044,7 +1089,7 @@ def appliquer_ordre(biblio, ordre, jeton, machines=None):
     quand = int(ordre.get("at") or 0)
     if abs(int(time.time() * 1000) - quand) > PEREMPTION_ORDRE:
         return None          # trop vieux : sans doute un message rejoué
-    if jeton and not hmac.compare_digest(signer(jeton, ordre), str(ordre.get("sig") or "")):
+    if jeton and not signature_valide(jeton, ordre):
         # on le note comme vu : sans ça le même ordre serait rejugé à chaque
         # relève et remplirait le journal
         ORDRES_VUS.append(ident)
@@ -1066,7 +1111,8 @@ def appliquer_ordre(biblio, ordre, jeton, machines=None):
         threading.Thread(target=_pousser_a_part,
                          args=(biblio, machines or [], ordre.get("machine"),
                                chemin, bool(ordre.get("lancer")),
-                               ordre.get("plateau", 1), ident),
+                               ordre.get("plateau", 1), ident,
+                               ordre.get("hote") or ""),
                          daemon=True).start()
         return "envoi de %s vers %s demandé" % (os.path.basename(chemin),
                                                 ordre.get("machine"))
@@ -1077,6 +1123,14 @@ def appliquer_ordre(biblio, ordre, jeton, machines=None):
             dit = "plateau %s de %s : %s" % (
                 ordre.get("plateau"), os.path.basename(chemin),
                 "fait" if ordre.get("fait", True) else "remis à faire")
+            accuser(ident, True, dit)
+            return dit
+        if quoi == "refaire":
+            refaire = bool(ordre.get("refaire", True))
+            biblio.marquer_refaire(chemin, ordre.get("plateau", 1), refaire)
+            dit = "plateau %s de %s : %s" % (
+                ordre.get("plateau"), os.path.basename(chemin),
+                "a refaire" if refaire else "plus a refaire")
             accuser(ident, True, dit)
             return dit
         if quoi == "exemplaires":

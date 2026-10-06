@@ -302,6 +302,12 @@ function ficheFichierSheet(chemin) {
         '<div class="s">' + (p.faits ? p.faits + ' sorti' + (p.faits > 1 ? 's' : '') : 'aucun sorti') + '</div></div>' +
         '<button class="btn ghost" onclick="biblioExemplaires(' + cle + ',1)">+</button>' +
       '</div></div>';
+    /* Un fichier a un seul plateau se suivait tout seul, par ce que les
+       machines racontaient — sauf qu'un tirage lance depuis l'ecran de la
+       machine, ou fait avant que le relais existe, n'etait notable nulle
+       part. Les memes gestes que pour un multi-plateaux. */
+    html += '<div class="sec-title">Ou à la main</div><div class="stack">' +
+      ligneplateau(chemin, p) + '</div>';
   }
 
   /* ---- envoyer ---- */
@@ -353,8 +359,15 @@ function ligneplateau(chemin, p) {
      et un geste de trop ne ferait qu'embrouiller le compte */
   let action = '';
   if (p.etat === 'encours') action = '';
-  else if (p.etat === 'fait') action = '<button class="btn ghost" onclick="biblioMarquer(' + cle + ',' + p.idx + ',false)">Annuler</button>';
-  else action = '<button class="btn primary" onclick="biblioMarquer(' + cle + ',' + p.idx + ',true)">Fait</button>';
+  else if (p.etat === 'fait') action = p.manuel > 0
+    ? '<button class="btn ghost" onclick="biblioMarquer(' + cle + ',' + p.idx + ',false)">Annuler</button>'
+    : '';
+  else if (p.etat === 'refaire') action =
+    '<button class="btn primary" onclick="biblioMarquer(' + cle + ',' + p.idx + ',true)">Fait</button>' +
+    '<button class="btn ghost" onclick="biblioRefaire(' + cle + ',' + p.idx + ',false)">Plus à refaire</button>';
+  else action =
+    '<button class="btn primary" onclick="biblioMarquer(' + cle + ',' + p.idx + ',true)">Fait</button>' +
+    '<button class="btn ghost" onclick="biblioRefaire(' + cle + ',' + p.idx + ',true)">Raté</button>';
 
   return '<div class="card tight plateau' + (p.etat === 'fait' ? ' fini' : '') +
     '" data-plateau="' + p.idx + '">' +
@@ -433,6 +446,23 @@ function biblioMarquer(chemin, plateau, fait) {
     }
     const mot = fait ? 'Plateau ' + plateau + ' de ' + nom + ' marqué fait'
                      : 'Plateau ' + plateau + ' remis à faire';
+    toast(mot, 'ok');
+    closeSheet();
+    if (res.differe) attendreAccuse(res.id, mot);
+    else biblioCharger();
+  }).catch(e => toast(e.message || 'refusé', 'bad'));
+}
+
+function biblioRefaire(chemin, plateau, refaire) {
+  const f = fichierDe(chemin);
+  const nom = f ? nomCourt(f.nom) : chemin;
+  Biblio.refaire(chemin, plateau, refaire).then(res => {
+    if (!res || !res.ok) {
+      toast((res && res.error) || 'refusé par le relais', 'bad');
+      return;
+    }
+    const mot = refaire ? 'Plateau ' + plateau + ' de ' + nom + ' à refaire'
+                        : 'Plateau ' + plateau + ' n\'est plus à refaire';
     toast(mot, 'ok');
     closeSheet();
     if (res.differe) attendreAccuse(res.id, mot);

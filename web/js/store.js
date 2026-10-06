@@ -399,7 +399,14 @@ const Biblio = {
   rattacher(chemin, commande) { return nativeCall('biblioOrder', [chemin, commande || '']); },
   apercu(chemin, plateau) { return nativeCall('biblioThumb', [chemin, plateau]); },
   pousser(chemin, machine, lancer, plateau) {
-    return nativeCall('biblioPush', [chemin, machine, !!lancer, plateau || 1]);
+    /* le relais joint sur l'adresse : un renommage sur le téléphone ne doit
+       pas casser l'envoi */
+    const m = DB.machines.find(x => (x.name || '') === machine);
+    const hote = (m && m.printer && m.printer.host) || '';
+    return nativeCall('biblioPush', [chemin, machine, hote, !!lancer, plateau || 1]);
+  },
+  refaire(chemin, plateau, refaire) {
+    return nativeCall('biblioRedo', [chemin, plateau, !!refaire]);
   },
   test() { return nativeCall('testBiblio', []); },
   accuse(id) { return nativeCall('biblioAck', [id]); },
