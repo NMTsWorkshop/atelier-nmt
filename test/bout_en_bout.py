@@ -24,7 +24,13 @@ sys.path.insert(0, os.path.join(RACINE, "relais"))
 sys.path.insert(0, os.path.join(RACINE, "test"))
 
 import biblio                                              # noqa: E402
+
+# le montage de test remplace _ouvrir_bambu ; on garde l'original sous la
+# main pour pouvoir vérifier ce que fait vraiment le relais
+VRAI_OUVRIR_BAMBU = None
 import relais_atelier as R                                 # noqa: E402
+
+VRAI_OUVRIR_BAMBU = biblio._ouvrir_bambu
 
 ECHECS = []
 FAIT = []
@@ -395,6 +401,24 @@ def main():
     verifie("chacun rend compte de son propre sort",
             fins.get(i5a, {}).get("fini") and fins.get(i5b, {}).get("fini"),
             json.dumps([fins.get(i5a), fins.get(i5b)], ensure_ascii=False)[:200])
+
+    # === 5bis. une Bambu mal réglée se diagnostique toute seule =========
+    # ici on appelle la VRAIE fonction, pas celle que le montage de test
+    # a substituée : c'est elle qui tourne chez lui.
+    ouvrir_de_test = biblio._ouvrir_bambu
+    biblio._ouvrir_bambu = VRAI_OUVRIR_BAMBU
+    try:
+        message = ""
+        try:
+            biblio._ouvrir_bambu({"nom": "P1S 9", "hote": "127.0.0.3",
+                                  "serie": "01P0", "code": "A-REMPLIR"})
+        except Exception as e:
+            message = str(e)
+        verifie("un code d'accès LAN resté vide est nommé",
+                "code d'accès LAN" in message and "relais.json" in message,
+                message[:120])
+    finally:
+        biblio._ouvrir_bambu = ouvrir_de_test
 
     # === 6. la boucle survit à tout ce qui précède ======================
     verifie("la boucle principale n'est jamais tombée", True)

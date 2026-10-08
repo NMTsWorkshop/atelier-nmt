@@ -780,15 +780,92 @@ def lancer_bambu(machine, nom, plateau=1):
     return idx
 
 
-def _ouvrir_bambu(machine):
+# Le canal de contrôle reste inactif pendant toute la copie, puis doit
+# encore attendre que la machine ait fini d'écrire sur sa carte. Trente
+# secondes suffisaient pour un petit fichier et pas pour un casque.
+DELAI_FTP = 180
+
+
+def _contexte_bambu(assouplir=False):
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
-    ftp = _FtpImplicite(context=ctx)
-    ftp.connect(machine["hote"], 990, timeout=30)
-    ftp.login("bblp", machine.get("code") or "")
-    ftp.prot_p()
-    ftp.set_pasv(True)
+    if assouplir:
+        try:
+            ctx.minimum_version = ssl.TLSVersion.TLSv1
+        except Exception:
+            pass
+        for suites in ("DEFAULT@SECLEVEL=0", "ALL@SECLEVEL=0"):
+            try:
+                ctx.set_ciphers(suites)
+                break
+            except Exception:
+                continue
+    return ctx
+
+
+def _dit_bambu(machine, etape, e):
+    """Une panne FTPS tombe toujours sous la même phrase — « The read
+    operation timed out » — quelle que soit l'étape. Dire laquelle, et ce
+    qu'elle implique, c'est la différence entre une info et un mur."""
+    nom = machine.get("nom") or machine.get("hote")
+    brut = str(e) or type(e).__name__
+    pistes = {
+        "connexion": "%s n'a pas répondu en FTPS sur le port 990, ni en TLS "
+                     "strict ni en TLS assoupli. Sur une Bambu, ce port ne "
+                     "s'ouvre qu'en mode LAN : vérifie « Réglages → Réseau "
+                     "→ mode LAN » sur l'écran de la machine." % nom,
+        "identification": "%s a refusé l'identification. C'est le code "
+                          "d'accès LAN (Access Code, sur l'écran de la "
+                          "machine) qu'il faut dans relais.json." % nom,
+        "transfert": "le transfert vers %s s'est interrompu — un fichier "
+                     "incomplet peut rester sur sa carte, à vérifier depuis "
+                     "l'écran." % nom,
+    }
+    return "%s — %s (%s)" % (pistes.get(etape, "envoi vers %s impossible" % nom),
+                             brut[:80], etape)
+
+
+def _ouvrir_bambu(machine):
+    code = machine.get("code") or ""
+    if not code or code == "A-REMPLIR":
+        raise ValueError(
+            "le code d'accès LAN de %s n'est pas renseigné dans relais.json "
+            "— c'est l'« Access Code » affiché sur l'écran de la machine"
+            % (machine.get("nom") or machine.get("hote")))
+
+    ftp = None
+    dernier = None
+    # Deux tentatives, de la plus stricte à la plus permissive. Le firmware
+    # des P1 parle un TLS ancien, et un OpenSSL 3 refuse par défaut ses
+    # suites de chiffrement : la poignée de main n'aboutit pas, et ça se
+    # présente comme un simple « read operation timed out » qui n'apprend
+    # rien. Vérifier le certificat n'aurait de toute façon aucun sens ici —
+    # c'est un appareil du réseau local avec un certificat auto-signé.
+    for assouplir in (False, True):
+        ftp = _FtpImplicite(context=_contexte_bambu(assouplir))
+        try:
+            ftp.connect(machine["hote"], 990, timeout=DELAI_FTP)
+            dernier = None
+            break
+        except Exception as e:
+            dernier = e
+            try:
+                ftp.close()
+            except Exception:
+                pass
+    if dernier is not None:
+        raise ValueError(_dit_bambu(machine, "connexion", dernier))
+    try:
+        ftp.login("bblp", code)
+        ftp.prot_p()
+        ftp.set_pasv(True)
+    except Exception as e:
+        try:
+            ftp.close()
+        except Exception:
+            pass
+        raise ValueError(_dit_bambu(machine, "identification", e))
     return ftp
 
 
@@ -815,6 +892,7 @@ def pousser_bambu(machine, chemin, nom, lancer, plateau=1, progres=None,
     demande."""
     ftp = _ouvrir_bambu(machine)
     coupe = False
+    rate = None
     try:
         envoye = [0]
 
@@ -831,17 +909,23 @@ def pousser_bambu(machine, chemin, nom, lancer, plateau=1, progres=None,
             # on ne relance pas ici : il reste le ménage à faire sur la
             # carte, et un « raise » sauterait par-dessus
             coupe = True
+        except Exception as e:
+            rate = ValueError("%s — %d Mo étaient passés"
+                              % (_dit_bambu(machine, "transfert", e),
+                                 envoye[0] // 1048576))
     finally:
         try:
             # après une coupure, le canal de contrôle est décalé : on ferme
             # sans écrire dessus plutôt que d'envoyer un QUIT dans le vide
-            ftp.close() if coupe else ftp.quit()
+            ftp.close() if (coupe or rate) else ftp.quit()
         except Exception:
             try:
                 ftp.close()
             except Exception:
                 pass
 
+    if rate:
+        raise rate
     if coupe:
         try:
             _retirer_bambu(machine, nom)
