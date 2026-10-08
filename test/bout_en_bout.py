@@ -178,13 +178,20 @@ def charger_faux_bambu():
 def monter_atelier(lenteur=0.0):
     dossier = tempfile.mkdtemp(prefix="atelier-")
     bib = biblio.Bibliotheque(dossier, ["k2", "p1s"])
-    for famille, nom, mo in (("k2", "socle.gcode", 3), ("p1s", "casque.3mf", 4)):
+    # le casque est gros exprès : un fichier de quelques mégas tient tout
+    # entier dans les tampons des sockets, si bien que le relais a fini
+    # d'émettre avant même que la machine ait fini de lire — et l'arrêt en
+    # vol n'aurait jamais lieu en vol
+    for famille, nom, mo in (("k2", "socle.gcode", 3), ("p1s", "casque.3mf", 24)):
         with open(os.path.join(dossier, famille, nom), "wb") as f:
-            f.write(os.urandom(mo * 1024 * 1024))
+            f.write(b"\0" * (mo * 1024 * 1024))
 
     moon = FauxMoonraker(lenteur=lenteur, hote="127.0.0.2")
     FauxBambu = charger_faux_bambu()
-    bam = FauxBambu(lenteur=lenteur)
+    # le Bambu s'arrête à mi-fichier et attend : l'arrêt en vol doit se
+    # jouer sur un état, pas sur un chronomètre — sinon le test passe ou
+    # casse selon la vitesse de la machine qui l'exécute
+    bam = FauxBambu(lenteur=0.0, seuil=2 * 1024 * 1024)
 
     machines = [
         {"nom": "K2 Plus 1", "type": "moonraker", "hote": "127.0.0.2", "port": moon.port},
@@ -309,9 +316,11 @@ def main():
         "machine": "P1S 1", "hote": "127.0.0.3",
         "lancer": True, "plateau": 1}, jeton)
     un_tour()
-    time.sleep(0.5)
+    verifie("le transfert atteint bien la machine",
+            bam.atteint.wait(timeout=30), "le faux Bambu n'a rien reçu")
     arret = canal.publier_ordre(sujet, {"quoi": "annuler", "cible": ident2}, jeton)
     un_tour()
+    bam.reprendre.set()          # on relâche : le relais doit couper lui-même
     for _ in range(80):
         if not biblio.envoi_actif():
             break
@@ -361,6 +370,8 @@ def main():
             json.dumps(a4, ensure_ascii=False)[:140])
 
     # === 5. deux envois lancés en même temps ============================
+    bam.seuil = 0                # plus de pause : on veut deux envois complets
+    bam.reprendre.set()
     biblio.ENVOIS.clear()
     i5a = canal.publier_ordre(sujet, {
         "quoi": "pousser", "chemin": "k2/socle.gcode", "machine": "K2 Plus 1",

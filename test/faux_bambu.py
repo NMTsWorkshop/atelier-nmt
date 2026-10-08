@@ -4,10 +4,17 @@ import socket, threading, os
 
 
 class FauxBambu:
-    def __init__(self, dele_refuse=False, lenteur=0.0):
+    def __init__(self, dele_refuse=False, lenteur=0.0, seuil=0):
         self.carte = {}
+        self.supprimes = set()
         self.dele_refuse = dele_refuse
         self.lenteur = lenteur
+        # au-delà de « seuil » octets reçus, le serveur attend qu'on le
+        # relâche : c'est ce qui rend l'arrêt en vol reproductible au lieu
+        # de dépendre de la vitesse de la machine qui fait tourner le test
+        self.seuil = seuil
+        self.atteint = threading.Event()
+        self.reprendre = threading.Event()
         self.journal = []
         self.srv = socket.socket()
         self.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -57,12 +64,25 @@ class FauxBambu:
                         if not b:
                             break
                         recu += len(b)
-                        self.carte[nom] = recu
+                        # une fois le fichier supprimé, le STOR interrompu ne
+                        # doit pas le faire réapparaître : un vrai serveur
+                        # écrit dans un descripteur déjà détaché
+                        if nom not in self.supprimes:
+                            self.carte[nom] = recu
+                        if self.seuil and recu >= self.seuil:
+                            self.atteint.set()
+                            self.reprendre.wait(timeout=30)
                         if self.lenteur:
                             import time as _t
                             _t.sleep(self.lenteur)
                     d.close(); pasv.close(); pasv = None
-                    self.carte[nom] = recu
+                    # le DELE du relais peut tomber pendant qu'on lit encore :
+                    # on relit le verdict à la fin, sinon la dernière écriture
+                    # ferait réapparaître un fichier déjà supprimé
+                    if nom in self.supprimes:
+                        self.carte.pop(nom, None)
+                    else:
+                        self.carte[nom] = recu
                     f.write(b"226 Transfer complete\r\n")
                 elif haut.startswith("DELE"):
                     cible = cmd.split(None, 1)[1]
@@ -70,6 +90,7 @@ class FauxBambu:
                         f.write(b"550 fichier verrouille\r\n")
                     else:
                         self.carte.pop(cible, None)
+                        self.supprimes.add(cible)
                         f.write(b"250 DELE ok\r\n")
                 elif haut.startswith("QUIT"):
                     f.write(b"221 bye\r\n"); f.flush()
