@@ -420,6 +420,45 @@ def main():
     finally:
         biblio._ouvrir_bambu = ouvrir_de_test
 
+    # === 5ter. la machine encaisse tout mais ne confirme pas ============
+    # storbinary fait deux lectures APRÈS le dernier octet — la fermeture
+    # TLS du canal de données, puis le 226. Une Bambu qui vient d'encaisser
+    # quatre-vingts mégas met du temps à les écrire avant de répondre. Ça
+    # se présente comme un échec alors que le fichier est passé en entier.
+    from faux_bambu import FauxBambu as _FB
+    muet = _FB(muet_apres_stor=True)
+    ouvrir_de_test = biblio._ouvrir_bambu
+
+    def ouvrir_muet(machine):
+        import ftplib as _f
+
+        class Clair(_f.FTP):
+            def prot_p(self):
+                pass
+
+        ftp = Clair()
+        ftp.connect("127.0.0.1", muet.port, timeout=4)
+        ftp.login("bblp", machine.get("code") or "")
+        ftp.set_pasv(True)
+        return ftp
+
+    biblio._ouvrir_bambu = ouvrir_muet
+    try:
+        res_muet = biblio.pousser(bib, machines, "P1S 1", "p1s/casque.3mf",
+                                  False, 1, "127.0.0.3", "muet-1")
+        verifie("une confirmation perdue n'est pas un envoi perdu",
+                res_muet.get("ok") and res_muet.get("etat") == "déposé"
+                and "probablement sur sa carte" in str(res_muet.get("dit")),
+                json.dumps(res_muet, ensure_ascii=False)[:160])
+        verifie("et la machine a bien tout reçu",
+                muet.carte.get("casque.3mf", 0) >= 24 * 1024 * 1024,
+                str(muet.carte))
+    except Exception as e:
+        verifie("une confirmation perdue n'est pas un envoi perdu", False,
+                "%s: %s" % (type(e).__name__, str(e)[:110]))
+    finally:
+        biblio._ouvrir_bambu = ouvrir_de_test
+
     # === 6. la boucle survit à tout ce qui précède ======================
     verifie("la boucle principale n'est jamais tombée", True)
     verifie("aucun envoi resté bloqué en cours",

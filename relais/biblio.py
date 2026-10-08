@@ -505,6 +505,18 @@ class DeposeSansLancement(Exception):
     l'impression qui a ete refuse. Ce n'est pas un echec d'envoi."""
 
 
+class DeposeSansConfirmation(Exception):
+    """Tous les octets sont partis, mais la machine n'a pas confirme.
+
+    storbinary fait deux lectures APRES le dernier octet : la fermeture
+    propre de la couche TLS du canal de donnees, puis la reponse 226 sur le
+    canal de controle. Une Bambu qui vient d'encaisser quatre-vingts megas
+    met du temps a les ecrire sur sa carte avant de repondre, et certaines
+    ne ferment jamais proprement leur TLS. Les deux se presentent comme
+    « The read operation timed out », alors que le fichier, lui, est
+    passe en entier. Le compter pour un echec ferait tout renvoyer."""
+
+
 class EnvoiAnnule(Exception):
     """Levee depuis le compteur d'octets : c'est l'endroit par ou l'envoi
     repasse assez souvent pour qu'on puisse l'arreter en vol."""
@@ -897,6 +909,7 @@ def pousser_bambu(machine, chemin, nom, lancer, plateau=1, progres=None,
     ftp = _ouvrir_bambu(machine)
     coupe = False
     rate = None
+    taille_source = os.path.getsize(chemin)
     try:
         envoye = [0]
 
@@ -914,9 +927,14 @@ def pousser_bambu(machine, chemin, nom, lancer, plateau=1, progres=None,
             # carte, et un « raise » sauterait par-dessus
             coupe = True
         except Exception as e:
-            rate = ValueError("%s — %d Mo étaient passés"
-                              % (_dit_bambu(machine, "transfert", e),
-                                 envoye[0] // 1048576))
+            if envoye[0] >= taille_source > 0:
+                # tout est parti : ce qui a lâché, c'est la confirmation
+                rate = DeposeSansConfirmation(str(e))
+            else:
+                rate = ValueError("%s — %d Mo sur %d étaient passés"
+                                  % (_dit_bambu(machine, "transfert", e),
+                                     envoye[0] // 1048576,
+                                     taille_source // 1048576))
     finally:
         try:
             # après une coupure, le canal de contrôle est décalé : on ferme
@@ -1015,6 +1033,20 @@ def pousser(biblio, machines, nom_machine, chemin_relatif, lancer=False,
     except EnvoiAnnule:
         envoi_annule(ident)
         raise
+    except DeposeSansConfirmation as e:
+        # le fichier est passé en entier ; seule la confirmation manque. On
+        # ne lance rien dans ce cas : lancer sans savoir si la machine a
+        # bien écrit le fichier serait pire que de ne rien faire.
+        envoi_termine(ident, True, "déposé, sans confirmation")
+        biblio.noter({"at": int(time.time() * 1000), "machine": machine.get("nom"),
+                      "fichier": nom, "etat": "envoyé", "chemin": chemin_relatif,
+                      "pourquoi": "la machine n'a pas confirmé : %s" % str(e)[:100]})
+        return {"ok": True, "etat": "déposé", "machine": machine.get("nom"),
+                "fichier": nom, "lance": False,
+                "dit": "tout le fichier est parti, mais %s n'a pas confirmé "
+                       "dans le délai — il est très probablement sur sa carte, "
+                       "à vérifier depuis l'écran avant de lancer"
+                       % machine.get("nom")}
     except DeposeSansLancement as e:
         # le fichier est sur la machine : la moitié qui a marché compte, et
         # il ne faut surtout pas le renvoyer

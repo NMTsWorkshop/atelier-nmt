@@ -4,7 +4,8 @@ import socket, threading, os
 
 
 class FauxBambu:
-    def __init__(self, dele_refuse=False, lenteur=0.0, seuil=0):
+    def __init__(self, dele_refuse=False, lenteur=0.0, seuil=0,
+                 muet_apres_stor=False, coupe_apres=0):
         self.carte = {}
         self.supprimes = set()
         self.dele_refuse = dele_refuse
@@ -13,6 +14,12 @@ class FauxBambu:
         # relâche : c'est ce qui rend l'arrêt en vol reproductible au lieu
         # de dépendre de la vitesse de la machine qui fait tourner le test
         self.seuil = seuil
+        # ne repond jamais le 226 : ce que fait une Bambu qui met trop
+        # longtemps a ecrire sur sa carte
+        self.muet_apres_stor = muet_apres_stor
+        # ferme la connexion de donnees en plein milieu : une vraie
+        # coupure, pas un silence apres coup
+        self.coupe_apres = coupe_apres
         self.atteint = threading.Event()
         self.reprendre = threading.Event()
         self.journal = []
@@ -69,6 +76,9 @@ class FauxBambu:
                         # écrit dans un descripteur déjà détaché
                         if nom not in self.supprimes:
                             self.carte[nom] = recu
+                        if self.coupe_apres and recu >= self.coupe_apres:
+                            d.close()
+                            break
                         if self.seuil and recu >= self.seuil:
                             self.atteint.set()
                             self.reprendre.wait(timeout=30)
@@ -83,6 +93,9 @@ class FauxBambu:
                         self.carte.pop(nom, None)
                     else:
                         self.carte[nom] = recu
+                    if self.muet_apres_stor:
+                        import time as _t
+                        _t.sleep(30)        # le client abandonnera avant
                     f.write(b"226 Transfer complete\r\n")
                 elif haut.startswith("DELE"):
                     cible = cmd.split(None, 1)[1]
