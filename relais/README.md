@@ -112,3 +112,21 @@ ntfy garde les messages une douzaine d'heures. L'app renvoie la liste complète 
 chaque changement, donc un seul message récent suffit — mais si le PC reste
 éteint plusieurs jours, il faut retoucher **Envoyer maintenant** dans l'app avant
 de lancer le script.
+
+## Quand une Bambu refuse un fichier
+
+`bambu_diag.py`, installé à côté du relais, teste chaque Bambu étape par
+étape et sépare les causes que « The read operation timed out » confond :
+
+    python3 /opt/relais-atelier/bambu_diag.py
+
+1. le port 990 répond-il (sinon : mode LAN à activer sur l'écran)
+2. le code d'accès LAN est-il renseigné dans `relais.json`
+3. la poignée de main TLS passe-t-elle, en strict puis en assoupli
+4. l'identification est-elle acceptée
+5. quel port de données la machine annonce-t-elle
+6. ce port est-il joignable depuis le Pi — **s'il ne l'est pas, c'est le
+   pare-feu** : le canal de contrôle FTPS étant chiffré, l'assistant FTP
+   du pare-feu ne peut pas lire la réponse PASV et ne sait donc pas quel
+   port ouvrir
+7. la carte se lit-elle vraiment
