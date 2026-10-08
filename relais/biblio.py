@@ -499,12 +499,20 @@ def envoi_termine(ident, ok, dit=""):
 def envois_publics():
     """Ce qui part dans le releve : les envois en cours, et ceux qui
     viennent de finir, pour que la barre atteigne sa fin au lieu de
-    disparaitre a quatre-vingt-dix pour cent."""
+    disparaitre a quatre-vingt-dix pour cent.
+
+    « ecoule » est calcule ici, avec l'horloge du relais. Le telephone ne
+    doit surtout pas faire cette soustraction lui-meme : un Raspberry Pi
+    n'a pas de pile, son heure vient du reseau, et s'il derive de deux
+    minutes le debit affiche devient une fable."""
     maintenant = time.time() * 1000
     for ident, e in list(ENVOIS.items()):
         if e["fin"] and maintenant - e["fin"] > GARDE_ENVOI * 1000:
             ENVOIS.pop(ident, None)
-    return sorted(ENVOIS.values(), key=lambda e: e["debut"])[-4:]
+    sortie = []
+    for e in sorted(ENVOIS.values(), key=lambda e: e["debut"])[-4:]:
+        sortie.append(dict(e, ecoule=max(0, int((e["fin"] or maintenant) - e["debut"]))))
+    return sortie
 
 
 def envoi_actif():

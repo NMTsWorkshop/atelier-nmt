@@ -196,13 +196,12 @@ public class Relay {
      * qu'il publie déjà : suivre un transfert ne lui coûte pas un message
      * de plus, et le quota de ntfy y tient.
      */
-    static org.json.JSONArray envois(Context c) throws Exception {
+    static JSONObject releveEnvois(Context c) throws Exception {
         String sujet = sujet(c);
-        if (sujet.length() == 0) return new org.json.JSONArray();
+        if (sujet.length() == 0) return new JSONObject();
         String url = "https://ntfy.sh/" + URLEncoder.encode(sujet, "UTF-8")
                 + "/json?poll=1&since=10m";
-        org.json.JSONArray a = releveDepuis(lire(url)).optJSONArray("envois");
-        return a == null ? new org.json.JSONArray() : a;
+        return releveDepuis(lire(url));
     }
 
     /** Vrai si le relevé du relais est plus récent que ce qu'on a déjà. */

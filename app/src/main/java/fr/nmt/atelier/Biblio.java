@@ -259,12 +259,20 @@ public class Biblio {
                 out.put("envois", e.optJSONArray("envois") == null
                         ? new org.json.JSONArray() : e.optJSONArray("envois"));
                 out.put("direct", true);
+                out.put("at", e.optLong("at", 0));
+                out.put("ici", System.currentTimeMillis());
                 return out;
             }
             if (!Relay.actif(c)) return erreur("aucun relais configuré");
+            JSONObject releve = Relay.releveEnvois(c);
             out.put("ok", true);
-            out.put("envois", Relay.envois(c));
+            out.put("envois", releve.optJSONArray("envois") == null
+                    ? new org.json.JSONArray() : releve.optJSONArray("envois"));
             out.put("direct", false);
+            // l'heure du relais telle qu'il la croit : c'est en la comparant
+            // à celle du téléphone qu'on voit un Pi dont l'horloge a dérivé
+            out.put("at", releve.optLong("at", 0));
+            out.put("ici", System.currentTimeMillis());
             return out;
         } catch (Throwable t) {
             return erreur(String.valueOf(t.getMessage()));

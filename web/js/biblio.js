@@ -20,6 +20,7 @@ let BIB_RESTE = false;   // n'afficher que ce qui reste à imprimer
 let BIB_ENVOIS = [];     // les transferts que le relais a sur le feu
 let BIB_ENVOIS_T = null; // le minuteur qui va les rechercher
 let BIB_ENVOIS_DIRECT = false;
+let BIB_DERIVE = 0;      // écart entre l'horloge du relais et celle du téléphone
 
 function familleLabel(f) {
   return FAMILLES[f] || String(f || '').toUpperCase();
@@ -295,10 +296,18 @@ function ligneEnvoi(e) {
 
   let detail;
   if (rate) detail = e.dit || 'envoi raté';
-  else if (fini) detail = (e.dit === 'lancé' ? 'lancé sur la machine' : 'déposé sur la machine')
-    + ' · ' + fmtOctets(total);
+  else if (fini) {
+    const d = fmtDebit(total, Number(e.ecoule) || 0);
+    detail = (e.dit === 'lancé' ? 'lancé sur la machine' : 'déposé sur la machine')
+      + ' · ' + fmtOctets(total)
+      + (Number(e.ecoule) ? ' en ' + fmtDurShort(Number(e.ecoule)) : '')
+      + (d ? ' · ' + d : '');
+  }
   else {
-    const ecoule = Date.now() - (Number(e.debut) || Date.now());
+    /* le temps écoulé vient du relais, jamais d'une soustraction entre son
+       horloge et celle du téléphone : un Pi n'a pas de pile, et deux
+       minutes de dérive suffisaient à afficher des débits inventés */
+    const ecoule = Number(e.ecoule) || 0;
     const debit = fmtDebit(faits, ecoule);
     const reste = (debit && faits > 0 && total > faits)
       ? ' · ' + fmtDurShort(Math.round((total - faits) * ecoule / faits)) + ' restantes'
@@ -316,6 +325,22 @@ function ligneEnvoi(e) {
   '</div>';
 }
 
+/* Un Raspberry Pi n'a pas de pile : son heure vient du réseau, et sur un
+   VLAN qui ne laisse pas sortir le NTP elle part à la dérive. Ça fausse les
+   durées d'impression autant que les débits, et ça ne se voit nulle part
+   tant qu'on ne le dit pas. */
+function alerteDerive() {
+  const ecart = Math.abs(BIB_DERIVE);
+  if (ecart < 120000) return '';
+  return '<div class="card tight" style="border-color:var(--bad)">' +
+    '<div class="t">L\'horloge du relais a ' + fmtDurShort(ecart) +
+      ' d\'écart</div>' +
+    '<div class="s">Le Pi est ' + (BIB_DERIVE < 0 ? 'en retard' : 'en avance') +
+      ' sur le téléphone. Les durées et les débits qu\'il annonce s\'en ' +
+      'ressentent. Sur le Pi : <code>sudo timedatectl set-ntp true</code>, ' +
+      'et vérifie que le réseau des machines laisse sortir le NTP.</div></div>';
+}
+
 function peindreEnvois() {
   const hote = document.getElementById('bib-envois');
   if (!hote) return;
@@ -324,6 +349,7 @@ function peindreEnvois() {
   hote.innerHTML = '<div class="sec-title">' +
       (encore ? 'Envoi en cours' : 'Dernier envoi') + '</div>' +
     BIB_ENVOIS.map(ligneEnvoi).join('') +
+    alerteDerive() +
     (encore && !BIB_ENVOIS_DIRECT
       ? '<div class="note">Compté par le relais, et relevé chaque minute : ' +
         'la barre avance par paliers, elle ne ment pas pour autant.</div>'
@@ -339,6 +365,7 @@ function biblioSuivreEnvois(insiste) {
     const liste = (res && res.ok && res.envois) || [];
     BIB_ENVOIS = liste;
     BIB_ENVOIS_DIRECT = !!(res && res.direct);
+    BIB_DERIVE = (res && res.at && res.ici) ? (res.at - res.ici) : 0;
     peindreEnvois();
     const encore = liste.some(envoiActif);
     if (encore || insiste) {

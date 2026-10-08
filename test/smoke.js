@@ -318,7 +318,8 @@ const errors = [];
       biblioRedo: (c, p, r, id) => { window.__redo = [c, p, r];
         setTimeout(() => window.NMTcb(id, '{"ok":true}'), 10); },
       biblioTransfers: (id) => setTimeout(() => window.NMTcb(id,
-        JSON.stringify({ ok: true, direct: false, envois: window.__envois || [] })), 10),
+        JSON.stringify({ ok: true, direct: false, envois: window.__envois || [],
+                         at: Date.now() + (window.__derive || 0), ici: Date.now() })), 10),
       biblioAck: (ident, id) => setTimeout(() => window.NMTcb(id,
         JSON.stringify({ id: ident, ok: true, dit: 'casque lancé sur P1S 1' })), 10),
       testBiblio: id => setTimeout(() => window.NMTcb(id, '{"ok":true,"fichiers":3}'), 10)
@@ -592,7 +593,8 @@ const errors = [];
     await page.evaluate(() => {
       window.__envois = [{ id: 'e1', fichier: 'casque_jetpack.gcode.3mf', machine: 'P1S 1',
                            octets: 30000000, total: 91000000,
-                           debut: Date.now() - 20000, fin: 0, etat: 'en cours' }];
+                           debut: Date.now() - 20000, ecoule: 20000,
+                           fin: 0, etat: 'en cours' }];
       biblioSuivreEnvois(false);
     });
     await page.waitForFunction(() => /%/.test(
@@ -625,6 +627,41 @@ const errors = [];
        Les envois lancés aux étapes précédentes ont chacun programmé une
        relecture de politesse ; elles s'éteignent après leur tour. */
     await page.waitForFunction(() => BIB_ENVOIS_T === null, null, { timeout: 30000 });
+  });
+
+  await step('le débit ne dépend pas de l\'horloge du téléphone', async () => {
+    /* le relais dit « 20 s pour 30 Mo » : 1,5 Mo/s, quelle que soit l'heure
+       que croit le Pi. C'est le mélange des deux horloges qui affichait des
+       débits inventés. */
+    await page.evaluate(() => {
+      window.__derive = 0;
+      window.__envois = [{ id: 'e3', fichier: 'casque.3mf', machine: 'P1S 1',
+                           octets: 31457280, total: 94371840, ecoule: 20000,
+                           debut: Date.now() - 999999999, fin: 0, etat: 'en cours' }];
+      biblioSuivreEnvois(false);
+    });
+    await page.waitForFunction(() => /Mo\/s/.test(
+      (document.getElementById('bib-envois') || {}).innerHTML || ''), null, { timeout: 5000 });
+    const vu = await page.$eval('#bib-envois', e => e.innerHTML);
+    if (!/1,5 Mo\/s/.test(vu)) throw new Error('débit faux : ' + vu.slice(0, 260));
+  });
+
+  await step('une horloge de relais à la dérive se signale', async () => {
+    await page.evaluate(() => {
+      window.__derive = -20 * 60 * 1000;      // le Pi retarde de 20 minutes
+      biblioSuivreEnvois(false);
+    });
+    await page.waitForFunction(() => /écart/.test(
+      (document.getElementById('bib-envois') || {}).innerHTML || ''), null, { timeout: 5000 });
+    const vu = await page.$eval('#bib-envois', e => e.innerHTML);
+    if (!/en retard/.test(vu)) throw new Error('sens de la dérive faux : ' + vu.slice(0, 200));
+    if (!/set-ntp/.test(vu)) throw new Error('aucune marche à suivre');
+    /* un petit écart ne doit alarmer personne */
+    await page.evaluate(() => { window.__derive = 30000; biblioSuivreEnvois(false); });
+    await page.waitForTimeout(400);
+    const calme = await page.$eval('#bib-envois', e => e.innerHTML);
+    if (/écart/.test(calme)) throw new Error('alarme pour 30 secondes d\'écart');
+    await page.evaluate(() => { window.__derive = 0; });
   });
 
   await step('un envoi raté le dit en rouge', async () => {
