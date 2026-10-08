@@ -22,6 +22,13 @@ function setTop(title, sub, actions) {
 function go(tab) {
   TAB = tab;
   closeSheet();
+  /* en quittant les fichiers on coupe le suivi des envois : sans ça il
+     continuait d'interroger le relais indéfiniment, app en arrière-plan
+     comprise — de la 4G et du quota ntfy dépensés pour un écran que
+     personne ne regarde */
+  if (tab !== 'biblio' && typeof biblioArreterSuivi === 'function') {
+    biblioArreterSuivi();
+  }
   render();
   window.scrollTo(0, 0);
   /* en arrivant sur les fichiers on demande une fois où en sont les envois :
@@ -121,7 +128,15 @@ function boot() {
   });
 
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) { load(); Printers.refresh(); render(); }
+    if (document.hidden) {
+      // app en arrière-plan : rien à afficher, donc rien à aller chercher
+      if (typeof biblioArreterSuivi === 'function') biblioArreterSuivi();
+      return;
+    }
+    load(); Printers.refresh(); render();
+    if (TAB === 'biblio' && typeof biblioSuivreEnvois === 'function') {
+      biblioSuivreEnvois(false);
+    }
   });
 
   render();

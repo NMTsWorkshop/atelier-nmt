@@ -319,9 +319,11 @@ const errors = [];
         setTimeout(() => window.NMTcb(id, '{"ok":true}'), 10); },
       biblioCancel: (cible, id) => { window.__annule = cible;
         setTimeout(() => window.NMTcb(id, '{"ok":true,"dit":"arrêt demandé"}'), 10); },
-      biblioTransfers: (id) => setTimeout(() => window.NMTcb(id,
-        JSON.stringify({ ok: true, direct: false, envois: window.__envois || [],
-                         at: Date.now() + (window.__derive || 0), ici: Date.now() })), 10),
+      biblioTransfers: (id) => { window.__sondes = (window.__sondes || 0) + 1;
+        setTimeout(() => window.NMTcb(id,
+        JSON.stringify({ ok: true, direct: !!window.__direct,
+                         envois: window.__envois || [],
+                         at: Date.now() + (window.__derive || 0), ici: Date.now() })), 10); },
       biblioAck: (ident, id) => setTimeout(() => window.NMTcb(id,
         JSON.stringify({ id: ident, ok: true, dit: 'casque lancé sur P1S 1' })), 10),
       testBiblio: id => setTimeout(() => window.NMTcb(id, '{"ok":true,"fichiers":3}'), 10)
@@ -650,6 +652,9 @@ const errors = [];
 
   await step('une horloge de relais à la dérive se signale', async () => {
     await page.evaluate(() => {
+      /* sur place seulement : par le canal, « at » est l'heure de publication
+         du relevé et l'écart mesuré serait son âge, pas une dérive */
+      window.__direct = true;
       window.__derive = -20 * 60 * 1000;      // le Pi retarde de 20 minutes
       biblioSuivreEnvois(false);
     });
@@ -660,10 +665,19 @@ const errors = [];
     if (!/set-ntp/.test(vu)) throw new Error('aucune marche à suivre');
     /* un petit écart ne doit alarmer personne */
     await page.evaluate(() => { window.__derive = 30000; biblioSuivreEnvois(false); });
-    await page.waitForTimeout(400);
+    await page.waitForTimeout(600);
     const calme = await page.$eval('#bib-envois', e => e.innerHTML);
     if (/écart/.test(calme)) throw new Error('alarme pour 30 secondes d\'écart');
-    await page.evaluate(() => { window.__derive = 0; });
+    /* et à distance on ne mesure rien du tout : l'âge du relevé n'est pas
+       une dérive d'horloge, et l'annoncer comme telle était un faux procès */
+    await page.evaluate(() => {
+      window.__direct = false; window.__derive = -20 * 60 * 1000;
+      biblioSuivreEnvois(false);
+    });
+    await page.waitForTimeout(600);
+    const loin = await page.$eval('#bib-envois', e => e.innerHTML);
+    if (/écart/.test(loin)) throw new Error('accuse l\'horloge sur un relevé vieux');
+    await page.evaluate(() => { window.__derive = 0; window.__direct = false; });
   });
 
   await step('un envoi en cours peut être arrêté', async () => {
@@ -727,6 +741,65 @@ const errors = [];
     if (!/envoi echoue/.test(vu)) throw new Error('pas marqué raté : ' + vu.slice(0, 200));
     await page.evaluate(() => { window.__envois = []; biblioSuivreEnvois(false); });
     await page.waitForTimeout(300);
+  });
+
+  await step('quitter l\'écran coupe le suivi des envois', async () => {
+    await page.evaluate(() => {
+      window.__envois = [{ id: 'e7', fichier: 'casque.3mf', machine: 'P1S 1',
+                           octets: 1000, total: 10000, ecoule: 5000,
+                           fin: 0, etat: 'en cours' }];
+      Biblio.cadence = { premier: 200, ensuite: 200, duree: 20000 };
+      biblioSuivreEnvois(false);
+    });
+    await page.waitForFunction(() => BIB_ENVOIS_T !== null, null, { timeout: 5000 });
+    await page.evaluate(() => { go('machines'); });
+    await page.waitForTimeout(200);
+    const coupe = await page.evaluate(() => BIB_ENVOIS_T === null);
+    if (!coupe) throw new Error('le suivi tourne encore hors de l\'écran');
+    /* et il ne doit pas repartir tout seul */
+    await page.evaluate(() => { window.__sondes = 0; });
+    await page.waitForTimeout(1200);
+    const n = await page.evaluate(() => window.__sondes);
+    if (n > 0) throw new Error(n + ' interrogations du relais écran quitté');
+    await page.evaluate(() => { go('biblio'); });
+    await page.waitForTimeout(300);
+  });
+
+  await step('une seule interrogation à la fois', async () => {
+    /* lancer un envoi, en arrêter un et revenir sur l'écran programmaient
+       chacun leur suivi : les chaînes se superposaient jusqu'à huit
+       interrogations simultanées du relais */
+    await page.evaluate(() => {
+      window.__sondes = 0;
+      window.__envois = [{ id: 'e8', fichier: 'casque.3mf', machine: 'P1S 1',
+                           octets: 1000, total: 10000, ecoule: 5000,
+                           fin: 0, etat: 'en cours' }];
+      for (let i = 0; i < 8; i++) biblioSuivreEnvois(false);
+    });
+    await page.waitForTimeout(150);
+    const n = await page.evaluate(() => window.__sondes);
+    if (n > 1) throw new Error(n + ' interrogations lancées d\'un coup');
+    await page.evaluate(() => {
+      window.__envois = []; biblioArreterSuivi();
+      Biblio.cadence = { premier: 20000, ensuite: 60000, duree: 900000 };
+    });
+    await page.waitForTimeout(200);
+  });
+
+  await step('un état d\'envoi inconnu n\'est pas pris pour un succès', async () => {
+    await page.evaluate(() => {
+      window.__envois = [{ id: 'e6', fichier: 'casque.3mf', machine: 'P1S 1',
+                           octets: 12000000, total: 60000000, ecoule: 9000,
+                           fin: 0, etat: 'bizarre' }];
+      biblioSuivreEnvois(false);
+    });
+    await page.waitForFunction(() => /casque/.test(
+      (document.getElementById('bib-envois') || {}).innerHTML || ''), null, { timeout: 5000 });
+    const vu = await page.$eval('#bib-envois', e => e.innerHTML);
+    if (/déposé sur la machine/.test(vu))
+      throw new Error('annonce un dépôt qui n\'a pas eu lieu : ' + vu.slice(0, 200));
+    if (!/Arrêter/.test(vu)) throw new Error('plus moyen de l\'arrêter');
+    await page.evaluate(() => { window.__envois = []; biblioArreterSuivi(); });
   });
 
   await step('l\'historique de la farm s\'affiche', async () => {

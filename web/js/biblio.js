@@ -21,6 +21,7 @@ let BIB_ENVOIS = [];     // les transferts que le relais a sur le feu
 let BIB_ENVOIS_T = null; // le minuteur qui va les rechercher
 let BIB_ENVOIS_DIRECT = false;
 let BIB_DERIVE = 0;      // écart entre l'horloge du relais et celle du téléphone
+let BIB_ENVOIS_VOL = false;
 
 function familleLabel(f) {
   return FAMILLES[f] || String(f || '').toUpperCase();
@@ -71,7 +72,8 @@ function renderBiblio() {
   if (!BIB && !BIB_ERREUR) {
     biblioCharger();
     setTop('Fichiers', 'Lecture de la bibliothèque…');
-    return '<div class="card"><div class="rowitem"><div class="grow">' +
+    return '<div id="bib-envois"></div>' +
+      '<div class="card"><div class="rowitem"><div class="grow">' +
       '<div class="t">Lecture de la bibliothèque…</div>' +
       '<div class="s">Le relais liste les fichiers, les plateaux et leur historique.</div>' +
       '</div></div></div>';
@@ -80,7 +82,8 @@ function renderBiblio() {
   if (!BIB) {
     setTop('Fichiers', 'Relais injoignable',
       '<button class="tb-btn" onclick="biblioRafraichir()">' + iconSync() + 'Réessayer</button>');
-    return '<div class="card"><div class="rowitem"><div class="grow">' +
+    return '<div id="bib-envois"></div>' +
+      '<div class="card"><div class="rowitem"><div class="grow">' +
       '<div class="t">' + esc(BIB_ERREUR) + '</div>' +
       '<div class="s">La bibliothèque ne répond que sur le réseau de l\'atelier. ' +
       'En déplacement, l\'état des machines reste visible, pas les fichiers.</div>' +
@@ -100,13 +103,18 @@ function renderBiblio() {
     '<button class="tb-btn" onclick="biblioHistorique()">' + iconClock() + 'Historique</button>' +
     '<button class="tb-btn" onclick="biblioRafraichir()">' + iconSync() + '</button>');
 
+  /* le bandeau des envois vient avant tout le reste, et surtout avant les
+     sorties anticipées plus bas : un transfert en cours doit rester visible
+     même quand la bibliothèque est vide ou pas encore lue */
+  const bandeau = '<div id="bib-envois"></div>';
+
   /* lue à distance : tout se voit et se coche, mais un gcode ne passe pas
      par le canal du relais */
-  let out = BIB.canal
+  let out = bandeau + (BIB.canal
     ? '<div class="note" style="margin:0 2px 12px">Lu par le relais, à distance. ' +
       'Tout marche, y compris envoyer un fichier sur une machine — c\'est le relais ' +
       'qui s\'en charge, dans la minute.</div>'
-    : '';
+    : '');
 
   /* sans jeton on peut tout voir et rien faire : le relais refuse les ordres
      non signés, et sans ce bandeau on ne l'apprend jamais */
@@ -125,8 +133,6 @@ function renderBiblio() {
       'Dépose tes fichiers tranchés dans le dossier partagé du relais. Un sous-dossier par commande, ' +
       'sous k2 ou p1s selon la machine.');
   }
-
-  out += '<div id="bib-envois"></div>';
 
   const q = BIB_FILTRE.trim().toLowerCase();
   out += '<div class="card tight">' +
@@ -291,18 +297,24 @@ function ligneEnvoi(e) {
   const total = Number(e.total) || 0;
   const faits = Math.min(Number(e.octets) || 0, total || Number(e.octets) || 0);
   const pct = total ? Math.max(0, Math.min(100, Math.round(faits * 100 / total))) : 0;
-  const fini = e.etat !== 'en cours';
-  const rate = e.etat === 'echoue' || e.etat === 'annule';
+  const ETATS_FINIS = ['fait', 'echoue', 'annule'];
+  /* un état inconnu — message tronqué, relais plus ancien — ne doit pas
+     tomber du côté « terminé » : il ferait disparaître le bouton Arrêter et
+     annoncerait un dépôt qui n'a pas eu lieu */
+  const fini = ETATS_FINIS.indexOf(e.etat) >= 0;
+  const encours = e.etat === 'en cours';
+  const rate = e.etat === 'echoue';
   const arrete = e.etat === 'annule';
 
   let detail;
   if (arrete) detail = (e.dit || 'arrêté') + ' · ' + fmtOctets(faits) +
     ' étaient partis, la machine n\'en garde rien';
   else if (rate) detail = e.dit || 'envoi raté';
+  else if (!encours && !fini) detail = 'état inconnu — le relais ne dit pas où il en est';
   else if (fini) {
-    const d = fmtDebit(total, Number(e.ecoule) || 0);
+    const d = fmtDebit(faits || total, Number(e.ecoule) || 0);
     detail = (e.dit === 'lancé' ? 'lancé sur la machine' : 'déposé sur la machine')
-      + ' · ' + fmtOctets(total)
+      + ' · ' + fmtOctets(faits || total)
       + (Number(e.ecoule) ? ' en ' + fmtDurShort(Number(e.ecoule)) : '')
       + (d ? ' · ' + d : '');
   }
@@ -312,10 +324,13 @@ function ligneEnvoi(e) {
        minutes de dérive suffisaient à afficher des débits inventés */
     const ecoule = Number(e.ecoule) || 0;
     const debit = fmtDebit(faits, ecoule);
-    const reste = (debit && faits > 0 && total > faits)
-      ? ' · ' + fmtDurShort(Math.round((total - faits) * ecoule / faits)) + ' restantes'
-      : '';
-    detail = fmtOctets(faits) + ' sur ' + fmtOctets(total)
+    const attendu = (debit && faits > 0 && total > faits)
+      ? Math.round((total - faits) * ecoule / faits) : 0;
+    /* au-delà de deux heures l'estimation ne veut plus rien dire : mieux
+       vaut ne rien annoncer qu'annoncer « 277 millions d'heures » */
+    const reste = (attendu > 0 && attendu < 7200000)
+      ? ' · ' + fmtDurShort(attendu) + ' restantes' : '';
+    detail = fmtOctets(faits) + (total ? ' sur ' + fmtOctets(total) : '')
       + (debit ? ' · ' + debit : '') + reste;
   }
 
@@ -324,8 +339,9 @@ function ligneEnvoi(e) {
     ? '<div class="t">' + (rate ? '' : pct + '%') + '</div>'
     : '<div class="t">' + pct + '%</div>' +
       '<button class="btn ghost" onclick="biblioArreterEnvoi(' + cle + ')">Arrêter</button>';
+  const classe = rate ? ' echoue' : arrete ? ' arrete' : fini ? ' fait' : '';
 
-  return '<div class="card tight envoi' + (rate ? ' echoue' : fini ? ' fait' : '') + '">' +
+  return '<div class="card tight envoi' + classe + '">' +
     '<div class="rowitem"><div class="grow">' +
       '<div class="t">' + esc(nomCourt(e.fichier || '')) + ' \u2192 ' + esc(e.machine || '') + '</div>' +
       '<div class="s">' + esc(detail) + '</div>' +
@@ -367,14 +383,29 @@ function peindreEnvois() {
 
 /* On ne questionne le relais que tant qu'il se passe quelque chose : une
    relecture de trop, c'est de la 4G pour rien. */
+function biblioArreterSuivi() {
+  if (BIB_ENVOIS_T) { clearTimeout(BIB_ENVOIS_T); BIB_ENVOIS_T = null; }
+  BIB_ENVOIS_VOL = false;
+}
+
 function biblioSuivreEnvois(insiste) {
   if (BIB_ENVOIS_T) { clearTimeout(BIB_ENVOIS_T); BIB_ENVOIS_T = null; }
   if (typeof Biblio === 'undefined' || !Biblio.regle()) return;
+  /* une requête à la fois : lancer un envoi, en arrêter un et revenir sur
+     l'écran programment chacun leur suivi, et sans ce garde-fou les chaînes
+     se superposaient — jusqu'à huit interrogations simultanées du relais */
+  if (BIB_ENVOIS_VOL) return;
+  BIB_ENVOIS_VOL = true;
   Biblio.envois().then(res => {
+    BIB_ENVOIS_VOL = false;
     const liste = (res && res.ok && res.envois) || [];
     BIB_ENVOIS = liste;
     BIB_ENVOIS_DIRECT = !!(res && res.direct);
-    BIB_DERIVE = (res && res.at && res.ici) ? (res.at - res.ici) : 0;
+    /* Seulement en direct : par le canal, « at » est l'heure de PUBLICATION
+       du relevé, pas l'heure qu'il est sur le Pi. L'écart mesuré serait
+       l'âge du relevé autant que la dérive, et un relevé de trois minutes
+       accusait une horloge parfaitement juste. */
+    BIB_DERIVE = (res && res.direct && res.at && res.ici) ? (res.at - res.ici) : 0;
     peindreEnvois();
     const encore = liste.some(envoiActif);
     if (encore || insiste) {
@@ -382,6 +413,7 @@ function biblioSuivreEnvois(insiste) {
                                 BIB_ENVOIS_DIRECT ? 2000 : 12000);
     }
   }).catch(() => {
+    BIB_ENVOIS_VOL = false;
     if (insiste) BIB_ENVOIS_T = setTimeout(() => biblioSuivreEnvois(false), 15000);
   });
 }
@@ -567,6 +599,7 @@ function attendreAccuse(id, quoi) {
           + '(pi-14-pourquoi.bat)', 'bad');
       return;
     }
+    if (a.arrete) { toast(a.dit || 'Envoi arrêté', 'ok'); return; }
     toast(a.ok ? (a.dit || quoi) : 'Refusé — ' + (a.dit || 'sans raison'),
           a.ok ? 'ok' : 'bad');
   }).catch(() => biblioCharger(true));

@@ -288,3 +288,6 @@ textarea{resize:vertical;min-height:70px}
 }
 .envoi.fait .jauge > i { background: var(--ok); }
 .envoi.echoue .jauge > i { background: var(--bad); }
+/* un envoi arrêté n'est pas une panne : ni vert ni rouge, et la jauge reste
+   à ce qui était réellement parti */
+.envoi.arrete .jauge > i { background: var(--muted, #8b93a3); }

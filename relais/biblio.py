@@ -35,6 +35,7 @@ import struct
 import ssl
 import threading
 import time
+import uuid
 import urllib.parse
 import urllib.request
 import zipfile
@@ -436,29 +437,62 @@ def joignable(hote, port, delai=3):
 # pour que suivre un transfert ne coute pas un message de plus.
 
 ENVOIS = {}
+# ENVOIS et ACCUSES sont touches par trois familles de fils : la boucle
+# principale, les fils du serveur HTTP, et chaque fil d'envoi. Sans verrou,
+# une simple lecture pendant une insertion suffisait a faire tomber la
+# boucle principale sur « dictionary changed size during iteration » — et
+# avec elle le relais entier, fils d'envoi compris.
+VERROU_ENVOIS = threading.RLock()
 GARDE_ENVOI = 180      # on garde un envoi fini le temps que l'app le voie
 BLOC = 262144          # 256 ko : assez gros pour ne pas ramer, assez fin
                        # pour que la barre bouge sur un fichier de 100 Mo
 
 
 class _CorpsCompte:
-    """Le corps multipart d'un envoi Moonraker, lu par morceaux au lieu
-    d'etre monte en memoire — c'est ce qui permet de compter."""
+    """Le corps multipart d'un envoi Moonraker, lu a la demande.
 
-    def __init__(self, morceaux, progres=None):
-        self._restants = list(morceaux)
+    Les parties sont des « bytes » (preambule, epilogue) ou un couple
+    (fichier ouvert, taille) : le gcode n'est jamais charge en memoire. La
+    premiere version le lisait entier puis le recopiait en tranches, soit
+    deux fois sa taille en RAM — 400 Mo pour un casque, sur un Pi qui n'en
+    a qu'un giga."""
+
+    def __init__(self, parties, progres=None):
+        self._parties = list(parties)
         self._tampon = b""
         self._progres = progres
         self.envoye = 0
+        self.total = sum(len(p) if isinstance(p, bytes) else p[1]
+                         for p in self._parties)
 
     def __len__(self):
-        return sum(len(m) for m in self._restants) + len(self._tampon)
+        # la taille totale, pas le restant : c'est elle qui sert de
+        # Content-Length, et elle ne doit pas dependre de ce qui a deja ete lu
+        return self.total
+
+    def _remplir(self, combien):
+        while len(self._tampon) < combien and self._parties:
+            p = self._parties[0]
+            if isinstance(p, bytes):
+                self._tampon += p
+                self._parties.pop(0)
+                continue
+            f, reste = p
+            bout = f.read(min(BLOC, reste))
+            if not bout:
+                self._parties.pop(0)
+                continue
+            self._tampon += bout
+            reste -= len(bout)
+            if reste <= 0:
+                self._parties.pop(0)
+            else:
+                self._parties[0] = (f, reste)
 
     def read(self, combien=-1):
         if combien is None or combien < 0:
-            combien = len(self)
-        while len(self._tampon) < combien and self._restants:
-            self._tampon += self._restants.pop(0)
+            combien = max(0, self.total - self.envoye)
+        self._remplir(combien)
         bout, self._tampon = self._tampon[:combien], self._tampon[combien:]
         self.envoye += len(bout)
         if bout and self._progres:
@@ -466,62 +500,111 @@ class _CorpsCompte:
         return bout
 
 
-def envoi_commence(ident, fichier, machine, total):
-    if not ident:
-        return
-    ENVOIS[ident] = {"id": ident, "fichier": fichier, "machine": machine,
-                     "octets": 0, "total": int(total or 0),
-                     "debut": int(time.time() * 1000), "fin": 0,
-                     "etat": "en cours"}
+class DeposeSansLancement(Exception):
+    """Le fichier est bien arrive sur la machine, c'est le demarrage de
+    l'impression qui a ete refuse. Ce n'est pas un echec d'envoi."""
 
 
 class EnvoiAnnule(Exception):
-    """Levee depuis le compteur d'octets : c'est le seul endroit par ou
-    l'envoi repasse assez souvent pour qu'on puisse l'arreter en vol."""
+    """Levee depuis le compteur d'octets : c'est l'endroit par ou l'envoi
+    repasse assez souvent pour qu'on puisse l'arreter en vol."""
+
+
+def _nouvel_ident():
+    """Un identifiant qui ne peut pas entrer en collision. L'ancien repli,
+    « local-<secondes> », donnait le meme a deux envois lances dans la meme
+    seconde : le second ecrasait le premier, qui devenait invisible et
+    inannulable pendant que sa barre affichait l'avancement de l'autre."""
+    return "local-%d-%s" % (time.time() * 1000, uuid.uuid4().hex[:6])
+
+
+def envoi_commence(ident, fichier, machine, total):
+    if not ident:
+        return
+    with VERROU_ENVOIS:
+        ancien = ENVOIS.get(ident)
+        # l'ordre d'arrivée des deux appels n'est pas garanti : celui qui
+        # connaît la taille ne doit jamais se faire effacer par celui qui
+        # ne la connaît pas encore
+        if ancien and ancien["etat"] == "en cours" and not total:
+            return
+        ENVOIS[ident] = {"id": ident, "fichier": fichier, "machine": machine,
+                         "octets": ancien["octets"] if ancien else 0,
+                         "total": int(total or 0),
+                         "debut": ancien["debut"] if ancien else int(time.time() * 1000),
+                         "fin": 0, "etat": "en cours", "fige": False}
 
 
 def envoi_avance(ident, octets):
     """Moonraker compte le corps multipart entier, quelques centaines
     d'octets de plus que le fichier : on plafonne, sinon la barre
     depasserait sa fin puis reculerait."""
-    e = ENVOIS.get(ident)
-    if e:
-        if e.get("annule"):
-            raise EnvoiAnnule("envoi annulé")
-        n = int(octets)
-        e["octets"] = min(n, e["total"]) if e["total"] else n
+    with VERROU_ENVOIS:
+        e = ENVOIS.get(ident)
+        if not e:
+            return
+        annule = e.get("annule")
+        if not annule:
+            n = int(octets)
+            e["octets"] = min(n, e["total"]) if e["total"] else n
+    if annule:
+        raise EnvoiAnnule("envoi annulé")
+
+
+def envoi_fige(ident):
+    """Le corps est entierement parti : a partir d'ici on ne peut plus
+    arreter quoi que ce soit, le fichier est sur la machine."""
+    with VERROU_ENVOIS:
+        e = ENVOIS.get(ident)
+        if e:
+            e["fige"] = True
+
+
+def envoi_veut_arret(ident):
+    """A relire aux points ou l'on peut encore renoncer — avant de lancer
+    l'impression, par exemple — et pas seulement entre deux blocs."""
+    with VERROU_ENVOIS:
+        e = ENVOIS.get(ident)
+        return bool(e and e.get("annule"))
 
 
 def annuler_envoi(ident):
-    """Pose le drapeau ; c'est le fil d'envoi qui s'arretera de lui-meme au
-    bloc suivant. Renvoie ce qu'il faut dire a celui qui a demande."""
-    e = ENVOIS.get(ident)
-    if not e:
-        return False, "cet envoi n'est plus suivi par le relais"
-    if e["etat"] != "en cours":
-        return False, "cet envoi est déjà terminé"
-    e["annule"] = True
-    return True, "arrêt de %s demandé" % e.get("fichier")
+    """Pose le drapeau ; c'est le fil d'envoi qui s'arretera de lui-meme.
+    Renvoie ce qu'il faut dire a celui qui a demande."""
+    with VERROU_ENVOIS:
+        e = ENVOIS.get(ident)
+        if not e:
+            return False, "cet envoi n'est plus suivi par le relais"
+        if e["etat"] != "en cours":
+            return False, "cet envoi est déjà terminé"
+        if e.get("fige"):
+            # promettre un arret qu'on ne tiendra pas serait pire que de
+            # refuser : le fichier est deja passe en entier
+            return False, "trop tard — le fichier est déjà sur la machine"
+        e["annule"] = True
+        return True, "arrêt de %s demandé" % e.get("fichier")
 
 
 def envoi_annule(ident):
-    e = ENVOIS.get(ident)
-    if not e:
-        return
-    e["etat"] = "annule"
-    e["fin"] = int(time.time() * 1000)
-    e["dit"] = "arrêté en cours d'envoi"
+    with VERROU_ENVOIS:
+        e = ENVOIS.get(ident)
+        if not e:
+            return
+        e["etat"] = "annule"
+        e["fin"] = int(time.time() * 1000)
+        e["dit"] = "arrêté en cours d'envoi"
 
 
 def envoi_termine(ident, ok, dit=""):
-    e = ENVOIS.get(ident)
-    if not e:
-        return
-    e["etat"] = "fait" if ok else "echoue"
-    e["fin"] = int(time.time() * 1000)
-    e["dit"] = dit[:120]
-    if ok and e["total"]:
-        e["octets"] = e["total"]
+    with VERROU_ENVOIS:
+        e = ENVOIS.get(ident)
+        if not e:
+            return
+        e["etat"] = "fait" if ok else "echoue"
+        e["fin"] = int(time.time() * 1000)
+        e["dit"] = str(dit)[:120]
+        if ok and e["total"]:
+            e["octets"] = e["total"]
 
 
 def envois_publics():
@@ -534,25 +617,30 @@ def envois_publics():
     n'a pas de pile, son heure vient du reseau, et s'il derive de deux
     minutes le debit affiche devient une fable."""
     maintenant = time.time() * 1000
-    for ident, e in list(ENVOIS.items()):
-        if e["fin"] and maintenant - e["fin"] > GARDE_ENVOI * 1000:
-            ENVOIS.pop(ident, None)
-    sortie = []
-    for e in sorted(ENVOIS.values(), key=lambda e: e["debut"])[-4:]:
-        sortie.append(dict(e, ecoule=max(0, int((e["fin"] or maintenant) - e["debut"]))))
-    return sortie
+    with VERROU_ENVOIS:
+        for ident, e in list(ENVOIS.items()):
+            if e["fin"] and maintenant - e["fin"] > GARDE_ENVOI * 1000:
+                ENVOIS.pop(ident, None)
+        tout = sorted((dict(e) for e in ENVOIS.values()), key=lambda e: e["debut"])
+    # un envoi en cours ne disparait jamais du releve : c'est par lui qu'on
+    # l'arrete. On ne rogne que sur les termines.
+    actifs = [e for e in tout if e["etat"] == "en cours"]
+    finis = [e for e in tout if e["etat"] != "en cours"]
+    garde = actifs + finis[-max(1, 6 - len(actifs)):] if finis else actifs
+    garde.sort(key=lambda e: e["debut"])
+    return [dict(e, ecoule=max(0, int((e["fin"] or maintenant) - e["debut"])))
+            for e in garde]
 
 
 def envoi_actif():
-    return any(e["etat"] == "en cours" for e in ENVOIS.values())
+    with VERROU_ENVOIS:
+        return any(e["etat"] == "en cours" for e in ENVOIS.values())
 
 
-def pousser_moonraker(machine, chemin, nom, lancer, progres=None):
+def pousser_moonraker(machine, chemin, nom, lancer, progres=None, ident=None):
     """Moonraker accepte le fichier et, si on le demande, lance l'impression
     dans le même appel — avec les réglages du fichier lui-même."""
     limite = "----nmt%d" % int(time.time() * 1000)
-    with open(chemin, "rb") as f:
-        contenu = f.read()
     morceaux = []
 
     def champ(cle, valeur):
@@ -566,13 +654,21 @@ def pousser_moonraker(machine, chemin, nom, lancer, progres=None):
     morceaux.append(("--%s\r\nContent-Disposition: form-data; name=\"file\"; "
                      "filename=\"%s\"\r\nContent-Type: application/octet-stream\r\n\r\n"
                      % (limite, nom)).encode("utf-8"))
-    # le fichier par blocs : monte en un seul bloc, il ne se compterait pas
-    for i in range(0, len(contenu), BLOC):
-        morceaux.append(contenu[i:i + BLOC])
-    morceaux.append(("\r\n--%s--\r\n" % limite).encode("utf-8"))
+    f = open(chemin, "rb")
+    try:
+        morceaux.append((f, os.path.getsize(chemin)))
+        morceaux.append(("\r\n--%s--\r\n" % limite).encode("utf-8"))
+        corps = _CorpsCompte(morceaux, progres)
+        taille = len(corps)
+        return _poster_moonraker(machine, corps, taille, limite, lancer, ident)
+    finally:
+        try:
+            f.close()
+        except Exception:
+            pass
 
-    corps = _CorpsCompte(morceaux, progres)
-    taille = len(corps)
+
+def _poster_moonraker(machine, corps, taille, limite, lancer, ident=None):
 
     # http.client lit un corps-fichier par blocs de 8 ko et fait un envoi
     # réseau par bloc : sur cent mégas ça fait douze mille appels système,
@@ -586,6 +682,10 @@ def pousser_moonraker(machine, chemin, nom, lancer, progres=None):
         co.putheader("Content-Length", str(taille))
         co.endheaders()
         co.send(corps)
+        # le corps est entièrement parti : à partir d'ici, promettre un
+        # arrêt serait un mensonge — Moonraker a le fichier et, si on a
+        # demandé l'impression, elle est déjà lancée
+        envoi_fige(ident)
         rep = co.getresponse()
         lu = rep.read()
         if rep.status >= 400:
@@ -680,18 +780,42 @@ def lancer_bambu(machine, nom, plateau=1):
     return idx
 
 
-def pousser_bambu(machine, chemin, nom, lancer, plateau=1, progres=None):
-    """Dépose le fichier sur la carte de la machine, et le lance si on le
-    demande."""
+def _ouvrir_bambu(machine):
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     ftp = _FtpImplicite(context=ctx)
     ftp.connect(machine["hote"], 990, timeout=30)
+    ftp.login("bblp", machine.get("code") or "")
+    ftp.prot_p()
+    ftp.set_pasv(True)
+    return ftp
+
+
+def _retirer_bambu(machine, nom):
+    """Sur une connexion neuve, exprès. Un STOR interrompu laisse sa réponse
+    226/426 en attente sur le canal de contrôle : ftplib ne l'a pas lue, et
+    le DELE suivant lirait cette réponse-là en croyant que c'est la sienne.
+    Le canal reste décalé d'une réponse jusqu'au QUIT, si bien que le DELE
+    semblait toujours échouer — et que l'on ne pouvait jamais savoir si le
+    fichier tronqué avait vraiment été retiré."""
+    menage = _ouvrir_bambu(machine)
     try:
-        ftp.login("bblp", machine.get("code") or "")
-        ftp.prot_p()
-        ftp.set_pasv(True)
+        menage.delete(nom)
+    finally:
+        try:
+            menage.close()
+        except Exception:
+            pass
+
+
+def pousser_bambu(machine, chemin, nom, lancer, plateau=1, progres=None,
+                  ident=None):
+    """Dépose le fichier sur la carte de la machine, et le lance si on le
+    demande."""
+    ftp = _ouvrir_bambu(machine)
+    coupe = False
+    try:
         envoye = [0]
 
         def bloc(morceau):
@@ -704,24 +828,50 @@ def pousser_bambu(machine, chemin, nom, lancer, plateau=1, progres=None):
                 ftp.storbinary("STOR %s" % nom, f, blocksize=BLOC,
                                callback=bloc if progres else None)
         except EnvoiAnnule:
-            # un transfert coupé laisse un fichier tronqué sur la carte :
-            # le laisser serait pire que tout, la machine le proposerait
-            try:
-                ftp.delete(nom)
-            except Exception:
-                pass
-            raise
+            # on ne relance pas ici : il reste le ménage à faire sur la
+            # carte, et un « raise » sauterait par-dessus
+            coupe = True
     finally:
         try:
-            ftp.quit()
+            # après une coupure, le canal de contrôle est décalé : on ferme
+            # sans écrire dessus plutôt que d'envoyer un QUIT dans le vide
+            ftp.close() if coupe else ftp.quit()
         except Exception:
             try:
                 ftp.close()
             except Exception:
                 pass
+
+    if coupe:
+        try:
+            _retirer_bambu(machine, nom)
+        except Exception as e:
+            raise EnvoiAnnule("envoi arrêté, mais %s n'a pas pu être retiré "
+                              "de la carte (%s) — à supprimer depuis l'écran"
+                              % (nom, str(e)[:60]))
+        raise EnvoiAnnule("envoi arrêté")
+
     if not lancer:
+        envoi_fige(ident)
         return "déposé"
-    lancer_bambu(machine, nom, plateau)
+
+    # dernier moment où renoncer veut encore dire quelque chose : le fichier
+    # est déposé, mais l'impression n'est pas partie
+    if ident and envoi_veut_arret(ident):
+        try:
+            _retirer_bambu(machine, nom)
+        except Exception:
+            pass
+        raise EnvoiAnnule("envoi arrêté avant le lancement")
+
+    envoi_fige(ident)
+    try:
+        lancer_bambu(machine, nom, plateau)
+    except Exception as e:
+        # le fichier EST sur la carte : le compter comme un échec ferait
+        # renvoyer cent mégas pour rien. Seul le démarrage a raté, et il se
+        # fait à la main depuis l'écran de la machine.
+        raise DeposeSansLancement(str(e))
     return "lancé"
 
 
@@ -770,12 +920,25 @@ def pousser(biblio, machines, nom_machine, chemin_relatif, lancer=False,
     progres = (lambda n: envoi_avance(ident, n)) if ident else None
     try:
         if machine["type"] == "moonraker":
-            etat = pousser_moonraker(machine, entier, nom, lancer, progres)
+            etat = pousser_moonraker(machine, entier, nom, lancer, progres, ident)
         else:
-            etat = pousser_bambu(machine, entier, nom, lancer, plateau, progres)
+            etat = pousser_bambu(machine, entier, nom, lancer, plateau, progres,
+                                 ident)
     except EnvoiAnnule:
         envoi_annule(ident)
         raise
+    except DeposeSansLancement as e:
+        # le fichier est sur la machine : la moitié qui a marché compte, et
+        # il ne faut surtout pas le renvoyer
+        etat = "déposé"
+        envoi_termine(ident, True, "déposé — lancement refusé")
+        biblio.noter({"at": int(time.time() * 1000), "machine": machine.get("nom"),
+                      "fichier": nom, "etat": "envoyé", "chemin": chemin_relatif,
+                      "pourquoi": "lancement refusé : %s" % str(e)[:120]})
+        return {"ok": True, "etat": etat, "machine": machine.get("nom"),
+                "fichier": nom, "lance": False,
+                "dit": "déposé, mais le lancement a été refusé (%s) — "
+                       "à démarrer depuis l'écran de la machine" % str(e)[:90]}
     except Exception as e:
         envoi_termine(ident, False, str(e))
         raise
@@ -861,7 +1024,14 @@ class Service(BaseHTTPRequestHandler):
                                             "machines": self.ctx.etats,
                                             "envois": envois_publics()})
             if route.path == "/biblio":
-                return self._repondre(200, dict(self.ctx.biblio.index(), ok=True))
+                # les accusés voyagent avec l'index publié sur le canal ; il
+                # faut qu'ils voyagent aussi avec celui servi sur place,
+                # sinon l'app à l'atelier ne sait jamais ce qu'est devenu
+                # l'ordre qu'elle a passé
+                with VERROU_ENVOIS:
+                    accuses = list(ACCUSES[-12:])
+                return self._repondre(200, dict(self.ctx.biblio.index(),
+                                                ok=True, accuses=accuses))
             if route.path == "/vignette":
                 chemin = (params.get("chemin") or [""])[0]
                 idx = int((params.get("plateau") or ["1"])[0])
@@ -913,8 +1083,12 @@ class Service(BaseHTTPRequestHandler):
                               corps.get("machine"), corps.get("chemin"),
                               bool(corps.get("lancer")), corps.get("plateau", 1),
                               corps.get("hote") or "",
-                              corps.get("id") or ("local-%d" % int(time.time())))
+                              corps.get("id") or _nouvel_ident())
                 return self._repondre(200, res)
+        except EnvoiAnnule as e:
+            return self._repondre(409, {"ok": False, "arrete": True,
+                                        "dit": str(e)[:200] or "envoi arrêté",
+                                        "error": str(e)[:200] or "envoi arrêté"})
         except ValueError as e:
             return self._repondre(400, {"ok": False, "error": str(e)[:200]})
         except Exception as e:
@@ -1140,9 +1314,11 @@ def resume(index):
         for p in f.get("plateaux") or []:
             plateaux_legers.append({k: v for k, v in p.items() if k != "vignette"})
         fichiers.append(dict(f, plateaux=plateaux_legers))
+    with VERROU_ENVOIS:
+        accuses = list(ACCUSES[-12:])
     return {"familles": index.get("familles") or [], "fichiers": fichiers,
             "commandes": index.get("commandes") or [],
-            "accuses": ACCUSES[-12:]}
+            "accuses": accuses}
 
 
 def lots_biblio(index, at=None):
@@ -1192,7 +1368,7 @@ PEREMPTION_ORDRE = 2 * 3600 * 1000
 ACCUSES = []
 
 
-def accuser(ident, ok, dit, fini=True):
+def accuser(ident, ok, dit, fini=True, arrete=False):
     """Un accuse par ordre, remplace quand la suite arrive.
 
     Un envoi de fichier dure : le relais le prend en charge tout de suite,
@@ -1202,17 +1378,26 @@ def accuser(ident, ok, dit, fini=True):
     if not ident:
         return
     nouveau = {"id": ident, "at": int(time.time() * 1000),
-               "ok": bool(ok), "dit": dit, "fini": bool(fini)}
-    for i, a in enumerate(ACCUSES):
-        if a.get("id") == ident:
-            # un accuse definitif ecrase le provisoire ; l'inverse jamais
-            if a.get("fini") and not fini:
-                return
-            ACCUSES[i] = nouveau
-            break
-    else:
-        ACCUSES.append(nouveau)
-    del ACCUSES[:-30]
+               "ok": bool(ok), "dit": dit, "fini": bool(fini),
+               # un arrêt voulu n'est pas une réussite, mais ce n'est pas
+               # non plus un refus : l'app doit pouvoir faire la différence
+               # sans lire la phrase
+               "arrete": bool(arrete)}
+    # sous verrou : le provisoire part du fil principal et le definitif du
+    # fil d'envoi. Sans ca les deux pouvaient s'ajouter tous les deux, et
+    # l'app lisant le dernier serait restee sur « reçu, en cours » pour
+    # toujours.
+    with VERROU_ENVOIS:
+        for i, a in enumerate(ACCUSES):
+            if a.get("id") == ident:
+                # un accuse definitif ecrase le provisoire ; l'inverse jamais
+                if a.get("fini") and not fini:
+                    return
+                ACCUSES[i] = nouveau
+                break
+        else:
+            ACCUSES.append(nouveau)
+        del ACCUSES[:-30]
     oublier_publication()
 
 
@@ -1275,16 +1460,17 @@ def _pousser_a_part(biblio, machines, machine, chemin, lancer, plateau=1,
         print("%s — %s %s sur %s" % (time.strftime("%H:%M:%S"), res["etat"],
                                      res["fichier"], res["machine"]), flush=True)
         accuser(ident, True, "%s %s sur %s" % (res["fichier"], res["etat"], machine))
-    except EnvoiAnnule:
+    except EnvoiAnnule as e:
         # arrêt demandé : ce n'est pas une panne, et l'accusé de l'envoi doit
         # le dire autrement qu'un échec
-        print("%s — envoi de %s vers %s arrêté"
-              % (time.strftime("%H:%M:%S"), os.path.basename(chemin), machine),
+        dit = str(e) or "envoi arrêté avant la fin"
+        print("%s — envoi de %s vers %s arrêté : %s"
+              % (time.strftime("%H:%M:%S"), os.path.basename(chemin), machine, dit),
               flush=True)
         biblio.noter({"at": int(time.time() * 1000), "machine": machine,
                       "fichier": os.path.basename(chemin), "etat": "annulé",
-                      "chemin": chemin})
-        accuser(ident, False, "envoi arrêté avant la fin")
+                      "chemin": chemin, "pourquoi": dit[:200]})
+        accuser(ident, False, dit[:150], arrete=True)
     except Exception as e:
         envoi_termine(ident, False, str(e))
         biblio.noter({"at": int(time.time() * 1000), "machine": machine,
@@ -1323,6 +1509,12 @@ def appliquer_ordre(biblio, ordre, jeton, machines=None):
         # machines : le téléphone n'a qu'à dire lequel va où. L'envoi dure
         # le temps qu'il dure, donc dans un fil à part — sinon la relève
         # des machines s'arrêterait pendant la copie.
+        # On inscrit l'envoi AVANT de lancer le fil. Sans ça il manquerait
+        # au relevé de cette relève-ci et la barre n'apparaîtrait qu'au
+        # suivant — et inscrit après, il écrasait l'entrée que le fil
+        # venait de poser avec la vraie taille. Le fil la complète, et en
+        # cas de refus c'est son envoi_termine qui la solde.
+        envoi_commence(ident, os.path.basename(chemin), ordre.get("machine"), 0)
         threading.Thread(target=_pousser_a_part,
                          args=(biblio, machines or [], ordre.get("machine"),
                                chemin, bool(ordre.get("lancer")),

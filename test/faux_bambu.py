@@ -1,0 +1,86 @@
+"""Un faux Bambu qui parle FTP en clair, pour vérifier ce que le relais
+fait de la carte quand on coupe un envoi."""
+import socket, threading, os
+
+
+class FauxBambu:
+    def __init__(self, dele_refuse=False, lenteur=0.0):
+        self.carte = {}
+        self.dele_refuse = dele_refuse
+        self.lenteur = lenteur
+        self.journal = []
+        self.srv = socket.socket()
+        self.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.srv.bind(("127.0.0.1", 0))
+        self.srv.listen(8)
+        self.port = self.srv.getsockname()[1]
+        threading.Thread(target=self._boucle, daemon=True).start()
+
+    def _boucle(self):
+        while True:
+            try:
+                c, _ = self.srv.accept()
+            except OSError:
+                return
+            threading.Thread(target=self._session, args=(c,), daemon=True).start()
+
+    def _session(self, c):
+        f = c.makefile("rwb")
+        f.write(b"220 faux bambu\r\n"); f.flush()
+        pasv = None
+        nom = None
+        try:
+            while True:
+                ligne = f.readline()
+                if not ligne:
+                    return
+                cmd = ligne.decode("utf-8", "replace").strip()
+                self.journal.append(cmd.split()[0].upper() if cmd else "")
+                haut = cmd.upper()
+                if haut.startswith("USER") or haut.startswith("PASS"):
+                    f.write(b"230 ok\r\n")
+                elif haut.startswith("TYPE") or haut.startswith("PBSZ") or haut.startswith("PROT"):
+                    f.write(b"200 ok\r\n")
+                elif haut.startswith("PASV"):
+                    pasv = socket.socket()
+                    pasv.bind(("127.0.0.1", 0)); pasv.listen(1)
+                    p = pasv.getsockname()[1]
+                    f.write(("227 (127,0,0,1,%d,%d)\r\n" % (p >> 8, p & 255)).encode())
+                elif haut.startswith("STOR"):
+                    nom = cmd.split(None, 1)[1]
+                    f.write(b"150 go\r\n"); f.flush()
+                    d, _ = pasv.accept()
+                    recu = 0
+                    self.carte[nom] = 0
+                    while True:
+                        b = d.recv(1 << 16)
+                        if not b:
+                            break
+                        recu += len(b)
+                        self.carte[nom] = recu
+                        if self.lenteur:
+                            import time as _t
+                            _t.sleep(self.lenteur)
+                    d.close(); pasv.close(); pasv = None
+                    self.carte[nom] = recu
+                    f.write(b"226 Transfer complete\r\n")
+                elif haut.startswith("DELE"):
+                    cible = cmd.split(None, 1)[1]
+                    if self.dele_refuse:
+                        f.write(b"550 fichier verrouille\r\n")
+                    else:
+                        self.carte.pop(cible, None)
+                        f.write(b"250 DELE ok\r\n")
+                elif haut.startswith("QUIT"):
+                    f.write(b"221 bye\r\n"); f.flush()
+                    return
+                else:
+                    f.write(b"200 ok\r\n")
+                f.flush()
+        except Exception:
+            return
+        finally:
+            try:
+                c.close()
+            except Exception:
+                pass

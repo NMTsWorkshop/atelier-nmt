@@ -98,6 +98,16 @@ public class Biblio {
                 return erreur("réponse illisible du relais (HTTP " + code + ")");
             }
             if (code == 401) return erreur("jeton refusé par le relais");
+            // un refus peut porter son motif dans « dit » plutôt que dans
+            // « error » (c'est le cas de /annuler) : l'écraser par un code
+            // HTTP priverait l'utilisateur de la seule phrase utile
+            if (code >= 400 && rep.has("dit") && !rep.has("error")) {
+                try {
+                    rep.put("error", rep.optString("dit"));
+                } catch (Exception ignored) {
+                }
+                return rep;
+            }
             if (code >= 400 && !rep.has("error")) return erreur("relais : HTTP " + code);
             return rep;
         } catch (IllegalStateException e) {
@@ -255,6 +265,12 @@ public class Biblio {
             JSONObject out = new JSONObject();
             if (surPlace(c)) {
                 JSONObject e = appel(c, "/etat", null, DELAI_LECTURE);
+                // sans ce test, un /etat en échec (jeton refusé, délai,
+                // 502) rendait « aucun envoi en cours » : un transfert
+                // devenait tout simplement invisible, sans un mot
+                if (!e.optBoolean("ok")) {
+                    return erreur(e.optString("error", "le relais n'a pas répondu"));
+                }
                 out.put("ok", true);
                 out.put("envois", e.optJSONArray("envois") == null
                         ? new org.json.JSONArray() : e.optJSONArray("envois"));
@@ -417,13 +433,28 @@ public class Biblio {
 
     /** L'accusé que le relais a joint à son index pour cet ordre, s'il est arrivé. */
     static JSONObject accuse(Context c, String ident) {
-        JSONObject index = index(c);
-        org.json.JSONArray liste = index.optJSONArray("accuses");
-        if (liste == null) return new JSONObject();
+        JSONObject trouve = chercherAccuse(index(c), ident);
+        if (trouve != null) return trouve;
+        /* L'ordre a pu partir par le canal alors qu'on lit maintenant le
+           relais en direct — il suffit d'être rentré à l'atelier entre
+           temps. Les deux index ne portent pas les mêmes accusés, donc on
+           regarde le second avant de conclure au silence. */
+        try {
+            JSONObject canal = Relay.bibliotheque(c);
+            trouve = chercherAccuse(canal, ident);
+            if (trouve != null) return trouve;
+        } catch (Throwable ignored) {
+        }
+        return new JSONObject();
+    }
+
+    private static JSONObject chercherAccuse(JSONObject index, String ident) {
+        org.json.JSONArray liste = index == null ? null : index.optJSONArray("accuses");
+        if (liste == null) return null;
         for (int i = liste.length() - 1; i >= 0; i--) {
             JSONObject a = liste.optJSONObject(i);
             if (a != null && ident.equals(a.optString("id"))) return a;
         }
-        return new JSONObject();
+        return null;
     }
 }

@@ -9,8 +9,30 @@ permissions:
   contents: write
 
 jobs:
+  # Le relais de bout en bout, avant de construire quoi que ce soit : il
+  # monte un faux ntfy et de fausses machines et fait tourner la vraie
+  # chaîne « ordre publié → fichier sur la machine ». C'est elle qui a
+  # cassé quatre fois de suite, jamais au même endroit.
+  relais:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Python 3
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Le relais compile
+        run: python3 -m py_compile relais/*.py
+
+      - name: Le relais de bout en bout
+        run: python3 test/bout_en_bout.py
+
   build:
     runs-on: ubuntu-latest
+    needs: relais
 
     steps:
       - name: Récupérer le code

@@ -212,6 +212,13 @@ function nativeHttp(method, url, headers, body) {
 
 /* ---------- appels natifs avec rappel ---------- */
 
+/* Combien de temps on laisse au Java avant de déclarer l'appel perdu. Une
+   minute suffit à tout, sauf à pousser cent mégas sur une machine depuis le
+   réseau de l'atelier : là, le Java attend la fin de la copie (trois
+   minutes) et rendre la main avant lui faisait annoncer « délai dépassé »
+   sur des envois qui aboutissaient. */
+const DELAIS_NATIFS = { biblioPush: 200000 };
+
 function nativeCall(fn, args) {
   return new Promise((resolve, reject) => {
     if (!Native.ok() || typeof window.NMT[fn] !== 'function') {
@@ -222,7 +229,7 @@ function nativeCall(fn, args) {
     cbMap[id] = resolve;
     setTimeout(() => {
       if (cbMap[id]) { delete cbMap[id]; reject(new Error('délai dépassé')); }
-    }, 60000);
+    }, DELAIS_NATIFS[fn] || 60000);
     try {
       window.NMT[fn].apply(window.NMT, (args || []).concat([id]));
     } catch (e) {

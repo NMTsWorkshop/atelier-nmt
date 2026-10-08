@@ -383,6 +383,12 @@ def signature(etats):
     return "\n".join(out)
 
 
+def signature_de(envois):
+    return "|".join("%s:%s:%d" % (e["id"], e["etat"],
+                                  (e["octets"] * 10 // e["total"]) if e["total"] else 0)
+                    for e in envois)
+
+
 def signature_envois():
     """L'avancement, arrondi au dixième. Republier pour un pour-cent de plus
     ne vaut pas un message ; et le quota de ntfy est de 250 par jour, dont
@@ -406,6 +412,18 @@ def faut_publier(etats, repos):
     if maintenant - PUBLICATION["at"] >= repos:
         return True, "relevé de principe"
     return False, "rien de neuf"
+
+
+def noter_publication(etats, sig_envois):
+    """On enregistre comme publié ce qui l'a vraiment été. Recalculer la
+    signature APRÈS le POST vers ntfy enregistrait l'état d'arrivée alors
+    qu'on avait publié celui du départ : un envoi qui se terminait pendant
+    ces quelques centaines de millisecondes passait pour publié sans l'être,
+    et la barre restait figée en « en cours » jusqu'à disparaître."""
+    PUBLICATION["at"] = time.time()
+    PUBLICATION["signature"] = signature(etats)
+    PUBLICATION["envois"] = sig_envois
+    PUBLICATION["muet_jusqu_a"] = 0
 
 
 def lire_ordres(sujet, depuis):
@@ -444,7 +462,7 @@ def publier_corps(sujet, corps, titre):
         return r.status
 
 
-def publier(sujet, etats):
+def publier(sujet, etats, envois=None):
     # les champs bruts des machines servent au diagnostic sur place ; ntfy
     # limite un message à quelques kilo-octets, ils n'y vont pas
     legers = dict((k, dict((c, v) for c, v in e.items() if c != "brut"))
@@ -454,7 +472,8 @@ def publier(sujet, etats):
     # progression qui coûterait un message par pour-cent viderait le quota
     # de ntfy en une après-midi
     corps = json.dumps({"v": 1, "at": int(time.time() * 1000), "machines": legers,
-                        "envois": bibliotheque.envois_publics()},
+                        "envois": bibliotheque.envois_publics()
+                                  if envois is None else envois},
                        ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(SERVEUR + sujet, data=corps, method="POST")
     req.add_header("Content-Type", "application/json")
@@ -540,11 +559,12 @@ def main():
         oui, pourquoi = faut_publier(etats, repos)
         if oui or unique:
             try:
-                publier(c["sujet"], etats)
-                PUBLICATION["at"] = time.time()
-                PUBLICATION["signature"] = signature(etats)
-                PUBLICATION["envois"] = signature_envois()
-                PUBLICATION["muet_jusqu_a"] = 0
+                # la liste exacte qu'on publie, figée AVANT le POST, et
+                # sa signature prise sur cette liste-là : sinon un envoi
+                # qui se termine pendant le POST passe pour publié
+                envois = bibliotheque.envois_publics()
+                publier(c["sujet"], etats, envois)
+                noter_publication(etats, signature_de(envois))
                 print("%s — %d/%d machines%s, publié (%s)"
                       % (time.strftime("%H:%M:%S"), joignables, len(etats),
                          (", %d datée%s" % (datees, "s" if datees > 1 else "")) if datees else "",
