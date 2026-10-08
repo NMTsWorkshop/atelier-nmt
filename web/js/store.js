@@ -408,6 +408,7 @@ const Biblio = {
   refaire(chemin, plateau, refaire) {
     return nativeCall('biblioRedo', [chemin, plateau, !!refaire]);
   },
+  envois() { return nativeCall('biblioTransfers', []); },
   test() { return nativeCall('testBiblio', []); },
   accuse(id) { return nativeCall('biblioAck', [id]); },
 

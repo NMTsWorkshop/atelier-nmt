@@ -519,6 +519,15 @@ public class Bridge {
     }
 
     @JavascriptInterface
+    public void biblioTransfers(final String cbId) {
+        new Thread(new Runnable() {
+            public void run() {
+                callBack(cbId, Biblio.envois(act).toString());
+            }
+        }).start();
+    }
+
+    @JavascriptInterface
     public void biblioRedo(final String chemin, final int plateau,
                            final boolean refaire, final String cbId) {
         new Thread(new Runnable() {

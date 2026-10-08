@@ -383,6 +383,15 @@ def signature(etats):
     return "\n".join(out)
 
 
+def signature_envois():
+    """L'avancement, arrondi au dixième. Republier pour un pour-cent de plus
+    ne vaut pas un message ; et le quota de ntfy est de 250 par jour, dont
+    96 vont déjà au relevé de principe. Dix crans par envoi, pas plus."""
+    return "|".join("%s:%s:%d" % (e["id"], e["etat"],
+                                  (e["octets"] * 10 // e["total"]) if e["total"] else 0)
+                    for e in bibliotheque.envois_publics())
+
+
 def faut_publier(etats, repos):
     """(oui, pourquoi) — le pourquoi part dans le journal."""
     maintenant = time.time()
@@ -391,6 +400,9 @@ def faut_publier(etats, repos):
     sig = signature(etats)
     if sig != PUBLICATION["signature"]:
         return True, "changement"
+    envois = signature_envois()
+    if envois != PUBLICATION.get("envois", ""):
+        return True, "envoi en cours"
     if maintenant - PUBLICATION["at"] >= repos:
         return True, "relevé de principe"
     return False, "rien de neuf"
@@ -437,7 +449,12 @@ def publier(sujet, etats):
     # limite un message à quelques kilo-octets, ils n'y vont pas
     legers = dict((k, dict((c, v) for c, v in e.items() if c != "brut"))
                   for k, e in etats.items())
-    corps = json.dumps({"v": 1, "at": int(time.time() * 1000), "machines": legers},
+    # les envois en cours voyagent avec le relevé : c'est le seul message
+    # que le relais publie de toute façon chaque minute, et une barre de
+    # progression qui coûterait un message par pour-cent viderait le quota
+    # de ntfy en une après-midi
+    corps = json.dumps({"v": 1, "at": int(time.time() * 1000), "machines": legers,
+                        "envois": bibliotheque.envois_publics()},
                        ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(SERVEUR + sujet, data=corps, method="POST")
     req.add_header("Content-Type", "application/json")
@@ -526,6 +543,7 @@ def main():
                 publier(c["sujet"], etats)
                 PUBLICATION["at"] = time.time()
                 PUBLICATION["signature"] = signature(etats)
+                PUBLICATION["envois"] = signature_envois()
                 PUBLICATION["muet_jusqu_a"] = 0
                 print("%s — %d/%d machines%s, publié (%s)"
                       % (time.strftime("%H:%M:%S"), joignables, len(etats),
@@ -571,7 +589,10 @@ def main():
         if unique:
             print(json.dumps(etats, ensure_ascii=False, indent=1))
             return
-        time.sleep(max(5, periode - (time.time() - debut)))
+        if bibliotheque.envoi_actif():
+            time.sleep(max(5, min(20.0, periode - (time.time() - debut))))
+        else:
+            time.sleep(max(5, periode - (time.time() - debut)))
 
 
 if __name__ == "__main__":

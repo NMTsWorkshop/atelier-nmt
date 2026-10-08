@@ -24,12 +24,21 @@ function go(tab) {
   closeSheet();
   render();
   window.scrollTo(0, 0);
+  /* en arrivant sur les fichiers on demande une fois où en sont les envois :
+     un transfert lancé avant, ou depuis un autre téléphone, se voit quand
+     même. Le suivi s'arrête de lui-même s'il n'y a rien. */
+  if (tab === 'biblio' && typeof biblioSuivreEnvois === 'function') {
+    biblioSuivreEnvois(false);
+  }
 }
 
 function render() {
   $('#view').innerHTML = (VIEWS[TAB] || renderMachines)();
   $$('#tabbar .tab').forEach(b => b.classList.toggle('on', b.getAttribute('data-tab') === TAB));
   paintTabBadges();
+  /* le bandeau des envois vit hors du cycle de rendu : il se repeint seul
+     toutes les quelques secondes et serait effacé par chaque render() */
+  if (TAB === 'biblio' && typeof peindreEnvois === 'function') peindreEnvois();
 }
 
 function paintTabBadges() {

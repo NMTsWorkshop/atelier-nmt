@@ -170,7 +170,7 @@ public class Relay {
      * ntfy renvoie un message JSON par ligne, du plus ancien au plus récent :
      * on garde le dernier qui porte bien un relevé de machines.
      */
-    static JSONObject machinesDepuis(String corps) {
+    static JSONObject releveDepuis(String corps) {
         JSONObject dernierMsg = null;
         for (String ligne : String.valueOf(corps).split("\n")) {
             ligne = ligne.trim();
@@ -183,9 +183,26 @@ public class Relay {
             } catch (Exception ignored) {
             }
         }
-        if (dernierMsg == null) return new JSONObject();
-        JSONObject machines = dernierMsg.optJSONObject("machines");
+        return dernierMsg == null ? new JSONObject() : dernierMsg;
+    }
+
+    static JSONObject machinesDepuis(String corps) {
+        JSONObject machines = releveDepuis(corps).optJSONObject("machines");
         return machines == null ? new JSONObject() : machines;
+    }
+
+    /**
+     * Les envois que le relais a en cours. Ils voyagent dans le relevé
+     * qu'il publie déjà : suivre un transfert ne lui coûte pas un message
+     * de plus, et le quota de ntfy y tient.
+     */
+    static org.json.JSONArray envois(Context c) throws Exception {
+        String sujet = sujet(c);
+        if (sujet.length() == 0) return new org.json.JSONArray();
+        String url = "https://ntfy.sh/" + URLEncoder.encode(sujet, "UTF-8")
+                + "/json?poll=1&since=10m";
+        org.json.JSONArray a = releveDepuis(lire(url)).optJSONArray("envois");
+        return a == null ? new org.json.JSONArray() : a;
     }
 
     /** Vrai si le relevé du relais est plus récent que ce qu'on a déjà. */

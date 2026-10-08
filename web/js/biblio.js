@@ -17,6 +17,9 @@ let BIB_ERREUR = '';
 let BIB_CHARGE = false;  // une requête est en cours
 let BIB_FILTRE = '';     // recherche
 let BIB_RESTE = false;   // n'afficher que ce qui reste à imprimer
+let BIB_ENVOIS = [];     // les transferts que le relais a sur le feu
+let BIB_ENVOIS_T = null; // le minuteur qui va les rechercher
+let BIB_ENVOIS_DIRECT = false;
 
 function familleLabel(f) {
   return FAMILLES[f] || String(f || '').toUpperCase();
@@ -121,6 +124,8 @@ function renderBiblio() {
       'Dépose tes fichiers tranchés dans le dossier partagé du relais. Un sous-dossier par commande, ' +
       'sous k2 ou p1s selon la machine.');
   }
+
+  out += '<div id="bib-envois"></div>';
 
   const q = BIB_FILTRE.trim().toLowerCase();
   out += '<div class="card tight">' +
@@ -262,6 +267,87 @@ function fmtOctets(o) {
   if (o >= 1048576) return (o / 1048576).toFixed(o >= 10485760 ? 0 : 1).replace('.', ',') + ' Mo';
   if (o >= 1024) return Math.round(o / 1024) + ' Ko';
   return o + ' o';
+}
+
+/* ---------- où en est un envoi ----------
+
+   Le fichier va du relais à la machine : le téléphone ne transfère rien et
+   ne peut rien mesurer. Ce qu'on affiche est donc le compte d'octets que le
+   relais joint à son relevé — immédiat sur le réseau de l'atelier, vieux
+   d'une minute au plus quand on est dehors. D'où une barre qui avance par
+   paliers, et qui le dit. */
+
+function envoiActif(e) { return e && e.etat === 'en cours'; }
+
+function fmtDebit(octets, ms) {
+  if (!ms || ms < 1500 || !octets) return '';
+  const parSec = octets / (ms / 1000);
+  return parSec >= 1048576 ? (parSec / 1048576).toFixed(1).replace('.', ',') + ' Mo/s'
+                           : Math.round(parSec / 1024) + ' Ko/s';
+}
+
+function ligneEnvoi(e) {
+  const total = Number(e.total) || 0;
+  const faits = Math.min(Number(e.octets) || 0, total || Number(e.octets) || 0);
+  const pct = total ? Math.max(0, Math.min(100, Math.round(faits * 100 / total))) : 0;
+  const fini = e.etat !== 'en cours';
+  const rate = e.etat === 'echoue';
+
+  let detail;
+  if (rate) detail = e.dit || 'envoi raté';
+  else if (fini) detail = (e.dit === 'lancé' ? 'lancé sur la machine' : 'déposé sur la machine')
+    + ' · ' + fmtOctets(total);
+  else {
+    const ecoule = Date.now() - (Number(e.debut) || Date.now());
+    const debit = fmtDebit(faits, ecoule);
+    const reste = (debit && faits > 0 && total > faits)
+      ? ' · ' + fmtDurShort(Math.round((total - faits) * ecoule / faits)) + ' restantes'
+      : '';
+    detail = fmtOctets(faits) + ' sur ' + fmtOctets(total)
+      + (debit ? ' · ' + debit : '') + reste;
+  }
+
+  return '<div class="card tight envoi' + (rate ? ' echoue' : fini ? ' fait' : '') + '">' +
+    '<div class="rowitem"><div class="grow">' +
+      '<div class="t">' + esc(nomCourt(e.fichier || '')) + ' \u2192 ' + esc(e.machine || '') + '</div>' +
+      '<div class="s">' + esc(detail) + '</div>' +
+    '</div><div class="t">' + (rate ? '' : pct + '%') + '</div></div>' +
+    '<div class="jauge"><i style="width:' + (rate ? 100 : pct) + '%"></i></div>' +
+  '</div>';
+}
+
+function peindreEnvois() {
+  const hote = document.getElementById('bib-envois');
+  if (!hote) return;
+  if (!BIB_ENVOIS.length) { hote.innerHTML = ''; return; }
+  const encore = BIB_ENVOIS.some(envoiActif);
+  hote.innerHTML = '<div class="sec-title">' +
+      (encore ? 'Envoi en cours' : 'Dernier envoi') + '</div>' +
+    BIB_ENVOIS.map(ligneEnvoi).join('') +
+    (encore && !BIB_ENVOIS_DIRECT
+      ? '<div class="note">Compté par le relais, et relevé chaque minute : ' +
+        'la barre avance par paliers, elle ne ment pas pour autant.</div>'
+      : '');
+}
+
+/* On ne questionne le relais que tant qu'il se passe quelque chose : une
+   relecture de trop, c'est de la 4G pour rien. */
+function biblioSuivreEnvois(insiste) {
+  if (BIB_ENVOIS_T) { clearTimeout(BIB_ENVOIS_T); BIB_ENVOIS_T = null; }
+  if (typeof Biblio === 'undefined' || !Biblio.regle()) return;
+  Biblio.envois().then(res => {
+    const liste = (res && res.ok && res.envois) || [];
+    BIB_ENVOIS = liste;
+    BIB_ENVOIS_DIRECT = !!(res && res.direct);
+    peindreEnvois();
+    const encore = liste.some(envoiActif);
+    if (encore || insiste) {
+      BIB_ENVOIS_T = setTimeout(() => biblioSuivreEnvois(false),
+                                BIB_ENVOIS_DIRECT ? 2000 : 12000);
+    }
+  }).catch(() => {
+    if (insiste) BIB_ENVOIS_T = setTimeout(() => biblioSuivreEnvois(false), 15000);
+  });
 }
 
 /* ---------- la fiche détaillée ---------- */
@@ -551,6 +637,9 @@ function biblioPousser(chemin, machine, lancer, plateau) {
   const faire = () => {
     closeSheet();
     toast('Envoi de ' + nom + ' vers ' + machine + '…');
+    /* on commence à guetter sans attendre : c'est la barre qui répond à
+       « est-ce que ça marche », bien avant l'accusé de fin */
+    setTimeout(() => biblioSuivreEnvois(true), 1500);
     Biblio.pousser(chemin, machine, lancer, plateau || 1).then(res => {
       if (res && res.differe) {
         toast('Demandé au relais — ' + nom + ' part vers ' + machine, 'ok');

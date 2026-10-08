@@ -272,3 +272,19 @@ textarea{resize:vertical;min-height:70px}
   border-radius:var(--r-s);padding:11px 13px;font-size:13px;line-height:1.45}
 .info-box{background:var(--info-dim);border:1px solid #1e3c5c;color:#a8cff5;
   border-radius:var(--r-s);padding:11px 13px;font-size:13px;line-height:1.45}
+
+/* ---- envoi en cours : la barre de téléversement ----
+   Le fichier part du relais vers la machine, pas du téléphone : ce que la
+   barre montre, c'est un relevé publié par le relais, pas une mesure
+   locale. D'où le pas visible plutôt qu'un défilement continu. */
+.envoi { margin-bottom: 12px; }
+.envoi .jauge {
+  height: 6px; border-radius: 3px; background: var(--line);
+  overflow: hidden; margin-top: 8px;
+}
+.envoi .jauge > i {
+  display: block; height: 100%; width: 0; border-radius: 3px;
+  background: var(--acc); transition: width .6s ease;
+}
+.envoi.fait .jauge > i { background: var(--ok); }
+.envoi.echoue .jauge > i { background: var(--bad); }

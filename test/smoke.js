@@ -317,6 +317,8 @@ const errors = [];
         setTimeout(() => window.NMTcb(id, '{"ok":true,"lance":true}'), 10); },
       biblioRedo: (c, p, r, id) => { window.__redo = [c, p, r];
         setTimeout(() => window.NMTcb(id, '{"ok":true}'), 10); },
+      biblioTransfers: (id) => setTimeout(() => window.NMTcb(id,
+        JSON.stringify({ ok: true, direct: false, envois: window.__envois || [] })), 10),
       biblioAck: (ident, id) => setTimeout(() => window.NMTcb(id,
         JSON.stringify({ id: ident, ok: true, dit: 'casque lancé sur P1S 1' })), 10),
       testBiblio: id => setTimeout(() => window.NMTcb(id, '{"ok":true,"fichiers":3}'), 10)
@@ -584,6 +586,61 @@ const errors = [];
     if (/Aucune réponse du relais/.test(tout))
       throw new Error('dit le relais muet alors qu\'il avait répondu : ' + tout);
     await page.evaluate(() => { Biblio.cadence = { premier: 20000, ensuite: 60000, duree: 900000 }; });
+  });
+
+  await step('un envoi montre où il en est', async () => {
+    await page.evaluate(() => {
+      window.__envois = [{ id: 'e1', fichier: 'casque_jetpack.gcode.3mf', machine: 'P1S 1',
+                           octets: 30000000, total: 91000000,
+                           debut: Date.now() - 20000, fin: 0, etat: 'en cours' }];
+      biblioSuivreEnvois(false);
+    });
+    await page.waitForFunction(() => /%/.test(
+      (document.getElementById('bib-envois') || {}).innerHTML || ''), null, { timeout: 5000 });
+    const vu = await page.$eval('#bib-envois', e => e.innerHTML);
+    if (!/Envoi en cours/.test(vu)) throw new Error('pas de titre : ' + vu.slice(0, 120));
+    if (!/33%/.test(vu)) throw new Error('pourcentage faux : ' + vu.slice(0, 200));
+    if (!/P1S 1/.test(vu)) throw new Error('machine absente');
+    const large = await page.$eval('#bib-envois .jauge > i', e => e.style.width);
+    if (large !== '33%') throw new Error('jauge à ' + large);
+    /* à distance la barre ne bouge qu'à chaque relevé : il faut le dire */
+    if (!/paliers/.test(vu)) throw new Error('la latence n\'est pas annoncée');
+  });
+
+  await step('un envoi fini se voit jusqu\'au bout, puis s\'arrête', async () => {
+    await page.evaluate(() => {
+      window.__envois = [{ id: 'e1', fichier: 'casque_jetpack.gcode.3mf', machine: 'P1S 1',
+                           octets: 91000000, total: 91000000,
+                           debut: Date.now() - 90000, fin: Date.now(), etat: 'fait',
+                           dit: 'déposé' }];
+      biblioSuivreEnvois(false);
+    });
+    await page.waitForFunction(() => /100%/.test(
+      (document.getElementById('bib-envois') || {}).innerHTML || ''), null, { timeout: 5000 });
+    const vu = await page.$eval('#bib-envois', e => e.innerHTML);
+    if (!/Dernier envoi/.test(vu)) throw new Error('encore annoncé en cours : ' + vu.slice(0, 120));
+    if (!/envoi fait/.test(vu) && !/class="card tight envoi fait"/.test(vu))
+      throw new Error('pas marqué fini : ' + vu.slice(0, 200));
+    /* plus rien en cours : le suivi doit finir par s'arrêter de lui-même.
+       Les envois lancés aux étapes précédentes ont chacun programmé une
+       relecture de politesse ; elles s'éteignent après leur tour. */
+    await page.waitForFunction(() => BIB_ENVOIS_T === null, null, { timeout: 30000 });
+  });
+
+  await step('un envoi raté le dit en rouge', async () => {
+    await page.evaluate(() => {
+      window.__envois = [{ id: 'e2', fichier: 'socle.gcode', machine: 'K2 Plus 1',
+                           octets: 0, total: 2411000, debut: Date.now() - 5000,
+                           fin: Date.now(), etat: 'echoue',
+                           dit: 'K2 Plus 1 ne répond pas sur 10.1.2.57' }];
+      biblioSuivreEnvois(false);
+    });
+    await page.waitForFunction(() => /ne répond pas/.test(
+      (document.getElementById('bib-envois') || {}).innerHTML || ''), null, { timeout: 5000 });
+    const vu = await page.$eval('#bib-envois', e => e.innerHTML);
+    if (!/envoi echoue/.test(vu)) throw new Error('pas marqué raté : ' + vu.slice(0, 200));
+    await page.evaluate(() => { window.__envois = []; biblioSuivreEnvois(false); });
+    await page.waitForTimeout(300);
   });
 
   await step('l\'historique de la farm s\'affiche', async () => {

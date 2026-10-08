@@ -246,6 +246,31 @@ public class Biblio {
         }
     }
 
+    /**
+     * Où en sont les envois. Sur place le relais répond tout de suite ;
+     * de loin, c'est son dernier relevé qui le dit, à une minute près.
+     */
+    static JSONObject envois(Context c) {
+        try {
+            JSONObject out = new JSONObject();
+            if (surPlace(c)) {
+                JSONObject e = appel(c, "/etat", null, DELAI_LECTURE);
+                out.put("ok", true);
+                out.put("envois", e.optJSONArray("envois") == null
+                        ? new org.json.JSONArray() : e.optJSONArray("envois"));
+                out.put("direct", true);
+                return out;
+            }
+            if (!Relay.actif(c)) return erreur("aucun relais configuré");
+            out.put("ok", true);
+            out.put("envois", Relay.envois(c));
+            out.put("direct", false);
+            return out;
+        } catch (Throwable t) {
+            return erreur(String.valueOf(t.getMessage()));
+        }
+    }
+
     /** « Celui-là est raté » — pour ne pas l'oublier au moment de relancer. */
     static JSONObject refaire(Context c, String chemin, int plateau, boolean refaire) {
         try {

@@ -425,7 +425,92 @@ def joignable(hote, port, delai=3):
         return False
 
 
-def pousser_moonraker(machine, chemin, nom, lancer):
+# ----------------------------------------------------------------------
+# ou en est un envoi
+# ----------------------------------------------------------------------
+#
+# Le fichier part du Pi, pas du telephone : l'app ne peut rien mesurer
+# elle-meme. Le relais compte donc les octets qu'il pousse et joint
+# l'avancement a son releve — celui qu'il publie deja chaque minute,
+# pour que suivre un transfert ne coute pas un message de plus.
+
+ENVOIS = {}
+GARDE_ENVOI = 180      # on garde un envoi fini le temps que l'app le voie
+BLOC = 262144          # 256 ko : assez gros pour ne pas ramer, assez fin
+                       # pour que la barre bouge sur un fichier de 100 Mo
+
+
+class _CorpsCompte:
+    """Le corps multipart d'un envoi Moonraker, lu par morceaux au lieu
+    d'etre monte en memoire — c'est ce qui permet de compter."""
+
+    def __init__(self, morceaux, progres=None):
+        self._restants = list(morceaux)
+        self._tampon = b""
+        self._progres = progres
+        self.envoye = 0
+
+    def __len__(self):
+        return sum(len(m) for m in self._restants) + len(self._tampon)
+
+    def read(self, combien=-1):
+        if combien is None or combien < 0:
+            combien = len(self)
+        while len(self._tampon) < combien and self._restants:
+            self._tampon += self._restants.pop(0)
+        bout, self._tampon = self._tampon[:combien], self._tampon[combien:]
+        self.envoye += len(bout)
+        if bout and self._progres:
+            self._progres(self.envoye)
+        return bout
+
+
+def envoi_commence(ident, fichier, machine, total):
+    if not ident:
+        return
+    ENVOIS[ident] = {"id": ident, "fichier": fichier, "machine": machine,
+                     "octets": 0, "total": int(total or 0),
+                     "debut": int(time.time() * 1000), "fin": 0,
+                     "etat": "en cours"}
+
+
+def envoi_avance(ident, octets):
+    """Moonraker compte le corps multipart entier, quelques centaines
+    d'octets de plus que le fichier : on plafonne, sinon la barre
+    depasserait sa fin puis reculerait."""
+    e = ENVOIS.get(ident)
+    if e:
+        n = int(octets)
+        e["octets"] = min(n, e["total"]) if e["total"] else n
+
+
+def envoi_termine(ident, ok, dit=""):
+    e = ENVOIS.get(ident)
+    if not e:
+        return
+    e["etat"] = "fait" if ok else "echoue"
+    e["fin"] = int(time.time() * 1000)
+    e["dit"] = dit[:120]
+    if ok and e["total"]:
+        e["octets"] = e["total"]
+
+
+def envois_publics():
+    """Ce qui part dans le releve : les envois en cours, et ceux qui
+    viennent de finir, pour que la barre atteigne sa fin au lieu de
+    disparaitre a quatre-vingt-dix pour cent."""
+    maintenant = time.time() * 1000
+    for ident, e in list(ENVOIS.items()):
+        if e["fin"] and maintenant - e["fin"] > GARDE_ENVOI * 1000:
+            ENVOIS.pop(ident, None)
+    return sorted(ENVOIS.values(), key=lambda e: e["debut"])[-4:]
+
+
+def envoi_actif():
+    return any(e["etat"] == "en cours" for e in ENVOIS.values())
+
+
+def pousser_moonraker(machine, chemin, nom, lancer, progres=None):
     """Moonraker accepte le fichier et, si on le demande, lance l'impression
     dans le même appel — avec les réglages du fichier lui-même."""
     limite = "----nmt%d" % int(time.time() * 1000)
@@ -444,14 +529,18 @@ def pousser_moonraker(machine, chemin, nom, lancer):
     morceaux.append(("--%s\r\nContent-Disposition: form-data; name=\"file\"; "
                      "filename=\"%s\"\r\nContent-Type: application/octet-stream\r\n\r\n"
                      % (limite, nom)).encode("utf-8"))
-    morceaux.append(contenu)
+    # le fichier par blocs : monte en un seul bloc, il ne se compterait pas
+    for i in range(0, len(contenu), BLOC):
+        morceaux.append(contenu[i:i + BLOC])
     morceaux.append(("\r\n--%s--\r\n" % limite).encode("utf-8"))
-    corps = b"".join(morceaux)
 
+    corps = _CorpsCompte(morceaux, progres)
+    taille = len(corps)
     url = "http://%s:%d/server/files/upload" % (machine["hote"], machine.get("port", 7125))
     req = urllib.request.Request(url, data=corps, method="POST")
     req.add_header("Content-Type", "multipart/form-data; boundary=%s" % limite)
-    with urllib.request.urlopen(req, timeout=180) as r:
+    req.add_header("Content-Length", str(taille))
+    with urllib.request.urlopen(req, timeout=600) as r:
         r.read()
     return "lancé" if lancer else "déposé"
 
@@ -540,7 +629,7 @@ def lancer_bambu(machine, nom, plateau=1):
     return idx
 
 
-def pousser_bambu(machine, chemin, nom, lancer, plateau=1):
+def pousser_bambu(machine, chemin, nom, lancer, plateau=1, progres=None):
     """Dépose le fichier sur la carte de la machine, et le lance si on le
     demande."""
     ctx = ssl.create_default_context()
@@ -552,8 +641,16 @@ def pousser_bambu(machine, chemin, nom, lancer, plateau=1):
         ftp.login("bblp", machine.get("code") or "")
         ftp.prot_p()
         ftp.set_pasv(True)
+        envoye = [0]
+
+        def bloc(morceau):
+            envoye[0] += len(morceau)
+            if progres:
+                progres(envoye[0])
+
         with open(chemin, "rb") as f:
-            ftp.storbinary("STOR %s" % nom, f, blocksize=32768)
+            ftp.storbinary("STOR %s" % nom, f, blocksize=BLOC,
+                           callback=bloc if progres else None)
     finally:
         try:
             ftp.quit()
@@ -588,7 +685,7 @@ def trouver_machine(machines, nom_machine, hote=""):
 
 
 def pousser(biblio, machines, nom_machine, chemin_relatif, lancer=False,
-            plateau=1, hote=""):
+            plateau=1, hote="", ident=None):
     machine = trouver_machine(machines, nom_machine, hote)
     if machine is None:
         connues = ", ".join("%s (%s)" % (m.get("nom"), m.get("hote"))
@@ -608,10 +705,18 @@ def pousser(biblio, machines, nom_machine, chemin_relatif, lancer=False,
     if not joignable(machine["hote"], port):
         raise ValueError("%s ne répond pas sur %s — machine éteinte ?"
                          % (machine.get("nom"), machine["hote"]))
-    if machine["type"] == "moonraker":
-        etat = pousser_moonraker(machine, entier, nom, lancer)
-    else:
-        etat = pousser_bambu(machine, entier, nom, lancer, plateau)
+    taille = os.path.getsize(entier)
+    envoi_commence(ident, nom, machine.get("nom"), taille)
+    progres = (lambda n: envoi_avance(ident, n)) if ident else None
+    try:
+        if machine["type"] == "moonraker":
+            etat = pousser_moonraker(machine, entier, nom, lancer, progres)
+        else:
+            etat = pousser_bambu(machine, entier, nom, lancer, plateau, progres)
+    except Exception as e:
+        envoi_termine(ident, False, str(e))
+        raise
+    envoi_termine(ident, True, etat)
     if etat == "lancé":
         # on vient de lancer : on sait quel plateau tourne, la machine non
         noter_lancement(machine.get("nom"), chemin_relatif, plateau, nom)
@@ -690,7 +795,8 @@ class Service(BaseHTTPRequestHandler):
         try:
             if route.path == "/etat":
                 return self._repondre(200, {"ok": True, "at": int(time.time() * 1000),
-                                            "machines": self.ctx.etats})
+                                            "machines": self.ctx.etats,
+                                            "envois": envois_publics()})
             if route.path == "/biblio":
                 return self._repondre(200, dict(self.ctx.biblio.index(), ok=True))
             if route.path == "/vignette":
@@ -739,7 +845,8 @@ class Service(BaseHTTPRequestHandler):
                 res = pousser(self.ctx.biblio, self.ctx.machines,
                               corps.get("machine"), corps.get("chemin"),
                               bool(corps.get("lancer")), corps.get("plateau", 1),
-                              corps.get("hote") or "")
+                              corps.get("hote") or "",
+                              corps.get("id") or ("local-%d" % int(time.time())))
                 return self._repondre(200, res)
         except ValueError as e:
             return self._repondre(400, {"ok": False, "error": str(e)[:200]})
@@ -1082,11 +1189,13 @@ def _pousser_a_part(biblio, machines, machine, chemin, lancer, plateau=1,
     """L'envoi demandé à distance. Le résultat, bon ou mauvais, revient à
     l'app par l'accusé joint au prochain index."""
     try:
-        res = pousser(biblio, machines, machine, chemin, lancer, plateau, hote)
+        res = pousser(biblio, machines, machine, chemin, lancer, plateau, hote,
+                      ident)
         print("%s — %s %s sur %s" % (time.strftime("%H:%M:%S"), res["etat"],
                                      res["fichier"], res["machine"]), flush=True)
         accuser(ident, True, "%s %s sur %s" % (res["fichier"], res["etat"], machine))
     except Exception as e:
+        envoi_termine(ident, False, str(e))
         biblio.noter({"at": int(time.time() * 1000), "machine": machine,
                       "fichier": os.path.basename(chemin), "etat": "refusé",
                       "chemin": chemin, "pourquoi": str(e)[:200]})
