@@ -25,6 +25,7 @@ ses relevés et ouvre son petit serveur HTTP sur le réseau local.
 import base64
 import ftplib
 import hashlib
+import http.client
 import hmac
 import json
 import os
@@ -536,12 +537,26 @@ def pousser_moonraker(machine, chemin, nom, lancer, progres=None):
 
     corps = _CorpsCompte(morceaux, progres)
     taille = len(corps)
-    url = "http://%s:%d/server/files/upload" % (machine["hote"], machine.get("port", 7125))
-    req = urllib.request.Request(url, data=corps, method="POST")
-    req.add_header("Content-Type", "multipart/form-data; boundary=%s" % limite)
-    req.add_header("Content-Length", str(taille))
-    with urllib.request.urlopen(req, timeout=600) as r:
-        r.read()
+
+    # http.client lit un corps-fichier par blocs de 8 ko et fait un envoi
+    # réseau par bloc : sur cent mégas ça fait douze mille appels système,
+    # du travail pur pour le Pi. On passe par la connexion directement, elle
+    # seule laisse régler ce bloc. (urllib ne le transmet pas.)
+    co = http.client.HTTPConnection(machine["hote"], machine.get("port", 7125),
+                                    timeout=600, blocksize=BLOC)
+    try:
+        co.putrequest("POST", "/server/files/upload")
+        co.putheader("Content-Type", "multipart/form-data; boundary=%s" % limite)
+        co.putheader("Content-Length", str(taille))
+        co.endheaders()
+        co.send(corps)
+        rep = co.getresponse()
+        lu = rep.read()
+        if rep.status >= 400:
+            raise ValueError("la machine a refusé le fichier (HTTP %d) : %s"
+                             % (rep.status, lu[:120].decode("utf-8", "replace")))
+    finally:
+        co.close()
     return "lancé" if lancer else "déposé"
 
 
