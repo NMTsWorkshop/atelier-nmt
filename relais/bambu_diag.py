@@ -56,6 +56,18 @@ def contexte(assouplir):
     return ctx
 
 
+def hote_sortant():
+    """L'adresse par laquelle le Pi sort — celle que verra le pare-feu."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("10.255.255.255", 1))
+        a = s.getsockname()[0]
+        s.close()
+        return a
+    except Exception:
+        return "le Pi"
+
+
 def port_ouvert(hote, port, delai=4):
     t = time.time()
     try:
@@ -112,16 +124,60 @@ def essayer(machine):
                 pass
             return
         print("  4. identification ...... acceptée")
+
+        # L'étape qui compte. FTP ouvre une SECONDE connexion, sur un port
+        # haut que la machine annonce dans sa réponse PASV. Tant qu'on n'a
+        # pas essayé, on n'a testé que le port 990.
+        port_donnees = None
+        try:
+            hote_pasv, port_donnees = ftp.makepasv()
+            print("  5. canal de données .... la machine annonce le port %d" % port_donnees)
+        except Exception as e:
+            print("  5. canal de données .... PASV refusé (%s)" % str(e)[:60])
+            try:
+                ftp.close()
+            except Exception:
+                pass
+            return
+
+        joint, info = port_ouvert(hote_pasv, port_donnees, delai=8)
+        if not joint:
+            print("  6. ce port est .......... INJOIGNABLE depuis le Pi (%s)" % info)
+            print("")
+            print("     -> C'EST LE PARE-FEU, presque à coup sûr.")
+            print("        Le port 990 passe, le canal de données non.")
+            print("        En FTPS le canal de contrôle est chiffré : le")
+            print("        pare-feu ne peut PAS lire la réponse PASV, donc son")
+            print("        assistant FTP ne sait pas quel port ouvrir. Il faut")
+            print("        l'autoriser à la main.")
+            print("        À demander : du %s vers %s, autoriser le TCP sortant"
+                  % (hote_sortant(), hote_pasv))
+            print("        sur les ports hauts (1024-65535), ou au moins la")
+            print("        plage de données de la machine.")
+            try:
+                ftp.close()
+            except Exception:
+                pass
+            return
+        print("  6. ce port est .......... joignable (%.0f ms)" % (info * 1000))
+
+        complet = False
         try:
             fichiers = []
+            t = time.time()
             ftp.retrlines("NLST", fichiers.append)
-            print("  5. carte SD ............ %d fichier(s) à la racine" % len(fichiers))
+            complet = True
+            print("  7. carte SD ............ %d fichier(s) à la racine (%.0f ms)"
+                  % (len(fichiers), (time.time() - t) * 1000))
             for f in fichiers[:6]:
                 print("       %s" % f)
             if len(fichiers) > 6:
                 print("       … et %d autres" % (len(fichiers) - 6))
         except Exception as e:
-            print("  5. carte SD ............ illisible (%s)" % str(e)[:70])
+            print("  7. carte SD ............ illisible (%s)" % str(e)[:70])
+            print("     -> le port répond mais le transfert ne passe pas :")
+            print("        pare-feu qui coupe après coup, ou TLS du canal de")
+            print("        données refusé par la machine.")
         try:
             ftp.quit()
         except Exception:
@@ -129,7 +185,11 @@ def essayer(machine):
                 ftp.close()
             except Exception:
                 pass
-        print("  -> cette machine répond correctement en %s." % nom_mode)
+        if complet:
+            print("  -> cette machine répond correctement en %s : le relais "
+                  "peut lui envoyer un fichier." % nom_mode)
+        else:
+            print("  -> la connexion s'établit mais aucune donnée ne passe.")
         return
 
     print("     -> aucun des deux modes TLS ne passe. Si le port est ouvert")

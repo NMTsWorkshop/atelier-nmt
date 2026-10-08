@@ -818,9 +818,13 @@ def _dit_bambu(machine, etape, e):
         "identification": "%s a refusé l'identification. C'est le code "
                           "d'accès LAN (Access Code, sur l'écran de la "
                           "machine) qu'il faut dans relais.json." % nom,
-        "transfert": "le transfert vers %s s'est interrompu — un fichier "
-                     "incomplet peut rester sur sa carte, à vérifier depuis "
-                     "l'écran." % nom,
+        # l'identification est passée mais pas les données : c'est la
+        # signature d'un pare-feu qui laisse le port 990 et bloque le canal
+        # de données, que le FTPS lui rend invisible
+        "transfert": "la connexion à %s s'établit mais les données ne passent "
+                     "pas — regarde du côté du pare-feu entre le Pi et le "
+                     "réseau des machines (pi-15-bambu.bat le dira). Un "
+                     "fichier incomplet peut rester sur la carte." % nom,
     }
     return "%s — %s (%s)" % (pistes.get(etape, "envoi vers %s impossible" % nom),
                              brut[:80], etape)
