@@ -111,16 +111,26 @@ public class Relay {
        dans la minute. Le sujet ne protège que la lecture, alors un ordre
        porte une signature calculée avec le jeton. */
 
-    private static final String[] CHAMPS_SIGNES = {
-            "id", "at", "quoi", "chemin", "plateau", "fait", "n", "commande",
-            "machine", "lancer", "hote", "refaire"
-    };
-
+    /*
+       La signature porte sur toutes les clés de l'ordre, triées, sous la
+       forme clé=valeur. Les versions précédentes signaient une liste fixe :
+       ajouter un champ obligeait alors à changer l'app et le relais le même
+       jour, faute de quoi le relais refusait tout sans que personne sache
+       pourquoi. Le relais accepte encore les anciennes signatures, le temps
+       que les téléphones rattrapent.
+     */
     static String signer(String jeton, JSONObject ordre) {
+        java.util.ArrayList<String> cles = new java.util.ArrayList<String>();
+        for (java.util.Iterator<String> it = ordre.keys(); it.hasNext(); ) {
+            String k = it.next();
+            if (!"sig".equals(k)) cles.add(k);
+        }
+        java.util.Collections.sort(cles);
         StringBuilder corps = new StringBuilder();
-        for (int i = 0; i < CHAMPS_SIGNES.length; i++) {
+        for (int i = 0; i < cles.size(); i++) {
             if (i > 0) corps.append('\u001f');
-            Object v = ordre.opt(CHAMPS_SIGNES[i]);
+            corps.append(cles.get(i)).append('=');
+            Object v = ordre.opt(cles.get(i));
             if (v == null || v == JSONObject.NULL) continue;
             if (v instanceof Boolean) corps.append(((Boolean) v) ? "1" : "0");
             else corps.append(String.valueOf(v));

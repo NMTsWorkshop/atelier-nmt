@@ -475,14 +475,42 @@ def envoi_commence(ident, fichier, machine, total):
                      "etat": "en cours"}
 
 
+class EnvoiAnnule(Exception):
+    """Levee depuis le compteur d'octets : c'est le seul endroit par ou
+    l'envoi repasse assez souvent pour qu'on puisse l'arreter en vol."""
+
+
 def envoi_avance(ident, octets):
     """Moonraker compte le corps multipart entier, quelques centaines
     d'octets de plus que le fichier : on plafonne, sinon la barre
     depasserait sa fin puis reculerait."""
     e = ENVOIS.get(ident)
     if e:
+        if e.get("annule"):
+            raise EnvoiAnnule("envoi annulé")
         n = int(octets)
         e["octets"] = min(n, e["total"]) if e["total"] else n
+
+
+def annuler_envoi(ident):
+    """Pose le drapeau ; c'est le fil d'envoi qui s'arretera de lui-meme au
+    bloc suivant. Renvoie ce qu'il faut dire a celui qui a demande."""
+    e = ENVOIS.get(ident)
+    if not e:
+        return False, "cet envoi n'est plus suivi par le relais"
+    if e["etat"] != "en cours":
+        return False, "cet envoi est déjà terminé"
+    e["annule"] = True
+    return True, "arrêt de %s demandé" % e.get("fichier")
+
+
+def envoi_annule(ident):
+    e = ENVOIS.get(ident)
+    if not e:
+        return
+    e["etat"] = "annule"
+    e["fin"] = int(time.time() * 1000)
+    e["dit"] = "arrêté en cours d'envoi"
 
 
 def envoi_termine(ident, ok, dit=""):
@@ -671,9 +699,18 @@ def pousser_bambu(machine, chemin, nom, lancer, plateau=1, progres=None):
             if progres:
                 progres(envoye[0])
 
-        with open(chemin, "rb") as f:
-            ftp.storbinary("STOR %s" % nom, f, blocksize=BLOC,
-                           callback=bloc if progres else None)
+        try:
+            with open(chemin, "rb") as f:
+                ftp.storbinary("STOR %s" % nom, f, blocksize=BLOC,
+                               callback=bloc if progres else None)
+        except EnvoiAnnule:
+            # un transfert coupé laisse un fichier tronqué sur la carte :
+            # le laisser serait pire que tout, la machine le proposerait
+            try:
+                ftp.delete(nom)
+            except Exception:
+                pass
+            raise
     finally:
         try:
             ftp.quit()
@@ -736,6 +773,9 @@ def pousser(biblio, machines, nom_machine, chemin_relatif, lancer=False,
             etat = pousser_moonraker(machine, entier, nom, lancer, progres)
         else:
             etat = pousser_bambu(machine, entier, nom, lancer, plateau, progres)
+    except EnvoiAnnule:
+        envoi_annule(ident)
+        raise
     except Exception as e:
         envoi_termine(ident, False, str(e))
         raise
@@ -855,6 +895,10 @@ class Service(BaseHTTPRequestHandler):
                     corps.get("chemin"), corps.get("plateau", 1),
                     bool(corps.get("fait", True)), corps.get("machine") or "")
                 return self._repondre(200, {"ok": True, "chemin": rel})
+            if route.path == "/annuler":
+                ok, dit = annuler_envoi(corps.get("cible") or "")
+                return self._repondre(200 if ok else 409,
+                                      {"ok": ok, "dit": dit})
             if route.path == "/refaire":
                 rel = self.ctx.biblio.marquer_refaire(
                     corps.get("chemin"), corps.get("plateau", 1),
@@ -1176,32 +1220,46 @@ def accuser(ident, ok, dit, fini=True):
 # jamais dans un nom de fichier, et non du JSON : deux langages ne
 # sérialisent pas le JSON de la même façon, et une signature qui dépend
 # d'un espace après les deux-points casserait au premier accent.
-CHAMPS_SIGNES = ("id", "at", "quoi", "chemin", "plateau", "fait", "n",
-                 "commande", "machine", "lancer", "hote", "refaire")
-
-# Jusqu'a la 3.1 l'app signait sans "hote" ni "refaire". Un telephone pas
-# encore mis a jour doit continuer a marcher, sinon la mise a jour du
-# relais couperait la main a l'utilisateur sans explication.
+# La signature porte desormais sur TOUTES les cles de l'ordre, triees, sous
+# la forme cle=valeur. Les trois premieres versions signaient une liste
+# fixe, si bien que le moindre champ ajoute obligeait a changer les deux
+# cotes le meme jour — et un telephone pas encore mis a jour se faisait
+# refuser ses ordres sans comprendre pourquoi. Avec les cles dans le corps
+# signe, un champ de plus ne casse plus rien.
+CHAMPS_SIGNES_3_2 = ("id", "at", "quoi", "chemin", "plateau", "fait", "n",
+                     "commande", "machine", "lancer", "hote", "refaire")
 CHAMPS_SIGNES_3_1 = ("id", "at", "quoi", "chemin", "plateau", "fait", "n",
                      "commande", "machine", "lancer")
+ANCIENS_CHAMPS = (CHAMPS_SIGNES_3_2, CHAMPS_SIGNES_3_1)
 
 
-def signer(jeton, ordre, champs=CHAMPS_SIGNES):
-    def valeur(cle):
-        v = ordre.get(cle)
-        if v is None:
-            return ""
-        if isinstance(v, bool):
-            return "1" if v else "0"
-        return str(v)
-    corps = "\u001f".join(valeur(c) for c in champs)
+def _valeur_signee(ordre, cle):
+    v = ordre.get(cle)
+    if v is None:
+        return ""
+    if isinstance(v, bool):
+        return "1" if v else "0"
+    return str(v)
+
+
+def corps_signe(ordre, champs=None):
+    if champs is None:
+        cles = sorted(c for c in ordre.keys() if c != "sig")
+        return "\u001f".join("%s=%s" % (c, _valeur_signee(ordre, c)) for c in cles)
+    return "\u001f".join(_valeur_signee(ordre, c) for c in champs)
+
+
+def signer(jeton, ordre, champs=None):
+    corps = corps_signe(ordre, champs)
     return hmac.new(str(jeton or "").encode("utf-8"),
                     corps.encode("utf-8"), hashlib.sha256).hexdigest()[:32]
 
 
 def signature_valide(jeton, ordre):
     donnee = str(ordre.get("sig") or "")
-    for champs in (CHAMPS_SIGNES, CHAMPS_SIGNES_3_1):
+    if hmac.compare_digest(signer(jeton, ordre), donnee):
+        return True
+    for champs in ANCIENS_CHAMPS:          # telephones pas encore a jour
         if hmac.compare_digest(signer(jeton, ordre, champs), donnee):
             return True
     return False
@@ -1217,6 +1275,16 @@ def _pousser_a_part(biblio, machines, machine, chemin, lancer, plateau=1,
         print("%s — %s %s sur %s" % (time.strftime("%H:%M:%S"), res["etat"],
                                      res["fichier"], res["machine"]), flush=True)
         accuser(ident, True, "%s %s sur %s" % (res["fichier"], res["etat"], machine))
+    except EnvoiAnnule:
+        # arrêt demandé : ce n'est pas une panne, et l'accusé de l'envoi doit
+        # le dire autrement qu'un échec
+        print("%s — envoi de %s vers %s arrêté"
+              % (time.strftime("%H:%M:%S"), os.path.basename(chemin), machine),
+              flush=True)
+        biblio.noter({"at": int(time.time() * 1000), "machine": machine,
+                      "fichier": os.path.basename(chemin), "etat": "annulé",
+                      "chemin": chemin})
+        accuser(ident, False, "envoi arrêté avant la fin")
     except Exception as e:
         envoi_termine(ident, False, str(e))
         biblio.noter({"at": int(time.time() * 1000), "machine": machine,
@@ -1274,6 +1342,10 @@ def appliquer_ordre(biblio, ordre, jeton, machines=None):
                 ordre.get("plateau"), os.path.basename(chemin),
                 "fait" if ordre.get("fait", True) else "remis à faire")
             accuser(ident, True, dit)
+            return dit
+        if quoi == "annuler":
+            ok, dit = annuler_envoi(ordre.get("cible") or "")
+            accuser(ident, ok, dit)
             return dit
         if quoi == "refaire":
             refaire = bool(ordre.get("refaire", True))

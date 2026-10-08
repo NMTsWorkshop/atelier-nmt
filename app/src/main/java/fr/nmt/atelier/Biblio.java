@@ -279,6 +279,23 @@ public class Biblio {
         }
     }
 
+    /**
+     * Arrêter un envoi en vol. Le relais pose un drapeau ; c'est son fil
+     * d'envoi qui s'arrête au bloc suivant, et qui retire de la machine le
+     * fichier tronqué qu'il y aurait laissé.
+     */
+    static JSONObject annuler(Context c, String cible) {
+        try {
+            JSONObject o = new JSONObject();
+            o.put("quoi", "annuler");
+            o.put("cible", cible == null ? "" : cible);
+            if (surPlace(c)) return appel(c, "/annuler", o, DELAI_LECTURE);
+            return parLeCanal(c, o);
+        } catch (Exception e) {
+            return erreur(String.valueOf(e.getMessage()));
+        }
+    }
+
     /** « Celui-là est raté » — pour ne pas l'oublier au moment de relancer. */
     static JSONObject refaire(Context c, String chemin, int plateau, boolean refaire) {
         try {

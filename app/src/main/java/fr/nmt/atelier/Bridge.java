@@ -519,6 +519,15 @@ public class Bridge {
     }
 
     @JavascriptInterface
+    public void biblioCancel(final String cible, final String cbId) {
+        new Thread(new Runnable() {
+            public void run() {
+                callBack(cbId, Biblio.annuler(act, cible).toString());
+            }
+        }).start();
+    }
+
+    @JavascriptInterface
     public void biblioTransfers(final String cbId) {
         new Thread(new Runnable() {
             public void run() {

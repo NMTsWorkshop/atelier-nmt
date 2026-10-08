@@ -292,10 +292,13 @@ function ligneEnvoi(e) {
   const faits = Math.min(Number(e.octets) || 0, total || Number(e.octets) || 0);
   const pct = total ? Math.max(0, Math.min(100, Math.round(faits * 100 / total))) : 0;
   const fini = e.etat !== 'en cours';
-  const rate = e.etat === 'echoue';
+  const rate = e.etat === 'echoue' || e.etat === 'annule';
+  const arrete = e.etat === 'annule';
 
   let detail;
-  if (rate) detail = e.dit || 'envoi raté';
+  if (arrete) detail = (e.dit || 'arrêté') + ' · ' + fmtOctets(faits) +
+    ' étaient partis, la machine n\'en garde rien';
+  else if (rate) detail = e.dit || 'envoi raté';
   else if (fini) {
     const d = fmtDebit(total, Number(e.ecoule) || 0);
     detail = (e.dit === 'lancé' ? 'lancé sur la machine' : 'déposé sur la machine')
@@ -316,11 +319,17 @@ function ligneEnvoi(e) {
       + (debit ? ' · ' + debit : '') + reste;
   }
 
+  const cle = JSON.stringify(String(e.id || '')).replace(/"/g, '&quot;');
+  const droite = fini
+    ? '<div class="t">' + (rate ? '' : pct + '%') + '</div>'
+    : '<div class="t">' + pct + '%</div>' +
+      '<button class="btn ghost" onclick="biblioArreterEnvoi(' + cle + ')">Arrêter</button>';
+
   return '<div class="card tight envoi' + (rate ? ' echoue' : fini ? ' fait' : '') + '">' +
     '<div class="rowitem"><div class="grow">' +
       '<div class="t">' + esc(nomCourt(e.fichier || '')) + ' \u2192 ' + esc(e.machine || '') + '</div>' +
       '<div class="s">' + esc(detail) + '</div>' +
-    '</div><div class="t">' + (rate ? '' : pct + '%') + '</div></div>' +
+    '</div>' + droite + '</div>' +
     '<div class="jauge"><i style="width:' + (rate ? 100 : pct) + '%"></i></div>' +
   '</div>';
 }
@@ -375,6 +384,27 @@ function biblioSuivreEnvois(insiste) {
   }).catch(() => {
     if (insiste) BIB_ENVOIS_T = setTimeout(() => biblioSuivreEnvois(false), 15000);
   });
+}
+
+function biblioArreterEnvoi(cible) {
+  const e = BIB_ENVOIS.find(x => String(x.id) === String(cible));
+  const nom = e ? nomCourt(e.fichier || '') : 'cet envoi';
+  confirmSheet('Arrêter l\'envoi de ' + nom + ' ?',
+    'Le relais s\'arrête au bloc suivant et retire de la machine le fichier ' +
+    'incomplet. Rien ne restera à moitié.',
+    'Arrêter', () => {
+      Biblio.annulerEnvoi(cible).then(res => {
+        if (!res || !res.ok) {
+          toast((res && (res.dit || res.error)) || 'le relais a refusé', 'bad');
+          biblioSuivreEnvois(true);
+          return;
+        }
+        toast(res.differe ? 'Arrêt demandé — le relais s\'y met à sa relève'
+                          : (res.dit || 'Envoi arrêté'), 'ok');
+        if (res.differe) attendreAccuse(res.id, 'l\'arrêt de ' + nom);
+        biblioSuivreEnvois(true);
+      }).catch(err => toast(err.message || 'arrêt impossible', 'bad'));
+    }, true);
 }
 
 /* ---------- la fiche détaillée ---------- */

@@ -317,6 +317,8 @@ const errors = [];
         setTimeout(() => window.NMTcb(id, '{"ok":true,"lance":true}'), 10); },
       biblioRedo: (c, p, r, id) => { window.__redo = [c, p, r];
         setTimeout(() => window.NMTcb(id, '{"ok":true}'), 10); },
+      biblioCancel: (cible, id) => { window.__annule = cible;
+        setTimeout(() => window.NMTcb(id, '{"ok":true,"dit":"arrêt demandé"}'), 10); },
       biblioTransfers: (id) => setTimeout(() => window.NMTcb(id,
         JSON.stringify({ ok: true, direct: false, envois: window.__envois || [],
                          at: Date.now() + (window.__derive || 0), ici: Date.now() })), 10),
@@ -662,6 +664,53 @@ const errors = [];
     const calme = await page.$eval('#bib-envois', e => e.innerHTML);
     if (/écart/.test(calme)) throw new Error('alarme pour 30 secondes d\'écart');
     await page.evaluate(() => { window.__derive = 0; });
+  });
+
+  await step('un envoi en cours peut être arrêté', async () => {
+    await page.evaluate(() => {
+      window.__annule = null;
+      window.__envois = [{ id: 'e9', fichier: 'casque.3mf', machine: 'P1S 1',
+                           octets: 20000000, total: 94371840, ecoule: 15000,
+                           fin: 0, etat: 'en cours' }];
+      biblioSuivreEnvois(false);
+    });
+    await page.waitForFunction(() => /Arrêter/.test(
+      (document.getElementById('bib-envois') || {}).innerHTML || ''), null, { timeout: 5000 });
+    await page.click('#bib-envois .btn.ghost');
+    await page.waitForTimeout(250);
+    const feuille = await page.textContent('.sheet');
+    if (!/Arrêter l'envoi/.test(feuille)) throw new Error('pas de confirmation : ' + feuille);
+    if (!/incomplet/.test(feuille)) throw new Error('la conséquence n\'est pas dite');
+    await page.click('.sheet .btn.danger');
+    await page.waitForFunction(() => window.__annule === 'e9', null, { timeout: 5000 });
+  });
+
+  await step('un envoi fini ne propose plus de l\'arrêter', async () => {
+    await page.evaluate(() => {
+      window.__envois = [{ id: 'e9', fichier: 'casque.3mf', machine: 'P1S 1',
+                           octets: 94371840, total: 94371840, ecoule: 60000,
+                           fin: Date.now(), etat: 'fait', dit: 'déposé' }];
+      biblioSuivreEnvois(false);
+    });
+    await page.waitForFunction(() => /100%/.test(
+      (document.getElementById('bib-envois') || {}).innerHTML || ''), null, { timeout: 5000 });
+    const vu = await page.$eval('#bib-envois', e => e.innerHTML);
+    if (/Arrêter/.test(vu)) throw new Error('bouton sans objet : ' + vu.slice(0, 200));
+  });
+
+  await step('un envoi arrêté ne se fait pas passer pour une panne', async () => {
+    await page.evaluate(() => {
+      window.__envois = [{ id: 'e9', fichier: 'casque.3mf', machine: 'P1S 1',
+                           octets: 20000000, total: 94371840, ecoule: 15000,
+                           fin: Date.now(), etat: 'annule',
+                           dit: 'arrêté en cours d\'envoi' }];
+      biblioSuivreEnvois(false);
+    });
+    await page.waitForFunction(() => /arrêté/.test(
+      (document.getElementById('bib-envois') || {}).innerHTML || ''), null, { timeout: 5000 });
+    const vu = await page.$eval('#bib-envois', e => e.innerHTML);
+    if (!/n'en garde rien/.test(vu)) throw new Error('le sort du fichier n\'est pas dit');
+    if (/Arrêter/.test(vu)) throw new Error('encore un bouton d\'arrêt');
   });
 
   await step('un envoi raté le dit en rouge', async () => {
