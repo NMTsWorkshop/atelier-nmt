@@ -546,6 +546,46 @@ const errors = [];
                                null, { timeout: 40000 });
   });
 
+  await step('un envoi long dit qu\'il est en cours avant de conclure', async () => {
+    await page.evaluate(() => {
+      /* le relais accuse deux fois : « reçu, en cours », puis le résultat */
+      let appels = 0;
+      window.NMT.biblioAck = (ident, id) => { appels++;
+        const a = appels < 2
+          ? { id: ident, ok: true, fini: false, dit: 'reçu — blaster part vers P1S 1' }
+          : { id: ident, ok: true, fini: true, dit: 'blaster déposé sur P1S 1' };
+        setTimeout(() => window.NMTcb(id, JSON.stringify(a)), 10); };
+      window.NMT.biblioPush = (c, m, h, l, p, id) => setTimeout(() => window.NMTcb(id,
+        JSON.stringify({ ok: true, differe: true, id: 'ord-2' })), 10);
+      Biblio.cadence = { premier: 300, ensuite: 300, duree: 20000 };
+      window.__toasts = [];
+    });
+    await page.evaluate(() => biblioPousser('p1s/blaster.gcode.3mf', 'P1S 1', false));
+    await page.waitForFunction(() => window.__toasts.some(t => /part vers P1S 1/.test(t)),
+                               null, { timeout: 8000 });
+    await page.waitForFunction(() => window.__toasts.some(t => /déposé sur P1S 1/.test(t)),
+                               null, { timeout: 8000 });
+    const tout = await page.evaluate(() => window.__toasts.join(' | '));
+    if (/Aucune réponse/.test(tout))
+      throw new Error('conclut au silence alors que le relais répond : ' + tout);
+  });
+
+  await step('un envoi qui ne revient jamais le dit sans mentir', async () => {
+    await page.evaluate(() => {
+      window.NMT.biblioAck = (ident, id) => setTimeout(() => window.NMTcb(id,
+        JSON.stringify({ id: ident, ok: true, fini: false, dit: 'reçu — en cours' })), 10);
+      Biblio.cadence = { premier: 200, ensuite: 200, duree: 1200 };
+      window.__toasts = [];
+    });
+    await page.evaluate(() => biblioPousser('p1s/blaster.gcode.3mf', 'P1S 1', false));
+    await page.waitForFunction(() => window.__toasts.some(t => /pas dit comment/.test(t)),
+                               null, { timeout: 8000 });
+    const tout = await page.evaluate(() => window.__toasts.join(' | '));
+    if (/Aucune réponse du relais/.test(tout))
+      throw new Error('dit le relais muet alors qu\'il avait répondu : ' + tout);
+    await page.evaluate(() => { Biblio.cadence = { premier: 20000, ensuite: 60000, duree: 900000 }; });
+  });
+
   await step('l\'historique de la farm s\'affiche', async () => {
     await page.click('#tb-actions .tb-btn');
     await page.waitForTimeout(400);

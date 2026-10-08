@@ -1018,11 +1018,26 @@ PEREMPTION_ORDRE = 2 * 3600 * 1000
 ACCUSES = []
 
 
-def accuser(ident, ok, dit):
+def accuser(ident, ok, dit, fini=True):
+    """Un accuse par ordre, remplace quand la suite arrive.
+
+    Un envoi de fichier dure : le relais le prend en charge tout de suite,
+    et ne sait que plusieurs minutes plus tard s'il a abouti. Il accuse
+    donc deux fois — « recu, en cours », puis le resultat — et l'app sait
+    a quoi s'en tenir entre les deux au lieu de conclure au silence."""
     if not ident:
         return
-    ACCUSES.append({"id": ident, "at": int(time.time() * 1000),
-                    "ok": bool(ok), "dit": dit})
+    nouveau = {"id": ident, "at": int(time.time() * 1000),
+               "ok": bool(ok), "dit": dit, "fini": bool(fini)}
+    for i, a in enumerate(ACCUSES):
+        if a.get("id") == ident:
+            # un accuse definitif ecrase le provisoire ; l'inverse jamais
+            if a.get("fini") and not fini:
+                return
+            ACCUSES[i] = nouveau
+            break
+    else:
+        ACCUSES.append(nouveau)
     del ACCUSES[:-30]
     oublier_publication()
 
@@ -1114,6 +1129,9 @@ def appliquer_ordre(biblio, ordre, jeton, machines=None):
                                ordre.get("plateau", 1), ident,
                                ordre.get("hote") or ""),
                          daemon=True).start()
+        accuser(ident, True, "reçu — %s part vers %s, ça prend le temps du "
+                "transfert" % (os.path.basename(chemin), ordre.get("machine")),
+                fini=False)
         return "envoi de %s vers %s demandé" % (os.path.basename(chemin),
                                                 ordre.get("machine"))
     try:

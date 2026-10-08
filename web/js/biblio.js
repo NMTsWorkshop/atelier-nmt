@@ -407,10 +407,21 @@ function ligneInfo(cle, valeur) {
    à son index et on dit ce qui s'est réellement passé. */
 function attendreAccuse(id, quoi) {
   if (!id) { setTimeout(() => biblioCharger(true), 70000); return; }
-  Biblio.suivreOrdre(id).then(a => {
+  /* le relais dit d'abord qu'il a pris l'ordre, puis ce qu'il en a fait :
+     entre les deux il n'y a rien à annoncer de nouveau, mais il y a tout à
+     dire sur le fait que ça avance */
+  let pris = false;
+  Biblio.suivreOrdre(id, a => {
+    pris = true;
+    toast(a.dit || 'Le relais a pris la demande', 'ok');
+  }).then(a => {
     biblioCharger(true);
     if (!a) {
-      toast('Toujours pas de réponse du relais pour ' + quoi, 'bad');
+      toast(pris
+        ? 'Le relais a pris la demande mais n\'a pas dit comment ça s\'est '
+          + 'terminé pour ' + quoi + ' — regarde l\'écran de la machine'
+        : 'Aucune réponse du relais pour ' + quoi + ' — vérifie qu\'il tourne '
+          + '(pi-14-pourquoi.bat)', 'bad');
       return;
     }
     toast(a.ok ? (a.dit || quoi) : 'Refusé — ' + (a.dit || 'sans raison'),

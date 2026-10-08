@@ -413,20 +413,43 @@ const Biblio = {
 
   /* Un ordre parti par le canal n'a pas de réponse immédiate : le relais
      l'applique à sa relève suivante et joint un accusé à son index. On va le
-     chercher, au lieu de laisser l'utilisateur deviner. */
-  suivreOrdre(id, quand) {
+     chercher, au lieu de laisser l'utilisateur deviner.
+
+     Deux durées très différentes se cachent là-dedans. Cocher un plateau est
+     écrit tout de suite : l'accusé arrive à la relève suivante, une minute au
+     plus. Envoyer un fichier de cent méga sur une machine dure le temps du
+     transfert, et le relais accuse alors deux fois — « reçu, en cours », puis
+     le résultat. La première version n'attendait que deux minutes et
+     concluait au silence alors que le fichier était en route : c'est la
+     mention « fini » qui dit s'il faut continuer d'attendre. */
+  /* séparé pour que le test de bout en bout puisse resserrer l'horloge
+     sans attendre deux minutes par étape */
+  cadence: { premier: 20000, ensuite: 60000, duree: 900000 },
+
+  suivreOrdre(id, enCours) {
     if (!id) return Promise.resolve(null);
-    const essais = [20000, 25000, 30000, 40000];
-    const prochain = (i) => new Promise(resolve => {
-      if (i >= essais.length) { resolve(null); return; }
+    /* un quart d'heure de patience : au-delà, un transfert qui n'a pas abouti
+       n'aboutira pas. Chaque relecture retire tout l'index du canal, alors on
+       serre les premières — l'ordre court est réglé là — puis on s'espace sur
+       la période du relais une fois qu'on sait qu'il travaille. */
+    const c = this.cadence;
+    const fin = Date.now() + c.duree;
+    let prevenu = false;
+    const attente = () => (prevenu ? c.ensuite : c.premier);
+    const prochain = () => new Promise(resolve => {
+      if (Date.now() >= fin) { resolve(null); return; }
       setTimeout(() => {
         this.accuse(id).then(a => {
-          if (a && a.id) resolve(a);
-          else prochain(i + 1).then(resolve);
-        }).catch(() => prochain(i + 1).then(resolve));
-      }, essais[i]);
+          if (a && a.id && a.fini !== false) { resolve(a); return; }
+          if (a && a.id && !prevenu) {
+            prevenu = true;
+            try { if (enCours) enCours(a); } catch (e) {}
+          }
+          prochain().then(resolve);
+        }).catch(() => prochain().then(resolve));
+      }, attente());
     });
-    return prochain(0);
+    return prochain();
   },
 
   /* la famille d'une machine décide quels fichiers lui vont */
