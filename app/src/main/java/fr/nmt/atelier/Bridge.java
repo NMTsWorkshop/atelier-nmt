@@ -519,6 +519,18 @@ public class Bridge {
     }
 
     @JavascriptInterface
+    public void biblioStart(final String chemin, final String machine,
+                            final String hote, final int plateau,
+                            final String cbId) {
+        new Thread(new Runnable() {
+            public void run() {
+                callBack(cbId, Biblio.lancerSeul(act, chemin, machine, hote,
+                        plateau).toString());
+            }
+        }).start();
+    }
+
+    @JavascriptInterface
     public void biblioCancel(final String cible, final String cbId) {
         new Thread(new Runnable() {
             public void run() {

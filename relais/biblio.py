@@ -672,7 +672,8 @@ def pousser_moonraker(machine, chemin, nom, lancer, progres=None, ident=None):
         morceaux.append(("\r\n--%s--\r\n" % limite).encode("utf-8"))
         corps = _CorpsCompte(morceaux, progres)
         taille = len(corps)
-        return _poster_moonraker(machine, corps, taille, limite, lancer, ident)
+        return _poster_moonraker(machine, corps, taille, limite, lancer,
+                                 nom, ident)
     finally:
         try:
             f.close()
@@ -680,7 +681,8 @@ def pousser_moonraker(machine, chemin, nom, lancer, progres=None, ident=None):
             pass
 
 
-def _poster_moonraker(machine, corps, taille, limite, lancer, ident=None):
+def _poster_moonraker(machine, corps, taille, limite, lancer, nom,
+                      ident=None):
 
     # http.client lit un corps-fichier par blocs de 8 ko et fait un envoi
     # réseau par bloc : sur cent mégas ça fait douze mille appels système,
@@ -705,7 +707,22 @@ def _poster_moonraker(machine, corps, taille, limite, lancer, ident=None):
                              % (rep.status, lu[:120].decode("utf-8", "replace")))
     finally:
         co.close()
-    return "lancé" if lancer else "déposé"
+    if not lancer:
+        return "déposé"
+    # Moonraker accepte « print=true » à l'envoi, mais pas toujours selon
+    # l'état de la machine. On relit, et on redemande explicitement avant
+    # de conclure.
+    parti, dit = _a_demarre(machine, nom)
+    if not parti:
+        try:
+            lancer_moonraker(machine, nom)
+        except Exception as e:
+            raise DeposeSansLancement(str(e))
+        parti, dit = _a_demarre(machine, nom)
+    if not parti:
+        raise DeposeSansLancement("la machine n'a pas démarré (elle dit : %s)"
+                                  % (dit or "rien"))
+    return "lancé"
 
 
 class _FtpImplicite(ftplib.FTP_TLS):
@@ -737,11 +754,16 @@ class _FtpImplicite(ftplib.FTP_TLS):
 # de l'app.
 DEFAUTS_LANCEMENT = {
     "timelapse": False,
+    # les deux orthographes : selon la version du firmware, la P1 attend
+    # l'une ou l'autre, et celle qu'elle ne connaît pas, elle l'ignore
     "bed_leveling": True,
+    "bed_levelling": True,
     "flow_cali": False,
     "vibration_cali": False,
     "layer_inspect": False,
     "use_ams": True,
+    "ams_mapping": "",
+    "bed_type": "auto",
 }
 
 
@@ -757,12 +779,21 @@ def lancer_bambu(machine, nom, plateau=1):
     reglages.update(machine.get("lancement") or {})
     idx = max(1, int(plateau or 1))
 
+    # Le firmware des P1 exige ces quatre identifiants pour une impression
+    # partie de la carte, même s'ils ne valent rien : sans eux il écarte la
+    # commande sans un mot. C'est précisément le « la machine ignore la
+    # commande sans rien dire » du commentaire ci-dessus — sauf que ce
+    # n'était pas une fatalité, il manquait des champs.
     ordre = {"print": dict(reglages,
                            sequence_id=str(int(time.time()) % 100000),
                            command="project_file",
                            param="Metadata/plate_%d.gcode" % idx,
                            subtask_name=nom,
                            plate_idx=idx - 1,
+                           project_id="0",
+                           profile_id="0",
+                           task_id="0",
+                           subtask_id="0",
                            # on dépose à la racine de la carte, c'est là que
                            # l'écran de la machine va les chercher
                            url="file:///sdcard/%s" % nom)}
@@ -978,7 +1009,110 @@ def pousser_bambu(machine, chemin, nom, lancer, plateau=1, progres=None,
         # renvoyer cent mégas pour rien. Seul le démarrage a raté, et il se
         # fait à la main depuis l'écran de la machine.
         raise DeposeSansLancement(str(e))
+    # une P1 qui écarte une commande ne répond rien : sans relire son état,
+    # on annonçait « lancé » sans rien en savoir
+    parti, dit = _a_demarre(machine, nom)
+    if not parti:
+        raise DeposeSansLancement("la machine n'a pas démarré (elle dit : %s)"
+                                  % (dit or "rien"))
     return "lancé"
+
+
+# Combien de temps on laisse à la machine pour passer de « au repos » à
+# « en cours ». Séparé pour que les tests puissent resserrer l'horloge.
+ATTENTES_DEMARRAGE = (2, 3, 5)
+
+
+def _etat_machine(machine):
+    """L'état que la machine annonce, maintenant. Sert à vérifier qu'un
+    lancement a vraiment pris : une Bambu qui écarte une commande ne dit
+    rien, et sans cette relecture on annonçait « lancé » sans savoir."""
+    from relais_atelier import lire_bambu, lire_moonraker
+    try:
+        if machine["type"] == "moonraker":
+            return lire_moonraker(machine) or {}
+        return lire_bambu(machine, duree=12) or {}
+    except Exception:
+        return {}
+
+
+def _a_demarre(machine, nom, avant=None):
+    """(oui, ce_qu_elle_dit). On laisse à la machine le temps de changer
+    d'avis : une P1 met quelques secondes à passer de « idle » à
+    « running », une Creality aussi."""
+    dit = ""
+    for attente in ATTENTES_DEMARRAGE:
+        time.sleep(attente)
+        e = _etat_machine(machine)
+        etat = str(e.get("state") or "").lower()
+        fichier = str(e.get("file") or "")
+        dit = "%s %s" % (etat or "?", fichier)
+        if etat in ("printing", "running", "en cours", "prepare", "preparing"):
+            return True, dit
+        # certaines annoncent le fichier avant l'état
+        if fichier and os.path.basename(fichier) == os.path.basename(nom):
+            return True, dit
+    return False, dit.strip()
+
+
+def lancer_moonraker(machine, nom):
+    """Démarrer un fichier déjà sur la machine. Moonraker accepte la
+    consigne à l'envoi, mais pas toujours : ce chemin-là est explicite."""
+    co = http.client.HTTPConnection(machine["hote"], machine.get("port", 7125),
+                                    timeout=30)
+    try:
+        chemin = "/printer/print/start?filename=" + urllib.parse.quote(nom)
+        co.putrequest("POST", chemin)
+        co.putheader("Content-Length", "0")
+        co.endheaders()
+        rep = co.getresponse()
+        lu = rep.read()
+        if rep.status >= 400:
+            raise ValueError("%s a refusé de démarrer %s (HTTP %d) : %s"
+                             % (machine.get("nom"), nom, rep.status,
+                                lu[:120].decode("utf-8", "replace")))
+    finally:
+        co.close()
+
+
+def lancer_seul(biblio, machines, nom_machine, chemin_relatif, plateau=1,
+                hote=""):
+    """Lancer un fichier DÉJÀ déposé, sans le renvoyer.
+
+    Quand le dépôt a marché et le démarrage non, il n'y a aucune raison de
+    repousser cent mégas pour réessayer d'appuyer sur un bouton."""
+    machine = trouver_machine(machines, nom_machine, hote)
+    if machine is None:
+        connues = ", ".join("%s (%s)" % (m.get("nom"), m.get("hote"))
+                            for m in machines) or "aucune"
+        raise ValueError("le relais ne connait pas %s — il a : %s"
+                         % (nom_machine, connues))
+    entier = biblio.verifier(chemin_relatif)
+    nom = os.path.basename(entier)
+    port = machine.get("port", 7125) if machine["type"] == "moonraker" else 8883
+    if not joignable(machine["hote"], port):
+        raise ValueError("%s ne répond pas sur %s — machine éteinte ?"
+                         % (machine.get("nom"), machine["hote"]))
+
+    if machine["type"] == "moonraker":
+        lancer_moonraker(machine, nom)
+    else:
+        lancer_bambu(machine, nom, plateau)
+
+    parti, dit = _a_demarre(machine, nom)
+    if not parti:
+        raise ValueError(
+            "%s a reçu la demande mais n'a pas démarré (elle dit : %s). "
+            "Le fichier est sur sa carte : tu peux le lancer depuis son "
+            "écran." % (machine.get("nom"), dit or "rien"))
+
+    noter_lancement(machine.get("nom"), chemin_relatif, plateau, nom)
+    biblio.noter({"at": int(time.time() * 1000), "machine": machine.get("nom"),
+                  "fichier": nom, "etat": "lancé", "chemin": chemin_relatif,
+                  "plateau": int(plateau or 1)})
+    return {"ok": True, "etat": "lancé", "machine": machine.get("nom"),
+            "fichier": nom, "lance": True,
+            "dit": "%s a démarré %s" % (machine.get("nom"), nom)}
 
 
 def trouver_machine(machines, nom_machine, hote=""):
@@ -1185,6 +1319,12 @@ class Service(BaseHTTPRequestHandler):
                     corps.get("chemin"), corps.get("plateau", 1),
                     bool(corps.get("fait", True)), corps.get("machine") or "")
                 return self._repondre(200, {"ok": True, "chemin": rel})
+            if route.path == "/lancer":
+                res = lancer_seul(self.ctx.biblio, self.ctx.machines,
+                                  corps.get("machine"), corps.get("chemin"),
+                                  corps.get("plateau", 1),
+                                  corps.get("hote") or "")
+                return self._repondre(200, res)
             if route.path == "/annuler":
                 ok, dit = annuler_envoi(corps.get("cible") or "")
                 return self._repondre(200 if ok else 409,
@@ -1655,6 +1795,12 @@ def appliquer_ordre(biblio, ordre, jeton, machines=None):
                 "fait" if ordre.get("fait", True) else "remis à faire")
             accuser(ident, True, dit)
             return dit
+        if quoi == "lancer":
+            res = lancer_seul(biblio, machines or [], ordre.get("machine"),
+                              chemin, ordre.get("plateau", 1),
+                              ordre.get("hote") or "")
+            accuser(ident, True, res["dit"])
+            return res["dit"]
         if quoi == "annuler":
             ok, dit = annuler_envoi(ordre.get("cible") or "")
             accuser(ident, ok, dit)

@@ -417,6 +417,11 @@ const Biblio = {
   },
   envois() { return nativeCall('biblioTransfers', []); },
   annulerEnvoi(cible) { return nativeCall('biblioCancel', [cible]); },
+  lancerSeul(chemin, machine, plateau) {
+    const m = DB.machines.find(x => (x.name || '') === machine);
+    const hote = (m && m.printer && m.printer.host) || '';
+    return nativeCall('biblioStart', [chemin, machine, hote, plateau || 1]);
+  },
   test() { return nativeCall('testBiblio', []); },
   accuse(id) { return nativeCall('biblioAck', [id]); },
 

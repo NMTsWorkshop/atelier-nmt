@@ -418,6 +418,38 @@ function biblioSuivreEnvois(insiste) {
   });
 }
 
+/* Démarrer un fichier qui est déjà sur la machine. Le dépôt et le
+   démarrage sont deux choses distinctes, et quand la première a marché il
+   n'y a aucune raison de la refaire pour réessayer la seconde. */
+function biblioLancerSeul(chemin, machine, plateau) {
+  const f = fichierDe(chemin);
+  const nom = f ? nomCourt(f.nom) : chemin;
+  if (f && f.multi && !plateau) {
+    choisirPlateau(f, machine, 'biblioLancerSeul(' +
+      JSON.stringify(chemin).replace(/"/g, '&quot;') + ',' +
+      JSON.stringify(machine).replace(/"/g, '&quot;') + ',');
+    return;
+  }
+  const suite = (plateau) => {
+    toast('Démarrage de ' + nom + ' sur ' + machine + '…');
+    Biblio.lancerSeul(chemin, machine, plateau).then(res => {
+      if (!res || !res.ok) {
+        toast((res && (res.dit || res.error)) || 'la machine n\'a pas démarré', 'bad');
+        return;
+      }
+      closeSheet();
+      if (res.differe) {
+        toast('Demandé au relais — il s\'en occupe à sa relève', 'ok');
+        attendreAccuse(res.id, 'le démarrage de ' + nom);
+      } else {
+        toast(res.dit || (nom + ' démarré sur ' + machine), 'ok');
+        biblioCharger(true);
+      }
+    }).catch(e => toast(e.message || 'démarrage impossible', 'bad'));
+  };
+  suite(plateau || (f && f.plateaux && f.plateaux[0] ? (f.plateaux[0].idx || 1) : 1));
+}
+
 function biblioArreterEnvoi(cible) {
   const e = BIB_ENVOIS.find(x => String(x.id) === String(cible));
   const nom = e ? nomCourt(e.fichier || '') : 'cet envoi';
@@ -498,7 +530,14 @@ function ficheFichierSheet(chemin) {
         '<div class="s">' + esc(m.model || '') + '</div></div>' +
         '<button class="btn ghost" onclick="biblioPousser(' + cle + ',' + n + ',false)">Déposer</button>' +
         '<button class="btn primary" onclick="biblioPousser(' + cle + ',' + n + ',true)">Lancer</button>' +
-        '</div></div>';
+        '</div>' +
+        /* le fichier est déjà sur la machine et l'impression n'est pas
+           partie : réappuyer sur le bouton ne doit pas repousser cent
+           mégas */
+        '<div class="rowitem"><div class="grow"><div class="s">déjà déposé ?</div></div>' +
+        '<button class="btn ghost" onclick="biblioLancerSeul(' + cle + ',' + n + ')">' +
+          'Démarrer sans renvoyer</button></div>' +
+        '</div>';
     });
     html += '</div>';
     if (BIB.canal) {
@@ -702,6 +741,22 @@ function biblioRattacher(chemin) {
     });
 }
 
+/* Un fichier à plusieurs plateaux ne dit pas lequel lancer : on demande,
+   plutôt que d'en choisir un à sa place. « appel » est le début d'un appel
+   auquel on ajoute l'index du plateau et la parenthèse. */
+function choisirPlateau(f, machine, appel) {
+  sheet('<h2>Quel plateau lancer ?</h2>' +
+    '<div class="sub">' + esc(nomCourt(f.nom)) + ' sur ' + esc(machine) + '</div>' +
+    '<div class="stack">' + f.plateaux.map(p =>
+      '<div class="card tight click" onclick="' + appel + p.idx + ')">' +
+      '<div class="rowitem"><div class="grow">' +
+        '<div class="t">Plateau ' + p.idx + (p.reste <= 0 ? ' — déjà sorti' : '') + '</div>' +
+        '<div class="s">' + esc((p.objets || []).join(', ') ||
+          [p.minutes ? fmtDurShort(p.minutes * 60000) : '', p.grammes ? p.grammes + ' g' : '']
+            .filter(Boolean).join(' · ')) + '</div>' +
+      '</div></div></div>').join('') + '</div>');
+}
+
 function biblioPousser(chemin, machine, lancer, plateau) {
   const f = fichierDe(chemin);
   const nom = f ? nomCourt(f.nom) : chemin;
@@ -709,18 +764,9 @@ function biblioPousser(chemin, machine, lancer, plateau) {
   /* un fichier à plusieurs plateaux ne dit pas lequel lancer : on demande,
      plutôt que d'en choisir un à sa place */
   if (lancer && f && f.multi && !plateau) {
-    const c = JSON.stringify(chemin).replace(/"/g, '&quot;');
-    const n = JSON.stringify(machine).replace(/"/g, '&quot;');
-    sheet('<h2>Quel plateau lancer ?</h2>' +
-      '<div class="sub">' + esc(nom) + ' sur ' + esc(machine) + '</div>' +
-      '<div class="stack">' + f.plateaux.map(p =>
-        '<div class="card tight click" onclick="biblioPousser(' + c + ',' + n + ',true,' + p.idx + ')">' +
-        '<div class="rowitem"><div class="grow">' +
-          '<div class="t">Plateau ' + p.idx + (p.reste <= 0 ? ' — déjà sorti' : '') + '</div>' +
-          '<div class="s">' + esc((p.objets || []).join(', ') ||
-            [p.minutes ? fmtDurShort(p.minutes * 60000) : '', p.grammes ? p.grammes + ' g' : '']
-              .filter(Boolean).join(' · ')) + '</div>' +
-        '</div></div></div>').join('') + '</div>');
+    choisirPlateau(f, machine, 'biblioPousser(' +
+      JSON.stringify(chemin).replace(/"/g, '&quot;') + ',' +
+      JSON.stringify(machine).replace(/"/g, '&quot;') + ',true,');
     return;
   }
 

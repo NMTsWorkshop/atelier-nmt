@@ -317,6 +317,9 @@ const errors = [];
         setTimeout(() => window.NMTcb(id, '{"ok":true,"lance":true}'), 10); },
       biblioRedo: (c, p, r, id) => { window.__redo = [c, p, r];
         setTimeout(() => window.NMTcb(id, '{"ok":true}'), 10); },
+      biblioStart: (c, m, h, p, id) => { window.__demarre = [c, m, h, p];
+        setTimeout(() => window.NMTcb(id,
+          '{"ok":true,"dit":"P1S 1 a démarré casque_jetpack.gcode.3mf"}'), 10); },
       biblioCancel: (cible, id) => { window.__annule = cible;
         setTimeout(() => window.NMTcb(id, '{"ok":true,"dit":"arrêt demandé"}'), 10); },
       biblioTransfers: (id) => { window.__sondes = (window.__sondes || 0) + 1;
@@ -486,6 +489,32 @@ const errors = [];
     const boutons = await page.$$eval('.sheet .btn', e => e.map(x => x.textContent));
     if (boutons.includes('Annuler'))
       throw new Error('bouton sans effet proposé : ' + boutons.join(','));
+    await page.evaluate(() => closeSheet());
+    await page.waitForTimeout(150);
+  });
+
+  await step('un fichier déjà déposé se démarre sans le renvoyer', async () => {
+    await page.evaluate(() => { window.__demarre = null; window.__push = null; });
+    await page.click('#view [data-bib*="casque_jetpack"]');
+    await page.waitForTimeout(300);
+    const feuille = await page.textContent('.sheet');
+    if (!/Démarrer sans renvoyer/.test(feuille))
+      throw new Error('pas de geste pour démarrer seul : ' + feuille.slice(0, 200));
+    await page.evaluate(() => biblioLancerSeul('p1s/1045 Mando/casque_jetpack.gcode.3mf', 'P1S 1'));
+    await page.waitForTimeout(250);
+    /* multi-plateaux : il doit demander lequel avant de lancer quoi que ce soit */
+    const titre = await page.textContent('.sheet h2');
+    if (!/Quel plateau/.test(titre)) throw new Error('pas de choix de plateau : ' + titre);
+    await page.click('.sheet .card.click:nth-of-type(2)');
+    await page.waitForTimeout(400);
+    const vu = await page.evaluate(() => window.__demarre);
+    if (!vu) throw new Error('rien demandé au relais');
+    if (vu[3] !== 2) throw new Error('mauvais plateau : ' + JSON.stringify(vu));
+    if (!/^\d+\.\d+\.\d+\.\d+$/.test(vu[2] || ''))
+      throw new Error('adresse absente : ' + JSON.stringify(vu));
+    /* et surtout : aucun fichier n'est reparti */
+    const renvoye = await page.evaluate(() => window.__push);
+    if (renvoye) throw new Error('le fichier a été renvoyé pour rien');
     await page.evaluate(() => closeSheet());
     await page.waitForTimeout(150);
   });

@@ -459,6 +459,47 @@ def main():
     finally:
         biblio._ouvrir_bambu = ouvrir_de_test
 
+    # === 5quater. le fichier arrive, l'impression ne part pas ==========
+    # C'est le cas que Nathan a rencontré : le dépôt marche, le démarrage
+    # non. Le relais ne doit pas annoncer « lancé » sans l'avoir vérifié,
+    # et il doit permettre de réessayer le démarrage SANS renvoyer le
+    # fichier.
+    biblio.ATTENTES_DEMARRAGE = (0.1, 0.1)
+    moon_muet = FauxMoonraker(hote="127.0.0.4")      # répond « standby »
+    machines_muettes = [{"nom": "K2 Plus 1", "type": "moonraker",
+                         "hote": "127.0.0.4", "port": moon_muet.port}]
+    res_l = None
+    try:
+        res_l = biblio.pousser(bib, machines_muettes, "K2 Plus 1",
+                               "k2/socle.gcode", True, 1, "127.0.0.4", "nolance")
+    except Exception as e:
+        verifie("un démarrage qui ne prend pas n'est pas annoncé comme lancé",
+                False, "%s: %s" % (type(e).__name__, str(e)[:100]))
+    if res_l is not None:
+        verifie("un démarrage qui ne prend pas n'est pas annoncé comme lancé",
+                res_l.get("ok") and res_l.get("lance") is False
+                and res_l.get("etat") == "déposé",
+                json.dumps(res_l, ensure_ascii=False)[:170])
+        verifie("et l'app apprend qu'il reste à démarrer",
+                "lancement" in str(res_l.get("dit", "")).lower()
+                or "démarr" in str(res_l.get("dit", "")).lower(),
+                str(res_l.get("dit"))[:140])
+
+    # réessayer le démarrage seul, sans renvoyer : il doit échouer
+    # proprement ici (la machine reste au repos), mais ne RIEN renvoyer
+    recu_avant = moon_muet.recu.get("dernier", 0)
+    try:
+        biblio.lancer_seul(bib, machines_muettes, "K2 Plus 1", "k2/socle.gcode",
+                           1, "127.0.0.4")
+        verifie("démarrer seul vérifie que ça a pris", False,
+                "annoncé démarré alors que la machine est au repos")
+    except ValueError as e:
+        verifie("démarrer seul vérifie que ça a pris",
+                "n'a pas démarré" in str(e), str(e)[:130])
+    verifie("démarrer seul ne renvoie pas le fichier",
+            moon_muet.recu.get("dernier", 0) == recu_avant,
+            "%d -> %d" % (recu_avant, moon_muet.recu.get("dernier", 0)))
+
     # === 6. la boucle survit à tout ce qui précède ======================
     verifie("la boucle principale n'est jamais tombée", True)
     verifie("aucun envoi resté bloqué en cours",

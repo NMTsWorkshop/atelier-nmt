@@ -296,6 +296,27 @@ public class Biblio {
     }
 
     /**
+     * Démarrer un fichier déjà déposé, sans le renvoyer. Quand le dépôt a
+     * marché et le démarrage non, repousser cent mégas pour réessayer
+     * d'appuyer sur un bouton n'a aucun sens.
+     */
+    static JSONObject lancerSeul(Context c, String chemin, String machine,
+                                 String hote, int plateau) {
+        try {
+            JSONObject o = new JSONObject();
+            o.put("quoi", "lancer");
+            o.put("chemin", chemin);
+            o.put("machine", machine);
+            o.put("hote", hote == null ? "" : hote);
+            o.put("plateau", Math.max(1, plateau));
+            if (surPlace(c)) return appel(c, "/lancer", o, DELAI_ENVOI);
+            return parLeCanal(c, o);
+        } catch (Exception e) {
+            return erreur(String.valueOf(e.getMessage()));
+        }
+    }
+
+    /**
      * Arrêter un envoi en vol. Le relais pose un drapeau ; c'est son fil
      * d'envoi qui s'arrête au bloc suivant, et qui retire de la machine le
      * fichier tronqué qu'il y aurait laissé.
