@@ -13,6 +13,7 @@ import json
 import os
 import socket
 import ssl
+import struct
 import sys
 import time
 
@@ -75,6 +76,124 @@ def port_ouvert(hote, port, delai=4):
             return True, time.time() - t
     except Exception as e:
         return False, str(e)
+
+
+def _lg(n):
+    b = b""
+    while True:
+        d, n = n % 128, n // 128
+        b += bytes([d | 128 if n else d])
+        if not n:
+            return b
+
+
+def _txt(s):
+    s = s.encode()
+    return struct.pack(">H", len(s)) + s
+
+
+def _recv(s, n):
+    b = b""
+    while len(b) < n:
+        c = s.recv(n - len(b))
+        if not c:
+            raise EOFError("connexion fermée")
+        b += c
+    return b
+
+
+def _paquet(s):
+    entete = _recv(s, 1)[0]
+    mult, val = 1, 0
+    while True:
+        x = _recv(s, 1)[0]
+        val += (x & 127) * mult
+        mult *= 128
+        if not x & 128:
+            break
+    return entete >> 4, _recv(s, val)
+
+
+def mqtt(machine, ftp_ok=False):
+    """Le lancement d'une impression ne passe PAS par le FTPS : il passe par
+    MQTT, sur le port 8883. Un pare-feu peut très bien laisser l'un et
+    bloquer l'autre — le fichier arrive alors sur la carte et l'impression
+    ne part jamais."""
+    hote = machine["hote"]
+    code = machine.get("code") or ""
+    serie = machine.get("serie") or ""
+
+    ouvert, info = port_ouvert(hote, 8883, delai=6)
+    if not ouvert:
+        print("  8. port 8883 (MQTT) ..... FERMÉ (%s)" % info)
+        print("")
+        if ftp_ok:
+            print("     -> C'EST LUI. Le fichier arrive par le 990, mais l'ordre")
+            print("        d'imprimer passe par le 8883, et il ne passe pas.")
+        else:
+            print("     -> ni le 990 ni le 8883 : la machine est éteinte, ou")
+            print("        le relais ne voit pas son réseau du tout.")
+        print("        À demander : du %s vers %s, autoriser le TCP sortant"
+              % (hote_sortant(), hote))
+        print("        sur le port 8883.")
+        return
+    print("  8. port 8883 (MQTT) ..... ouvert (%.0f ms)" % (info * 1000))
+
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    try:
+        s = ctx.wrap_socket(socket.create_connection((hote, 8883), timeout=10))
+    except Exception as e:
+        print("  9. TLS du MQTT .......... échec (%s)" % str(e)[:60])
+        return
+    try:
+        tete = _txt("MQTT") + bytes([4, 0xC2]) + struct.pack(">H", 30)
+        corps = (_txt("diag-%d" % int(time.time())) + _txt("bblp") + _txt(code))
+        s.sendall(bytes([0x10]) + _lg(len(tete + corps)) + tete + corps)
+        t, b = _paquet(s)
+        if t != 2 or b[1] != 0:
+            print("  9. identification MQTT .. REFUSÉE (code %s)" % (b[1] if len(b) > 1 else "?"))
+            print("     -> le code d'accès LAN ne convient pas pour MQTT.")
+            return
+        print("  9. identification MQTT .. acceptée")
+
+        if not serie:
+            print(" 10. numéro de série ...... ABSENT de relais.json")
+            print("     -> sans lui le relais ne peut adresser aucun ordre.")
+            return
+        sujet = "device/%s/report" % serie
+        pq = _txt(sujet) + bytes([0])
+        s.sendall(bytes([0x82]) + _lg(2 + len(pq)) + struct.pack(">H", 1) + pq)
+        t, b = _paquet(s)
+        print(" 10. abonnement au report . %s (série %s)"
+              % ("accepté" if t == 9 else "refusé", serie))
+
+        s.settimeout(12)
+        vus = 0
+        t0 = time.time()
+        while time.time() - t0 < 10:
+            try:
+                t, b = _paquet(s)
+            except Exception:
+                break
+            if t == 3:
+                vus += 1
+        if vus:
+            print(" 11. la machine parle ..... %d message(s) reçus en 10 s" % vus)
+            print("     -> le chemin du lancement est libre de bout en bout.")
+        else:
+            print(" 11. la machine parle ..... RIEN en 10 s")
+            print("     -> elle accepte la connexion mais n'envoie aucun")
+            print("        rapport : numéro de série faux, ou pare-feu qui")
+            print("        coupe le retour.")
+    except Exception as e:
+        print("  9. MQTT ................. %s" % str(e)[:70])
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
 
 
 def essayer(machine):
@@ -190,7 +309,7 @@ def essayer(machine):
                   "peut lui envoyer un fichier." % nom_mode)
         else:
             print("  -> la connexion s'établit mais aucune donnée ne passe.")
-        return
+        return complet
 
     print("     -> aucun des deux modes TLS ne passe. Si le port est ouvert")
     print("        mais que la poignée de main échoue, c'est la version de TLS")
@@ -210,7 +329,14 @@ def main():
         print("aucune machine Bambu dans relais.json")
         return 1
     for m in bambus:
-        essayer(m)
+        ftp_ok = bool(essayer(m))
+        # le lancement est un chemin à part : on le teste même si le FTPS
+        # a échoué, parce que c'est lui qui bloque quand le fichier arrive
+        # mais que l'impression ne part pas
+        try:
+            mqtt(m, ftp_ok)
+        except Exception as e:
+            print("  8. MQTT ................. %s" % str(e)[:70])
     print("")
     return 0
 
