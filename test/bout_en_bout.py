@@ -13,6 +13,7 @@ import ftplib
 import json
 import os
 import socket
+import struct
 import sys
 import tempfile
 import threading
@@ -31,6 +32,7 @@ VRAI_OUVRIR_BAMBU = None
 import relais_atelier as R                                 # noqa: E402
 
 VRAI_OUVRIR_BAMBU = biblio._ouvrir_bambu
+VRAI_LANCER_BAMBU = biblio.lancer_bambu
 
 ECHECS = []
 FAIT = []
@@ -499,6 +501,92 @@ def main():
     verifie("démarrer seul ne renvoie pas le fichier",
             moon_muet.recu.get("dernier", 0) == recu_avant,
             "%d -> %d" % (recu_avant, moon_muet.recu.get("dernier", 0)))
+
+    # === 5quinquies. l'ordre d'impression envoyé aux Bambu ==============
+    # Cette commande, je l'avais composée de mémoire, et je me suis trompé
+    # sur trois champs. Elle est maintenant alignée sur deux implémentations
+    # communautaires qui fonctionnent, et ce test l'y maintient.
+    from faux_bambu_mqtt import FauxBambuMqtt
+    biblio.ATTENTES_DEMARRAGE = (0.1, 0.1)
+    # le montage de test avait remplacé le lancement par un leurre : ici on
+    # veut la vraie fonction, c'est elle qu'on vérifie
+    lancer_de_test = biblio.lancer_bambu
+    biblio.lancer_bambu = VRAI_LANCER_BAMBU
+
+    def lancer_contre(accepte, ams=None):
+        faux = FauxBambuMqtt(accepte=accepte)
+        m = {"nom": "P1S 1", "hote": "127.0.0.1", "type": "bambu",
+             "serie": faux.serie, "code": "12345678"}
+        if ams is not None:
+            m["ams"] = ams
+        vraie = biblio.socket.create_connection
+        biblio.socket.create_connection = (
+            lambda a, timeout=None: vraie(("127.0.0.1", faux.port), timeout=timeout))
+        try:
+            forme, jrn = biblio.lancer_bambu(
+                m, "casque.gcode.3mf", 2,
+                verifier=lambda: (faux.etat == "RUNNING", faux.etat))
+        finally:
+            biblio.socket.create_connection = vraie
+        return faux, forme, jrn
+
+    faux1, forme1, _ = lancer_contre("ftp:///casque.gcode.3mf")
+    verifie("le relais trouve la forme d'adresse que la machine accepte",
+            forme1 == "ftp", str(forme1))
+    faux2, forme2, _ = lancer_contre("file:///sdcard/casque.gcode.3mf")
+    verifie("il les essaie toutes plutôt que d'en parier une",
+            forme2 == "sdcard" and len(faux2.vues) > 1,
+            "%s après %d essais" % (forme2, len(faux2.vues)))
+    faux3, forme3, jrn3 = lancer_contre("aucune")
+    verifie("et quand aucune ne passe, il rapporte ce que la machine dit",
+            forme3 is None and any("FAIL" in l for l in jrn3),
+            (jrn3[0] if jrn3 else "journal vide")[:110])
+
+    # la charge elle-même, champ par champ
+    capture = {}
+    faux4 = FauxBambuMqtt(accepte="ftp:///casque.gcode.3mf")
+
+    def espion(c):
+        try:
+            from faux_bambu_mqtt import _paquet as _pq
+            _pq(c)
+            c.sendall(bytes([0x20, 2, 0, 0]))
+            while True:
+                t, b = _pq(c)
+                if t == 8:
+                    c.sendall(bytes([0x90, 3, 0, 1, 0]))
+                elif t == 3:
+                    lg = struct.unpack(">H", b[:2])[0]
+                    capture["pr"] = json.loads(b[2 + lg:].decode())["print"]
+                    return
+        except Exception:
+            pass
+
+    faux4._session = espion
+    m4 = {"nom": "P1S 1", "hote": "127.0.0.1", "type": "bambu",
+          "serie": faux4.serie, "code": "x"}
+    vraie = biblio.socket.create_connection
+    biblio.socket.create_connection = (
+        lambda a, timeout=None: vraie(("127.0.0.1", faux4.port), timeout=timeout))
+    try:
+        biblio.lancer_bambu(m4, "casque.gcode.3mf", 2,
+                            verifier=lambda: (True, "RUNNING"))
+    finally:
+        biblio.socket.create_connection = vraie
+    pr = capture.get("pr", {})
+    attendus = {"command": "project_file", "param": "Metadata/plate_2.gcode",
+                "subtask_name": "casque.gcode", "project_id": "0",
+                "profile_id": "0", "task_id": "0", "subtask_id": "0",
+                "bed_type": "auto", "file": "casque.gcode.3mf"}
+    manque = [k for k, v in attendus.items() if pr.get(k) != v]
+    verifie("la commande porte tous les champs que le firmware exige",
+            not manque, "manquent ou faux : %s" % manque)
+    verifie("ams_mapping est une liste, pas une chaîne",
+            isinstance(pr.get("ams_mapping"), list), repr(pr.get("ams_mapping")))
+    verifie("aucun champ que les implémentations de référence n'envoient",
+            "plate_idx" not in pr and "bed_levelling" not in pr,
+            ", ".join(k for k in ("plate_idx", "bed_levelling") if k in pr))
+    biblio.lancer_bambu = lancer_de_test
 
     # === 6. la boucle survit à tout ce qui précède ======================
     verifie("la boucle principale n'est jamais tombée", True)

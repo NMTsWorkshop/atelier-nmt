@@ -752,75 +752,160 @@ class _FtpImplicite(ftplib.FTP_TLS):
 # calibration que l'utilisateur n'a pas demandée. Chaque machine peut les
 # changer dans relais.json, sous « lancement », sans attendre une version
 # de l'app.
+# Alignés sur deux implémentations communautaires qui fonctionnent
+# (bambu-mcp d'Eyalm321 et de schwarztim), après avoir composé cette
+# commande de mémoire et m'être trompé sur trois champs : « ams_mapping »
+# est une LISTE et non une chaîne, « plate_idx » n'existe pas — le plateau
+# se choisit par « param » — et subtask_name est le nom SANS extension.
 DEFAUTS_LANCEMENT = {
     "timelapse": False,
-    # les deux orthographes : selon la version du firmware, la P1 attend
-    # l'une ou l'autre, et celle qu'elle ne connaît pas, elle l'ignore
     "bed_leveling": True,
-    "bed_levelling": True,
     "flow_cali": False,
     "vibration_cali": False,
     "layer_inspect": False,
-    "use_ams": True,
-    "ams_mapping": "",
     "bed_type": "auto",
 }
 
 
-def lancer_bambu(machine, nom, plateau=1):
-    """Demande à la machine d'imprimer un plateau d'un fichier déjà déposé.
+# Où la machine doit aller chercher le fichier. Deux sources communautaires
+# indépendantes donnent « ftp:///<nom> » pour un fichier posé à la racine de
+# la carte ; « file:///sdcard/… » revient aussi dans la nature. Le protocole
+# n'est documenté nulle part officiellement, alors on essaie, et on vérifie
+# après chaque tentative au lieu de parier.
+URLS_LANCEMENT = (
+    ("ftp", "ftp:///%s"),
+    ("ftp-cache", "ftp:///cache/%s"),
+    ("sdcard", "file:///sdcard/%s"),
+    ("mnt-sdcard", "file:///mnt/sdcard/%s"),
+)
 
-    Si un seul champ ne lui plaît pas, la machine ignore la commande sans
-    rien dire : le fichier reste sur sa carte et se lance à la main. C'est
-    le pire cas, et il est sans conséquence."""
+
+def _mqtt_dialogue(machine, charge, ecoute=4.0):
+    """Publie un ordre et écoute ce que la machine répond.
+
+    Une P1 qui écarte une commande ne répond pas toujours, mais quand elle
+    répond c'est la seule chose qui dise pourquoi. Sans cette écoute on en
+    était réduit à deviner — ce qui nous a coûté plusieurs versions."""
     from relais_atelier import _mqtt_longueur, _mqtt_texte, _paquet
-
-    reglages = dict(DEFAUTS_LANCEMENT)
-    reglages.update(machine.get("lancement") or {})
-    idx = max(1, int(plateau or 1))
-
-    # Le firmware des P1 exige ces quatre identifiants pour une impression
-    # partie de la carte, même s'ils ne valent rien : sans eux il écarte la
-    # commande sans un mot. C'est précisément le « la machine ignore la
-    # commande sans rien dire » du commentaire ci-dessus — sauf que ce
-    # n'était pas une fatalité, il manquait des champs.
-    ordre = {"print": dict(reglages,
-                           sequence_id=str(int(time.time()) % 100000),
-                           command="project_file",
-                           param="Metadata/plate_%d.gcode" % idx,
-                           subtask_name=nom,
-                           plate_idx=idx - 1,
-                           project_id="0",
-                           profile_id="0",
-                           task_id="0",
-                           subtask_id="0",
-                           # on dépose à la racine de la carte, c'est là que
-                           # l'écran de la machine va les chercher
-                           url="file:///sdcard/%s" % nom)}
 
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     s = ctx.wrap_socket(socket.create_connection((machine["hote"], 8883), timeout=10))
+    dits = []
     try:
         tete = _mqtt_texte("MQTT") + bytes([4, 0xC2]) + struct.pack(">H", 30)
-        corps = (_mqtt_texte("relais-envoi-%d" % int(time.time()))
+        corps = (_mqtt_texte("relais-envoi-%d" % int(time.time() * 1000 % 100000))
                  + _mqtt_texte("bblp") + _mqtt_texte(machine.get("code") or ""))
         s.sendall(bytes([0x10]) + _mqtt_longueur(len(tete + corps)) + tete + corps)
         t, b = _paquet(s)
         if t != 2 or b[1] != 0:
             raise Exception("refusée par la machine — code d'accès LAN ou numéro de série")
 
-        charge = json.dumps(ordre, ensure_ascii=False).encode("utf-8")
-        pub = _mqtt_texte("device/%s/request" % machine["serie"]) + charge
+        serie = machine.get("serie") or ""
+        if serie:
+            pq = _mqtt_texte("device/%s/report" % serie) + bytes([0])
+            s.sendall(bytes([0x82]) + _mqtt_longueur(2 + len(pq))
+                      + struct.pack(">H", 1) + pq)
+            try:
+                _paquet(s)                      # SUBACK
+            except Exception:
+                pass
+
+        pub = _mqtt_texte("device/%s/request" % serie) + charge
         s.sendall(bytes([0x30]) + _mqtt_longueur(len(pub)) + pub)
-        time.sleep(0.8)          # laisser le paquet partir avant de raccrocher
+
+        s.settimeout(1.5)
+        fin = time.time() + ecoute
+        while time.time() < fin:
+            try:
+                t, b = _paquet(s)
+            except Exception:
+                continue
+            if t != 3:
+                continue
+            try:
+                lg = struct.unpack(">H", b[:2])[0]
+                msg = json.loads(b[2 + lg:].decode("utf-8", "replace"))
+            except Exception:
+                continue
+            pr = msg.get("print") or {}
+            # ce qui nous intéresse : une réponse à NOTRE commande
+            if pr.get("command") in ("project_file", "gcode_file") or "result" in pr:
+                dits.append({k: pr.get(k) for k in
+                             ("command", "result", "reason", "errno", "param",
+                              "sequence_id", "gcode_state")
+                             if pr.get(k) is not None})
+            elif pr.get("gcode_state"):
+                dits.append({"gcode_state": pr.get("gcode_state"),
+                             "subtask_name": pr.get("subtask_name")})
     finally:
         try:
             s.close()
         except Exception:
             pass
-    return idx
+    return dits
+
+
+def lancer_bambu(machine, nom, plateau=1, verifier=None):
+    """Demander à la machine d'imprimer un plateau d'un fichier déjà déposé.
+
+    On essaie les formes d'adresse connues l'une après l'autre, en
+    vérifiant après chacune : le firmware écarte en silence une commande
+    dont un champ ne lui convient pas, et rien ne dit laquelle il attend.
+    La forme qui marche est renvoyée pour qu'on la retienne."""
+    reglages = dict(DEFAUTS_LANCEMENT)
+    reglages.update(machine.get("lancement") or {})
+    idx = max(1, int(plateau or 1))
+
+    # Sans AMS, la machine attend use_ams faux et la liste [255]. Annoncer
+    # un AMS qu'elle n'a pas fait écarter la commande — et « ams_mapping »
+    # est une liste : une chaîne vide suffisait à la faire refuser.
+    if "use_ams" in reglages:
+        avec_ams = bool(reglages.pop("use_ams"))
+    else:
+        avec_ams = bool(machine.get("ams"))
+    mapping = reglages.pop("ams_mapping", None)
+    if not isinstance(mapping, list):
+        mapping = [0] if avec_ams else [255]
+
+    # une forme déjà connue pour cette machine passe en premier
+    formes = list(URLS_LANCEMENT)
+    prefere = (machine.get("lancement") or {}).get("url_forme")
+    if prefere:
+        formes.sort(key=lambda f: 0 if f[0] == prefere else 1)
+
+    journal = []
+    for nom_forme, gabarit in formes:
+        ordre = {"print": dict(
+            reglages,
+            sequence_id=str(int(time.time()) % 100000),
+            command="project_file",
+            param="Metadata/plate_%d.gcode" % idx,
+            subtask_name=os.path.splitext(nom)[0],
+            project_id="0", profile_id="0", task_id="0", subtask_id="0",
+            file=nom, md5="",
+            use_ams=avec_ams, ams_mapping=mapping,
+            url=gabarit % nom)}
+        # « lancement » sert à régler l'impression, pas à décrire l'adresse
+        ordre["print"].pop("url_forme", None)
+
+        charge = json.dumps(ordre, ensure_ascii=False).encode("utf-8")
+        dits = _mqtt_dialogue(machine, charge)
+        for d in dits:
+            journal.append("%s: %s" % (nom_forme, json.dumps(d, ensure_ascii=False)))
+
+        refus = [d for d in dits if str(d.get("result", "")).upper() in ("FAIL", "ERROR")]
+        if refus:
+            continue                      # la machine a dit non : forme suivante
+        if verifier is None:
+            return nom_forme, journal
+        parti, dit = verifier()
+        journal.append("%s -> %s" % (nom_forme, dit))
+        if parti:
+            return nom_forme, journal
+
+    return None, journal
 
 
 # Le canal de contrôle reste inactif pendant toute la copie, puis doit
@@ -1003,18 +1088,19 @@ def pousser_bambu(machine, chemin, nom, lancer, plateau=1, progres=None,
 
     envoi_fige(ident)
     try:
-        lancer_bambu(machine, nom, plateau)
+        forme, journal = lancer_bambu(machine, nom, plateau,
+                                      verifier=lambda: _a_demarre(machine, nom))
     except Exception as e:
         # le fichier EST sur la carte : le compter comme un échec ferait
         # renvoyer cent mégas pour rien. Seul le démarrage a raté, et il se
         # fait à la main depuis l'écran de la machine.
         raise DeposeSansLancement(str(e))
-    # une P1 qui écarte une commande ne répond rien : sans relire son état,
-    # on annonçait « lancé » sans rien en savoir
-    parti, dit = _a_demarre(machine, nom)
-    if not parti:
-        raise DeposeSansLancement("la machine n'a pas démarré (elle dit : %s)"
-                                  % (dit or "rien"))
+    if not forme:
+        raise DeposeSansLancement("la machine n'a pas démarré. Ce qu'elle "
+                                  "répond : %s" % (" | ".join(journal[-3:])
+                                                   or "rien du tout"))
+    print("%s — %s lancé sur %s (adresse « %s »)"
+          % (time.strftime("%H:%M:%S"), nom, machine.get("nom"), forme), flush=True)
     return "lancé"
 
 
@@ -1096,15 +1182,17 @@ def lancer_seul(biblio, machines, nom_machine, chemin_relatif, plateau=1,
 
     if machine["type"] == "moonraker":
         lancer_moonraker(machine, nom)
+        parti, dit = _a_demarre(machine, nom)
     else:
-        lancer_bambu(machine, nom, plateau)
-
-    parti, dit = _a_demarre(machine, nom)
+        forme, journal = lancer_bambu(machine, nom, plateau,
+                                      verifier=lambda: _a_demarre(machine, nom))
+        parti = bool(forme)
+        dit = (" | ".join(journal[-3:]) or "rien du tout") if not parti else forme
     if not parti:
         raise ValueError(
-            "%s a reçu la demande mais n'a pas démarré (elle dit : %s). "
-            "Le fichier est sur sa carte : tu peux le lancer depuis son "
-            "écran." % (machine.get("nom"), dit or "rien"))
+            "%s a reçu la demande mais n'a pas démarré. Ce qu'elle répond : "
+            "%s. Le fichier est sur sa carte : tu peux le lancer depuis son "
+            "écran." % (machine.get("nom"), dit))
 
     noter_lancement(machine.get("nom"), chemin_relatif, plateau, nom)
     biblio.noter({"at": int(time.time() * 1000), "machine": machine.get("nom"),
