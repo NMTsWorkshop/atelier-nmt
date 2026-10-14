@@ -27,6 +27,9 @@ jobs:
       - name: Le relais compile
         run: python3 -m py_compile relais/*.py
 
+      - name: Le relais démarre
+        run: python3 test/demarrage.py
+
       - name: Le relais de bout en bout
         run: python3 test/bout_en_bout.py
 

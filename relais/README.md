@@ -209,6 +209,20 @@ chaque changement, donc un seul message récent suffit — mais si le PC reste
 éteint plusieurs jours, il faut retoucher **Envoyer maintenant** dans l'app avant
 de lancer le script.
 
+## Vérifier le relais sans y toucher
+
+Trois tests tournent sans Pi ni imprimante, et à chaque envoi sur GitHub :
+
+```
+python3 test/demarrage.py      # le relais démarre et publie
+python3 test/bout_en_bout.py   # la chaîne entière, contre de fausses machines
+node test/smoke.js             # l'interface, dans un navigateur
+```
+
+Le deuxième monte un faux ntfy, un faux Moonraker, un faux Bambu (FTP et MQTT)
+et une fausse boutique Shopify, puis fait tourner la vraie boucle du relais
+contre eux.
+
 ## Quand une Bambu refuse un fichier
 
 `bambu_diag.py`, installé à côté du relais, teste chaque Bambu étape par
