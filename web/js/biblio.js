@@ -39,11 +39,11 @@ function biblioCharger(silencieux) {
     } else {
       BIB_ERREUR = (res && res.error) || 'réponse vide du relais';
     }
-    if (TAB === 'biblio') render();
+    if (TAB === 'biblio' || TAB === 'orders') render();
   }).catch(e => {
     BIB_CHARGE = false;
     BIB_ERREUR = e && e.message ? e.message : String(e);
-    if (TAB === 'biblio') render();
+    if (TAB === 'biblio' || TAB === 'orders') render();
   });
 }
 

@@ -43,6 +43,19 @@ import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # nombre d'exemplaires écrit dans le nom du fichier
+# Le rapprochement entre une commande de la boutique et ses fichiers se
+# fait par le numéro : le dossier s'appelle « 1045 Mando » ou « 1047 », la
+# commande Shopify « #1045 ». C'est la convention déjà en place, et elle
+# évite d'avoir à rattacher chaque fichier à la main.
+NUMERO_COMMANDE = re.compile(r"(?<!\d)(\d{3,})(?!\d)")
+
+
+def numero_commande(texte):
+    """« 1045 Mando » → « 1045 », « #1047 » → « 1047 », sinon ''."""
+    m = NUMERO_COMMANDE.search(str(texte or ""))
+    return m.group(1) if m else ""
+
+
 EXEMPLAIRES = re.compile(r"[ _(\[-]x\s*(\d{1,3})\b", re.I)
 
 # ce qu'on accepte de lister
@@ -330,7 +343,17 @@ class Bibliotheque(object):
             "reste": sum(p["reste"] for p in sorties),
             "dernier": max([p["dernier"] for p in sorties] or [0]),
             "machines": [m for p in sorties for m in p["machines"]],
+            # « minutes » et « grammes » sont pour UN passage de chaque
+            # plateau — c'est ce que l'écran affiche depuis toujours.
+            # « _total » compte les exemplaires voulus, « _reste » ce qui
+            # n'est pas encore sorti : c'est ce dernier qui sert à calculer
+            # un délai de fabrication.
             "minutes": sum(p["minutes"] for p in sorties),
+            "grammes": sum(p["grammes"] for p in sorties),
+            "minutes_total": sum(p["minutes"] * p["exemplaires"] for p in sorties),
+            "grammes_total": sum(p["grammes"] * p["exemplaires"] for p in sorties),
+            "minutes_reste": sum(p["minutes"] * p["reste"] for p in sorties),
+            "grammes_reste": sum(p["grammes"] * p["reste"] for p in sorties),
         }
 
     def _commandes(self, fichiers):
@@ -343,12 +366,26 @@ class Bibliotheque(object):
             c = par_nom.setdefault(f["commande"], {
                 "nom": f["commande"], "fichiers": 0, "familles": [],
                 "plateaux": 0, "faits": 0, "reste": 0, "minutes": 0,
+                "grammes": 0, "minutes_total": 0, "grammes_total": 0,
+                "minutes_reste": 0, "grammes_reste": 0,
+                "par_famille": {},
                 "dernier": 0, "chemins": [], "encours": 0, "refaire": 0})
             c["fichiers"] += 1
             c["plateaux"] += sum(p["exemplaires"] for p in f["plateaux"])
             c["faits"] += f["faits"]
             c["reste"] += f["reste"]
             c["minutes"] += f["minutes"]
+            c["grammes"] += f["grammes"]
+            for cle in ("minutes_total", "grammes_total",
+                        "minutes_reste", "grammes_reste"):
+                c[cle] += f[cle]
+            # le délai se calcule par famille de machines : ce qui reste à
+            # sortir sur les K2 n'attend pas ce qui reste sur les Bambu
+            fam = c["par_famille"].setdefault(
+                f["famille"], {"minutes_reste": 0, "grammes_reste": 0, "reste": 0})
+            fam["minutes_reste"] += f["minutes_reste"]
+            fam["grammes_reste"] += f["grammes_reste"]
+            fam["reste"] += f["reste"]
             c["dernier"] = max(c["dernier"], f["dernier"])
             c["chemins"].append(f["chemin"])
             if f.get("encours"):
@@ -360,6 +397,7 @@ class Bibliotheque(object):
         sorties = []
         for c in par_nom.values():
             c["termine"] = c["reste"] == 0
+            c["numero"] = numero_commande(c["nom"])
             sorties.append(c)
         sorties.sort(key=lambda c: (c["termine"], c["nom"].lower()))
         return sorties
@@ -1558,14 +1596,97 @@ PLATEAU_IMAGE = re.compile(r"(?:^|/)Metadata/plate_(\d+)(?:_small)?\.png$", re.I
 _CACHE_PLATEAUX = {}
 
 
+# Un gcode tranché porte son temps et son poids en commentaires d'en-tête,
+# mais chaque trancheur les écrit à sa façon. On lit les formes des trois
+# qu'il utilise : OrcaSlicer et Bambu Studio (dérivés de PrusaSlicer),
+# Creality Print, et Cura.
+TEMPS_GCODE = (
+    # « ; estimated printing time (normal mode) = 1d 3h 59m 12s »
+    (re.compile(r";\s*estimated printing time[^=]*=\s*([^\r\n]+)", re.I), "duree"),
+    # « ;TIME:14352 » (Cura), « ; total estimated time: 3600 »
+    (re.compile(r";\s*TIME\s*:\s*(\d+)", re.I), "secondes"),
+    (re.compile(r";\s*total estimated time[^:=]*[:=]\s*([\d.]+)", re.I), "secondes"),
+    (re.compile(r";\s*print_time\s*[:=]\s*([\d.]+)", re.I), "secondes"),
+)
+
+POIDS_GCODE = (
+    # « ; filament used [g] = 123.45 », « ;Filament used: 12.3m »
+    re.compile(r";\s*filament used \[g\]\s*=\s*([\d.]+)", re.I),
+    re.compile(r";\s*total filament used \[g\]\s*=\s*([\d.]+)", re.I),
+    re.compile(r";\s*filament_weight\w*\s*[:=]\s*([\d.]+)", re.I),
+    re.compile(r";\s*filament used weight\s*[:=]\s*([\d.]+)", re.I),
+)
+
+DUREE_TEXTE = re.compile(r"(\d+(?:\.\d+)?)\s*([dhms])", re.I)
+
+
+def _duree_en_minutes(texte):
+    """« 1d 3h 59m 12s » → minutes. Les trancheurs écrivent aussi bien
+    « 3h59m » que « 3 h 59 m », d'où la lecture morceau par morceau."""
+    total = 0.0
+    vu = False
+    for valeur, unite in DUREE_TEXTE.findall(texte):
+        vu = True
+        n = float(valeur)
+        u = unite.lower()
+        total += n * (1440 if u == "d" else 60 if u == "h" else 1 if u == "m" else 1 / 60.0)
+    return int(round(total)) if vu else 0
+
+
+def _entetes_gcode(chemin, octets=65536):
+    """Le début ET la fin du fichier : PrusaSlicer et ses dérivés écrivent
+    leur récapitulatif à la fin, Cura au début. Lire les deux bouts coûte
+    deux lectures de 64 ko, quelle que soit la taille du fichier — et ils
+    font cent quarante mégas."""
+    morceaux = []
+    try:
+        with open(chemin, "rb") as f:
+            morceaux.append(f.read(octets))
+            taille = os.path.getsize(chemin)
+            if taille > octets * 2:
+                f.seek(-octets, os.SEEK_END)
+                morceaux.append(f.read(octets))
+    except OSError:
+        return ""
+    return b"\n".join(morceaux).decode("utf-8", "replace")
+
+
+def _plateau_gcode(chemin):
+    """Un gcode simple est un plateau unique. On y lit ce qu'on peut :
+    jusqu'ici le relais rendait toujours zéro, ce qui privait de temps et
+    de poids tous les fichiers des Creality."""
+    texte = _entetes_gcode(chemin)
+    minutes = 0
+    for motif, genre in TEMPS_GCODE:
+        m = motif.search(texte)
+        if not m:
+            continue
+        minutes = (_duree_en_minutes(m.group(1)) if genre == "duree"
+                   else int(round(float(m.group(1)) / 60.0)))
+        if minutes:
+            break
+    grammes = 0
+    for motif in POIDS_GCODE:
+        m = motif.search(texte)
+        if m:
+            grammes = int(round(float(m.group(1))))
+            if grammes:
+                break
+    if not minutes:
+        # dernier recours : certains exports portent la durée dans leur nom
+        # (« Assemble_PETG_1d3h59m.gcode »)
+        minutes = _duree_en_minutes(os.path.basename(chemin))
+    return {"idx": 1, "minutes": minutes, "grammes": grammes,
+            "objets": [], "vignette": ""}
+
+
 def plateaux(chemin):
-    """[{idx, minutes, grammes, objets, vignette}] pour un 3mf, [] sinon.
+    """[{idx, minutes, grammes, objets, vignette}] — un seul élément pour un
+    gcode simple, un par plateau pour un 3mf.
 
     Le résultat est gardé tant que le fichier ne bouge pas : ouvrir chaque
     zip à chaque listage rendrait l'écran lent dès quelques dizaines de
     fichiers."""
-    if not chemin.lower().endswith(".3mf"):
-        return []
     try:
         st = os.stat(chemin)
     except OSError:
@@ -1574,6 +1695,11 @@ def plateaux(chemin):
     garde = _CACHE_PLATEAUX.get(chemin)
     if garde and garde[0] == cle:
         return garde[1]
+
+    if not chemin.lower().endswith(".3mf"):
+        out = [_plateau_gcode(chemin)]
+        _CACHE_PLATEAUX[chemin] = (cle, out)
+        return out
 
     trouves = {}
     try:
@@ -1830,7 +1956,7 @@ def _pousser_a_part(biblio, machines, machine, chemin, lancer, plateau=1,
     oublier_publication()
 
 
-def appliquer_ordre(biblio, ordre, jeton, machines=None):
+def appliquer_ordre(biblio, ordre, jeton, machines=None, vitrine=None):
     """Renvoie une phrase pour le journal, ou None si l'ordre est écarté."""
     ident = ordre.get("id")
     if not ident or ident in ORDRES_VUS:
@@ -1881,6 +2007,21 @@ def appliquer_ordre(biblio, ordre, jeton, machines=None):
             dit = "plateau %s de %s : %s" % (
                 ordre.get("plateau"), os.path.basename(chemin),
                 "fait" if ordre.get("fait", True) else "remis à faire")
+            accuser(ident, True, dit)
+            return dit
+        if quoi == "vitrine":
+            # ce que l'app décide de ce que la boutique affiche : le statut
+            # peinture et la marge du délai. Le relais n'invente rien ici,
+            # il range et republie à sa prochaine heure.
+            if vitrine is None:
+                return "réglage de vitrine reçu, mais le relais n'écrit pas dans la boutique"
+            etat = vitrine.regler(
+                peinture_ouverte=ordre.get("peinture_ouverte"),
+                peinture_jours=ordre.get("peinture_jours"),
+                marge=ordre.get("marge"))
+            dit = ("peinture %s, délai peinture %s j, marge %s j"
+                   % ("ouverte" if etat["peinture"]["ouverte"] else "fermée",
+                      etat["peinture"]["jours"], etat["marge"]))
             accuser(ident, True, dit)
             return dit
         if quoi == "lancer":

@@ -839,6 +839,141 @@ const errors = [];
     await page.evaluate(() => closeSheet());
   });
 
+  console.log('\n— délai annoncé dans la boutique —');
+
+  await page.evaluate(() => {
+    window.NMT = Object.assign(window.NMT || {}, {
+      relayTopic: () => 'nmt-test',
+      saveRelay: () => {},
+      relayVitrine: (id) => setTimeout(() => window.NMTcb(id, JSON.stringify({
+        jours: 3, heures: 60, par_famille: { k2: 48, p1s: 12 },
+        machines: { k2: 2, p1s: 2 }, marge: 1, commandes: 4,
+        sans_fichier: ['#1051'],
+        peinture: { ouverte: false, jours: 5 },
+        envoye_at: Date.now() - 600000, boutique: ''
+      })), 10),
+      biblioVitrine: (ouverte, jours, marge, id) => {
+        window.__vitrine = [ouverte, jours, marge];
+        setTimeout(() => window.NMTcb(id,
+          '{"ok":true,"differe":true,"id":"v1"}'), 10);
+      },
+      /* une étape plus haut l'a laissé sur « jamais fini » : ici le relais
+         répond, c'est justement ce qu'on vérifie */
+      biblioAck: (ident, id) => setTimeout(() => window.NMTcb(id, JSON.stringify({
+        id: ident, ok: true,
+        dit: 'peinture ouverte, délai peinture 7 j, marge 2 j'
+      })), 10)
+    });
+    VITRINE_VUE = null; VITRINE_DEMANDEE = false;
+    Biblio.cadence = { premier: 200, ensuite: 200, duree: 4000 };
+  });
+
+  await step('l\'écran montre le délai que le relais annonce', async () => {
+    await page.click('#tabbar .tab[data-tab=settings]');
+    await page.waitForFunction(() => /Délai calculé/.test(
+      (document.getElementById('view') || {}).textContent || ''), null, { timeout: 5000 });
+    const txt = await page.textContent('#view');
+    if (!/3 jours/.test(txt)) throw new Error('délai absent : ' + txt.slice(0, 200));
+    if (!/dont 1 de marge/.test(txt)) throw new Error('marge non dite');
+    if (!/Creality K2 Plus 48 h/.test(txt)) throw new Error('détail par famille absent');
+    if (!/1051/.test(txt)) throw new Error('commande sans fichier non signalée');
+  });
+
+  await step('et le réglage part au relais tel qu\'il est saisi', async () => {
+    await page.selectOption('[name=paintingOpen]', '1');
+    await page.fill('[name=paintingDays]', '7');
+    await page.fill('[name=leadMargin]', '2');
+    await page.click('button[onclick="envoyerVitrine()"]');
+    await page.waitForFunction(() => !!window.__vitrine, null, { timeout: 5000 });
+    const vu = await page.evaluate(() => window.__vitrine);
+    if (vu[0] !== true || vu[1] !== 7 || vu[2] !== 2)
+      throw new Error('réglage envoyé faux : ' + JSON.stringify(vu));
+  });
+
+  await step('il attend l\'accusé du relais avant de dire que c\'est fait', async () => {
+    await page.waitForFunction(() => /Pris en compte/.test(
+      (document.getElementById('vitrine-out') || {}).textContent || ''), null, { timeout: 6000 });
+    const dit = await page.textContent('#vitrine-out');
+    if (!/marge 2 j/.test(dit)) throw new Error('le relais dit autre chose : ' + dit);
+  });
+
+  await step('sans jeton de boutique, le relais le dit sur l\'écran', async () => {
+    await page.evaluate(() => {
+      window.NMT.relayVitrine = (id) => setTimeout(() => window.NMTcb(id, JSON.stringify({
+        jours: 2, par_famille: {}, marge: 0, commandes: 1, sans_fichier: [],
+        peinture: { ouverte: true, jours: 0 }, envoye_at: 0,
+        boutique: 'shopify.jeton est resté à A-REMPLIR dans relais.json'
+      })), 10);
+      vitrineAuBesoin(true);
+    });
+    await page.waitForFunction(() => /A-REMPLIR/.test(
+      (document.getElementById('view') || {}).textContent || ''), null, { timeout: 5000 });
+    const txt = await page.textContent('#view');
+    if (!/pas envoyé/.test(txt)) throw new Error('la cause n\'est pas dite : ' + txt.slice(0, 200));
+    if (!/jamais/.test(txt)) throw new Error('« dernière écriture » devrait dire jamais');
+  });
+
+  await page.evaluate(() => {
+    Biblio.cadence = { premier: 20000, ensuite: 60000, duree: 900000 };
+  });
+
+  console.log('\n— commandes expédiées —');
+
+  await page.evaluate(() => {
+    DB.orders = [
+      { id: 'o1', shopifyId: 'gid://shopify/Order/1', name: '#1045', status: 'done',
+        source: 'shopify', createdAt: Date.now() - 86400000, grams: 0, used: 0,
+        lines: [{ id: 'l1', title: 'Casque', qty: 1, done: false }] },
+      { id: 'o2', shopifyId: 'gid://shopify/Order/2', name: '#1046', status: 'todo',
+        source: 'shopify', createdAt: Date.now(), grams: 0, used: 0,
+        lines: [{ id: 'l2', title: 'Socle', qty: 1, done: false }] },
+      { id: 'o3', name: 'M-o3', status: 'todo', source: 'manuel',
+        createdAt: Date.now(), grams: 0, used: 0, lines: [] }
+    ];
+    DB.settings.shop = 'x.myshopify.com';
+    DB.settings.token = 'shpat_x';
+    DB.settings.apiVersion = '2026-04';
+    save();
+    window.__requetes = [];
+    window.NMT.httpAsync = (method, url, entetes, corps, id) => {
+      const q = JSON.parse(corps).query;
+      window.__requetes.push(q);
+      /* la commande #1045 est traitée dans la boutique ; la seconde revient
+         vide, comme Shopify le fait au-delà de soixante jours sans
+         l'autorisation read_all_orders : on ne doit rien en conclure */
+      const rep = /nodes\(ids/.test(q)
+        ? { data: { nodes: [
+            { id: 'gid://shopify/Order/1', displayFulfillmentStatus: 'FULFILLED' },
+            null] } }
+        : { data: { orders: { edges: [] } } };
+      setTimeout(() => window.NMTcb(id, JSON.stringify({
+        ok: true, status: 200, body: JSON.stringify(rep) })), 10);
+    };
+  });
+
+  await step('une commande traitée dans la boutique passe en expédiée', async () => {
+    await page.evaluate(() => syncShopify());
+    await page.waitForFunction(() => (DB.orders.find(o => o.id === 'o1') || {}).status
+      === 'shipped', null, { timeout: 8000 });
+    const o = await page.evaluate(() => DB.orders.find(x => x.id === 'o1'));
+    if (!(o.lines || []).every(l => l.done))
+      throw new Error('ses lignes ne sont pas toutes faites');
+  });
+
+  await step('une commande dont la boutique ne dit rien reste intacte', async () => {
+    const o = await page.evaluate(() => DB.orders.find(x => x.id === 'o2'));
+    if (o.status !== 'todo') throw new Error('conclut sans réponse : ' + o.status);
+  });
+
+  await step('les commandes à la main ne sont pas interrogées', async () => {
+    const qs = await page.evaluate(() => window.__requetes.join(' | '));
+    const ids = await page.evaluate(() => window.__requetes
+      .filter(q => /nodes\(ids/.test(q)).length);
+    if (!ids) throw new Error('aucune vérification d\'expédition : ' + qs);
+    const envoyes = await page.evaluate(() => DB.orders.length);
+    if (envoyes !== 3) throw new Error('la liste a changé de taille');
+  });
+
   for (const t of ['machines', 'stock', 'biblio', 'orders', 'profiles']) {
     await page.click(`#tabbar .tab[data-tab=${t}]`);
     await page.waitForTimeout(250);

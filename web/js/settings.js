@@ -89,6 +89,71 @@ function renderSettings() {
       '</div>';
   }
 
+  /* ---- délai annoncé dans la boutique ---- */
+  if (sujet) {
+    vitrineAuBesoin();
+    const v = VITRINE_VUE;
+    const p = (v && v.peinture) || {};
+    const ouverte = p.ouverte !== false;
+    const jours = p.jours || 0;
+    const marge = (v && v.marge) || 0;
+    const fam = (v && v.par_famille) || {};
+    const detail = Object.keys(fam).sort()
+      .map(f => familleLabel(f) + ' ' + Math.round(fam[f]) + ' h').join(' · ');
+
+    out += '<div class="sec-title">Délai annoncé dans la boutique</div>' +
+      '<div class="card">' +
+        '<div class="hint" style="margin-bottom:10px">Le relais additionne ce qu\'il reste ' +
+          'à imprimer, le répartit sur les machines de chaque famille, et écrit le délai ' +
+          'sur la boutique. Les machines tournent jour et nuit, et les deux familles ' +
+          'travaillent en parallèle : c\'est la plus chargée qui donne le délai.<br><br>' +
+          'Le jeton qui écrit dans la boutique reste sur le Pi : le téléphone envoie une ' +
+          'décision, jamais une écriture.</div>' +
+        (v === null
+          ? '<div class="hint">Lecture du relais…</div>'
+          : (v.jours === undefined
+            ? '<div class="warn-box">Le relais n\'a pas encore publié de délai. ' +
+              'Il le calcule à son premier tour, puis une fois par heure.</div>'
+            : '<div class="kv"><span>Délai calculé</span><b class="mono">' +
+                v.jours + (v.jours > 1 ? ' jours' : ' jour') +
+                (v.marge ? ' (dont ' + v.marge + ' de marge)' : '') + '</b></div>' +
+              (detail ? '<div class="kv"><span>À sortir</span><b class="mono">' +
+                esc(detail) + '</b></div>' : '') +
+              '<div class="kv"><span>Commandes comptées</span><b class="mono">' +
+                (v.commandes || 0) + '</b></div>' +
+              '<div class="kv"><span>Dernière écriture</span><b class="mono">' +
+                (v.envoye_at ? fmtDayClock(v.envoye_at) : 'jamais') + '</b></div>')) +
+        (v && v.boutique
+          ? '<div class="warn-box">Le délai est calculé mais pas envoyé : ' +
+            esc(v.boutique) + '</div>' : '') +
+        (v && (v.sans_fichier || []).length
+          ? '<div class="warn-box">Aucun fichier dans la bibliothèque pour ' +
+            esc((v.sans_fichier || []).join(', ')) + ' : ces commandes ne comptent pas ' +
+            'dans le délai.</div>' : '') +
+        '<div class="sp"></div>' +
+        '<label class="field"><span>Peinture</span>' +
+          '<select name="paintingOpen">' +
+            '<option value="1"' + (ouverte ? ' selected' : '') + '>Ouverte</option>' +
+            '<option value="0"' + (ouverte ? '' : ' selected') + '>Fermée</option>' +
+          '</select>' +
+          '<div class="hint">Fermée, la boutique annonce que la peinture n\'est pas ' +
+            'proposée en ce moment.</div>' +
+        '</label>' +
+        '<label class="field"><span>Délai peinture (jours)</span>' +
+          '<input type="number" name="paintingDays" min="0" max="120" value="' + jours + '">' +
+        '</label>' +
+        '<label class="field"><span>Marge sur le délai (jours)</span>' +
+          '<input type="number" name="leadMargin" min="0" max="60" value="' + marge + '">' +
+          '<div class="hint">Ajoutés au délai calculé, pour ne pas promettre au plus juste.</div>' +
+        '</label>' +
+        '<div class="btn-row">' +
+          '<button class="btn primary" onclick="envoyerVitrine()">Envoyer au relais</button>' +
+          '<button class="btn" onclick="vitrineAuBesoin(true)">Relire</button>' +
+        '</div>' +
+        '<div class="hint" id="vitrine-out" style="margin-top:9px">' + VITRINE_DIT + '</div>' +
+      '</div>';
+  }
+
   /* ---- notifications ---- */
   out += '<div class="sec-title">Notifications</div>' +
     '<div class="card">' +
@@ -344,6 +409,41 @@ function envoyerCompta() {
     .catch(e => {
       toast('Échec — ' + e.message, 'bad');
       if (out) out.innerHTML = '<span style="color:var(--bad)">Échec — ' + esc(e.message) + '</span>';
+    });
+}
+
+function envoyerVitrine() {
+  const ouverte = ($('[name=paintingOpen]') || {}).value === '1';
+  const jours = Math.max(0, num(($('[name=paintingDays]') || {}).value));
+  const marge = Math.max(0, num(($('[name=leadMargin]') || {}).value));
+
+  vitrineDire('Envoi au relais…');
+  Relais.reglerVitrine(ouverte, jours, marge)
+    .then(r => {
+      if (!r || !r.ok) throw new Error((r && r.error) || 'refusé');
+      /* l'ordre part par le canal : le relais l'applique à son tour suivant,
+         et accuse. On attend cet accusé plutôt que de dire « c'est fait ». */
+      vitrineDire('<span style="color:var(--txt-3)">Envoyé. Le relais ' +
+        'l\'applique dans la minute…</span>');
+      toast('Envoyé au relais', 'ok');
+      if (!r.id) return;
+      Biblio.suivreOrdre(r.id).then(a => {
+        if (a && a.ok) {
+          vitrineDire('<span style="color:var(--ok)">Pris en compte : ' +
+            esc(a.dit || '') + '</span>');
+          /* on relit ce que le relais annonce : l'écran doit montrer son
+             état, pas ce qu'on vient de taper */
+          vitrineAuBesoin(true);
+          toast('Le relais a pris en compte', 'ok');
+        } else {
+          vitrineDire('<span style="color:var(--bad)">Pas de réponse du relais — ' +
+            esc((a && a.dit) || 'réessaie') + '</span>');
+        }
+      }).catch(() => {});
+    })
+    .catch(e => {
+      toast('Échec — ' + e.message, 'bad');
+      vitrineDire('<span style="color:var(--bad)">Échec — ' + esc(e.message) + '</span>');
     });
 }
 

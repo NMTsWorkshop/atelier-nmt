@@ -540,6 +540,32 @@ public class Bridge {
     }
 
     @JavascriptInterface
+    public void biblioVitrine(final boolean peintureOuverte, final int peintureJours,
+                              final int marge, final String cbId) {
+        new Thread(new Runnable() {
+            public void run() {
+                callBack(cbId, Biblio.vitrine(act, peintureOuverte, peintureJours,
+                        marge).toString());
+            }
+        }).start();
+    }
+
+    @JavascriptInterface
+    public void relayVitrine(final String cbId) {
+        new Thread(new Runnable() {
+            public void run() {
+                String payload;
+                try {
+                    payload = Relay.vitrine(act).toString();
+                } catch (Throwable t) {
+                    payload = "{}";
+                }
+                callBack(cbId, payload);
+            }
+        }).start();
+    }
+
+    @JavascriptInterface
     public void biblioTransfers(final String cbId) {
         new Thread(new Runnable() {
             public void run() {

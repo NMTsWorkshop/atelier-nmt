@@ -36,6 +36,7 @@ fi
 sudo mkdir -p "$DOSSIER"
 sudo curl -fsSL "$BASE/relais_atelier.py" -o "$DOSSIER/relais_atelier.py"
 sudo curl -fsSL "$BASE/biblio.py" -o "$DOSSIER/biblio.py"
+sudo curl -fsSL "$BASE/commerce.py" -o "$DOSSIER/commerce.py"
 sudo curl -fsSL "$BASE/bambu_diag.py" -o "$DOSSIER/bambu_diag.py"
 sudo curl -fsSL "$BASE/relais-atelier.service" -o /etc/systemd/system/relais-atelier@.service
 sudo systemctl daemon-reload
@@ -58,7 +59,13 @@ else
       "serie": "01P09C510800409", "code": "A-REMPLIR" },
     { "nom": "P1S 2",     "type": "bambu", "hote": "10.1.3.11",
       "serie": "01P00C462500170", "code": "A-REMPLIR" }
-  ]
+  ],
+  "marge_delai": 0,
+  "shopify": {
+    "domaine": "A-REMPLIR.myshopify.com",
+    "jeton": "A-REMPLIR",
+    "version": "2026-04"
+  }
 }
 JSON
   chmod 600 "$DOSSIER/relais.json"
@@ -89,6 +96,16 @@ if not c.get("port_api"):
 if not c.get("jeton"):
     c["jeton"] = secrets.token_urlsafe(18)
     ajouts.append("jeton")
+if c.get("marge_delai") is None:
+    c["marge_delai"] = 0
+    ajouts.append("marge_delai")
+if not isinstance(c.get("shopify"), dict):
+    # Le jeton d'ecriture Shopify vit ici et nulle part ailleurs : l'app n'en
+    # a qu'un de lecture, et un telephone perdu ne doit pas emporter le droit
+    # d'ecrire dans la boutique.
+    c["shopify"] = {"domaine": "A-REMPLIR.myshopify.com",
+                    "jeton": "A-REMPLIR", "version": "2026-04"}
+    ajouts.append("shopify")
 
 if ajouts:
     with open(chemin, "w", encoding="utf-8") as f:
@@ -162,6 +179,10 @@ if grep -q "A-REMPLIR" "$DOSSIER/relais.json"; then
   echo "     nano $DOSSIER/relais.json"
   echo "   - sujet : le même que dans l'app, Réglages > Relais de l'atelier"
   echo "   - code  : le code d'accès LAN de chaque Bambu, lu sur son écran"
+  echo "   - shopify.jeton : le jeton d'écriture de la boutique (voir"
+  echo "     relais/README.md, « le jeton d'écriture Shopify »). Il reste"
+  echo "     sur ce Pi : l'app n'en a pas besoin et ne doit pas l'avoir."
+  echo "     Laissé à A-REMPLIR, le relais calcule le délai sans l'envoyer."
   echo
   echo "2. Essayer un relevé :"
   echo "     python3 $DOSSIER/relais_atelier.py --une-fois"

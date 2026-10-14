@@ -39,6 +39,7 @@ import urllib.parse
 import urllib.request
 
 import biblio as bibliotheque
+import commerce
 
 ICI = os.path.dirname(os.path.abspath(__file__))
 SERVEUR = "https://ntfy.sh/"
@@ -471,10 +472,14 @@ def publier(sujet, etats, envois=None):
     # que le relais publie de toute façon chaque minute, et une barre de
     # progression qui coûterait un message par pour-cent viderait le quota
     # de ntfy en une après-midi
-    corps = json.dumps({"v": 1, "at": int(time.time() * 1000), "machines": legers,
-                        "envois": bibliotheque.envois_publics()
-                                  if envois is None else envois},
-                       ensure_ascii=False).encode("utf-8")
+    charge = {"v": 1, "at": int(time.time() * 1000), "machines": legers,
+              "envois": bibliotheque.envois_publics()
+                        if envois is None else envois}
+    # ce que la boutique affiche voyage avec le relevé : sans ça, l'app
+    # demande à Nathan de régler un délai qu'elle ne sait pas lire
+    if VITRINE:
+        charge["vitrine"] = VITRINE
+    corps = json.dumps(charge, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(SERVEUR + sujet, data=corps, method="POST")
     req.add_header("Content-Type", "application/json")
     req.add_header("Title", "atelier")
@@ -507,6 +512,7 @@ def demarrer_api(c, machines):
             familles.append(f)
     biblio = bibliotheque.Bibliotheque(racine, familles)
     contexte = bibliotheque.Contexte(biblio, machines, c.get("jeton"))
+    commerce.SERVEUR = SERVEUR
     port = int(c.get("port_api", 8765))
     try:
         bibliotheque.servir(contexte, port)
@@ -521,6 +527,63 @@ def demarrer_api(c, machines):
     return biblio, contexte
 
 
+# La boutique n'est prévenue qu'une fois par heure : un délai de
+# fabrication ne change pas à la minute, et chaque écriture coûte du quota.
+BOUTIQUE = {"at": 0}
+
+# Le dernier calcul, gardé pour que le relevé l'emporte : l'app montre ce
+# que la boutique annonce, et d'où le chiffre vient.
+VITRINE = {}
+
+
+def prevenir_boutique(c, biblio, machines, commandes, vitrine, boutique,
+                      forcer=False):
+    """Apprendre les commandes, calculer le délai, le dire à la boutique.
+
+    Renvoie une phrase pour le journal, ou None s'il n'y avait rien à
+    faire. Toute panne est rendue telle quelle : une boutique qui affiche
+    un délai faux est pire qu'une boutique qui n'en affiche pas."""
+    lignes, at = commerce.lire_compta(c["sujet"])
+    neuves = commandes.maj(lignes, at)
+    commandes.oublier_expediees()
+
+    d = commerce.delai(commandes.en_cours(), biblio.index(), machines,
+                       bibliotheque.famille_de, vitrine.etat().get("marge", 0))
+    valeurs = vitrine.a_envoyer(d["jours"])
+
+    oui, pourquoi = vitrine.faut_envoyer(valeurs)
+    VITRINE.clear()
+    VITRINE.update({
+        "jours": d["jours"], "heures": d["heures"],
+        "par_famille": d["par_famille"], "machines": d["machines"],
+        "marge": d["marge"], "commandes": d["commandes"],
+        "sans_fichier": d["sans_fichier"],
+        "peinture": dict(vitrine.etat()["peinture"]),
+        "envoye_at": int(float(vitrine.etat().get("at") or 0) * 1000),
+        "boutique": ("" if boutique and boutique.prete()
+                     else (boutique.pourquoi_pas() if boutique
+                           else "aucune boutique configurée")),
+    })
+    if not (oui or forcer):
+        return ("%d commande(s) apprise(s), délai %d j — %s"
+                % (neuves, d["jours"], pourquoi)) if neuves else None
+    if not boutique or not boutique.prete():
+        return ("délai %d j calculé, mais pas envoyé : %s"
+                % (d["jours"],
+                   boutique.pourquoi_pas() if boutique
+                   else "aucune boutique configurée"))
+
+    valeurs["lead_time_updated_at"] = ("date_time", commerce.horodatage())
+    boutique.ecrire(valeurs)
+    vitrine.noter_envoi({k: v for k, v in valeurs.items()
+                         if k != "lead_time_updated_at"})
+    return ("boutique prévenue : délai %d j (%s) — %s"
+            % (d["jours"],
+               ", ".join("%s %.0f h" % (f, h) for f, h in sorted(d["par_famille"].items()))
+               or "rien à sortir",
+               pourquoi))
+
+
 def main():
     c = charger_reglages()
     periode = max(30, int(c.get("periode", 60)))
@@ -528,6 +591,15 @@ def main():
     unique = "--une-fois" in sys.argv
     machines = c.get("machines") or []
     biblio, contexte = demarrer_api(c, machines)
+    commandes = commerce.Commandes(os.path.join(biblio.racine, "commandes.json"))
+    vitrine = commerce.Vitrine(os.path.join(biblio.racine, "vitrine.json"))
+    sh = c.get("shopify") or {}
+    boutique = commerce.Boutique(sh.get("domaine"), sh.get("jeton"),
+                                 sh.get("version") or "2026-04")
+    if c.get("marge_delai") is not None:
+        vitrine.regler(marge=c.get("marge_delai"))
+    print("Boutique : %s" % ("%s, délai publié chaque heure" % boutique.domaine
+                             if boutique.prete() else "non configurée"), flush=True)
     # au démarrage on regarde deux heures en arrière, pour reprendre un ordre
     # publié pendant que le Pi redémarrait ; ensuite une fenêtre glissante
     derniers_ordres = "2h"
@@ -547,13 +619,30 @@ def main():
             try:
                 for ordre in lire_ordres(c["sujet"], derniers_ordres):
                     dit = bibliotheque.appliquer_ordre(biblio, ordre,
-                                                       c.get("jeton"), machines)
+                                                       c.get("jeton"), machines,
+                                                       vitrine)
                     if dit:
                         print("%s — %s" % (time.strftime("%H:%M:%S"), dit), flush=True)
                         bibliotheque.oublier_publication()
+                    if ordre.get("quoi") == "vitrine":
+                        # il vient de décider quelque chose : la boutique le
+                        # saura à ce tour-ci, pas à l'heure suivante
+                        BOUTIQUE["at"] = 0
                 derniers_ordres = "70s"
             except Exception as e:
                 print("%s — lecture des ordres impossible : %s"
+                      % (time.strftime("%H:%M:%S"), e), file=sys.stderr, flush=True)
+
+        # --- la boutique, une fois par heure -------------------------
+        if c.get("sujet") and (time.time() - BOUTIQUE["at"] >= 3600 or unique):
+            BOUTIQUE["at"] = time.time()
+            try:
+                dit = prevenir_boutique(c, biblio, machines, commandes,
+                                        vitrine, boutique, forcer=unique)
+                if dit:
+                    print("%s — %s" % (time.strftime("%H:%M:%S"), dit), flush=True)
+            except Exception as e:
+                print("%s — boutique non prévenue : %s"
                       % (time.strftime("%H:%M:%S"), e), file=sys.stderr, flush=True)
 
         oui, pourquoi = faut_publier(etats, repos)

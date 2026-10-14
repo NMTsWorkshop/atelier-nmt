@@ -239,6 +239,55 @@ function nativeCall(fn, args) {
   });
 }
 
+/* ---------- ce que la bibliothèque sait d'une commande ----------
+
+   Le rapprochement se fait par le numéro : le dossier du relais s'appelle
+   « 1045 Mando » ou « 1047 », la commande Shopify « #1045 ». C'est la
+   convention déjà en place dans l'atelier, et elle évite d'avoir à
+   rattacher chaque fichier à la main. */
+
+function numCommande(texte) {
+  const m = String(texte || '').match(/(?:^|[^\d])(\d{3,})(?!\d)/);
+  return m ? m[1] : '';
+}
+
+/* La commande de la bibliothèque qui correspond à une commande de l'app,
+   ou null. BIB est l'index publié par le relais (écran Fichiers). */
+function biblioDeCommande(o) {
+  let index = null;
+  /* BIB vit dans biblio.js, chargé après celui-ci : avant son exécution la
+     simple lecture du nom lève. D'où le try. */
+  try { index = BIB; } catch (e) { return null; }
+  if (!index || !index.commandes) { biblioAuBesoin(); return null; }
+  const n = numCommande(comptaRef(o));
+  if (!n) return null;
+  return index.commandes.find(c => (c.numero || numCommande(c.nom)) === n) || null;
+}
+
+/* L'écran des commandes a besoin de la bibliothèque, que seul l'écran
+   Fichiers chargeait jusqu'ici. On la demande une fois, en silence. */
+let BIBLIO_DEMANDEE = false;
+function biblioAuBesoin() {
+  if (BIBLIO_DEMANDEE) return;
+  if (typeof Biblio === 'undefined' || !Biblio.regle || !Biblio.regle()) return;
+  if (typeof biblioCharger !== 'function') return;
+  BIBLIO_DEMANDEE = true;
+  try { biblioCharger(true); } catch (e) {}
+}
+
+/* Le poids que le relais a lu dans les fichiers tranchés, pour ce qu'il
+   reste à sortir. 0 quand on ne sait pas — auquel cas la saisie à la main
+   reste la seule source. */
+function poidsBiblio(o) {
+  const c = biblioDeCommande(o);
+  return c ? (c.grammes_total || 0) : 0;
+}
+
+function minutesBiblio(o) {
+  const c = biblioDeCommande(o);
+  return c ? (c.minutes_reste || 0) : 0;
+}
+
 /* ---------- imprimantes du réseau local ---------- */
 
 let PSTATES = {};
@@ -357,8 +406,51 @@ const Relais = {
   test() { return nativeCall('testRelay', []); },
 
   /* lots : tableau de chaines JSON, une par message ntfy */
-  publier(lots) { return nativeCall('publishCompta', [JSON.stringify(lots)]); }
+  publier(lots) { return nativeCall('publishCompta', [JSON.stringify(lots)]); },
+
+  /* --- ce que la boutique annonce ---------------------------------------
+
+     Le relais calcule le délai de fabrication et l'écrit sur la fiche
+     produit. Ici on lit ce qu'il annonce, et on lui dit ce qu'on décide :
+     peinture ouverte ou non, délai de peinture, marge sur le délai.
+
+     Le jeton qui écrit dans la boutique ne passe jamais par le téléphone :
+     il vit sur le Pi. L'app envoie une décision, pas une écriture. */
+
+  vitrine() { return nativeCall('relayVitrine', []); },
+
+  reglerVitrine(peintureOuverte, peintureJours, marge) {
+    return nativeCall('biblioVitrine',
+      [!!peintureOuverte, Math.max(0, peintureJours | 0), Math.max(0, marge | 0)]);
+  }
 };
+
+/* Le dernier état lu, pour que l'écran des réglages n'interroge le canal
+   qu'une fois par visite au lieu d'à chaque redessin. */
+let VITRINE_VUE = null;
+let VITRINE_DEMANDEE = false;
+/* le dernier mot du relais sur un réglage envoyé. Il est gardé ici, et non
+   écrit dans la page, parce que relire ce que le relais annonce redessine
+   l'écran — et effacerait la phrase au moment où elle devient vraie. */
+let VITRINE_DIT = '';
+
+function vitrineDire(html) {
+  VITRINE_DIT = html || '';
+  const o = typeof $ === 'function' ? $('#vitrine-out') : null;
+  if (o) o.innerHTML = VITRINE_DIT;
+}
+
+function vitrineAuBesoin(forcer) {
+  if (forcer) { VITRINE_DEMANDEE = false; VITRINE_VUE = null; }
+  if (VITRINE_DEMANDEE || !Relais.ok() || !Relais.sujet()) return;
+  VITRINE_DEMANDEE = true;
+  Relais.vitrine()
+    .then(v => {
+      VITRINE_VUE = v && typeof v === 'object' ? v : {};
+      if (typeof TAB !== 'undefined' && TAB === 'settings') render();
+    })
+    .catch(() => { VITRINE_VUE = {}; });
+}
 
 /* ============================================================
    Bibliothèque — les gcodes rangés sur le Pi
@@ -732,9 +824,16 @@ function rememberOrderWeight(o) {
 }
 
 /* ce qui reste à imprimer d'une commande, en grammes */
+/* Le poids de référence d'une commande : celui que le relais a lu dans les
+   fichiers tranchés s'il le connaît, sinon celui saisi à la main. Le
+   calcul est exact et ne dépend plus d'une estimation de tête. */
+function orderGrams(o) {
+  return poidsBiblio(o) || (o.grams || 0);
+}
+
 function orderRemaining(o) {
   if (o.status === 'done' || o.status === 'shipped') return 0;
-  return Math.max(0, (o.grams || 0) - (o.used || 0));
+  return Math.max(0, orderGrams(o) - (o.used || 0));
 }
 
 /* clé de mémorisation des poids : produit + variante */

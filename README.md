@@ -81,6 +81,10 @@ Le jeton ne quitte jamais le téléphone : les requêtes partent directement de
 l'appareil vers Shopify. `read_orders` donne accès aux commandes des 60 derniers
 jours, ce qui couvre largement la file de production.
 
+Ce jeton-là ne sait que **lire**. Celui qui écrit le délai de fabrication dans
+la boutique est un second jeton, qui vit sur le Pi et pas sur le téléphone :
+voir `relais/README.md`, « le jeton d'écriture ».
+
 ---
 
 ## 4. Au quotidien
@@ -102,11 +106,22 @@ ouvre la suivante toute seule. « À racheter » n'apparaît que lorsqu'il n'y a
 plus d'avance. En haut, un bloc récapitule ce que réclament les commandes en
 cours et signale ce qui manque.
 
-**Commandes** — le bouton Shopify récupère les commandes non expédiées. La
-matière est déduite du nom de la variante (`Covert / Without Visor / PLA`), la
-couleur et le poids se saisissent à la main — et le poids est mémorisé par
-variante, donc la fois suivante il est déjà rempli. Chaque commande affiche
-« Stock OK », « Juste » ou « Manque ~320 g ».
+**Commandes** — le bouton Shopify récupère les commandes non expédiées, et
+vérifie du même coup celles que l'app connaît déjà : une commande traitée dans
+la boutique passe en « expédiée », ses lignes sont cochées, et elle ne pèse plus
+sur le délai de fabrication. La matière est déduite du nom de la variante
+(`Covert / Without Visor / PLA`), la couleur se saisit à la main. Le poids, lui,
+est lu dans le fichier tranché quand la commande en a un dans la bibliothèque —
+sinon il se saisit, et reste mémorisé par variante. Chaque commande affiche
+« Stock OK », « Juste » ou « Manque ~320 g », et le temps qu'il reste à sortir.
+
+**Délai annoncé dans la boutique** — Réglages → *Délai annoncé dans la
+boutique*. Le relais additionne ce qu'il reste à imprimer, le répartit sur les
+machines de chaque famille, et écrit le nombre de jours sur la boutique ; la
+fiche produit l'affiche sans qu'on y pense. Le même écran porte le statut
+peinture (ouverte ou fermée, et son délai) et une marge en jours. Le jeton qui
+écrit dans la boutique vit sur le Pi, pas sur le téléphone : `relais/README.md`
+explique comment le créer.
 
 **Liaison réseau** — dans la fiche d'une machine, section Liaison réseau : la
 marque, l'adresse IP, et pour une Bambu le numéro de série et le code d'accès
@@ -180,5 +195,13 @@ npm i playwright && node test/smoke.js
   bobines neuves sont comptées, l'entamée est estimée à l'œil.
 - Les données vivent sur un seul téléphone ; la synchro entre appareils
   demanderait un serveur.
+- Le délai publié dans la boutique ne compte que les commandes dont un fichier
+  est rangé dans la bibliothèque. Les autres sont nommées sur l'écran des
+  réglages, pour qu'on voie ce qui manque plutôt que de croire à un délai trop
+  court. Une commande annulée dans Shopify, elle, continue de compter : il faut
+  la passer en expédiée à la main.
+- Allumer ou éteindre une machine à distance demande une prise commandée : une
+  imprimante éteinte n'a plus de réseau, et rien ne peut la réveiller par
+  l'adresse IP.
 - APK signé avec la clé de debug : parfait pour un usage perso, à refaire avec
   une vraie clé pour une distribution publique.

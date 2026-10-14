@@ -214,6 +214,23 @@ public class Relay {
         return releveDepuis(lire(url));
     }
 
+    /**
+     * Ce que le relais annonce à la boutique : le délai calculé, d'où il
+     * vient, le statut peinture, et la dernière fois qu'il l'a écrit.
+     *
+     * Ça voyage dans le relevé qu'il publie de toute façon. On regarde trois
+     * heures en arrière : le calcul ne se refait qu'une fois par heure, et un
+     * relevé publié juste avant ne doit pas passer pour une absence.
+     */
+    static JSONObject vitrine(Context c) throws Exception {
+        String sujet = sujet(c);
+        if (sujet.length() == 0) return new JSONObject();
+        String url = "https://ntfy.sh/" + URLEncoder.encode(sujet, "UTF-8")
+                + "/json?poll=1&since=3h";
+        JSONObject v = releveDepuis(lire(url)).optJSONObject("vitrine");
+        return v == null ? new JSONObject() : v;
+    }
+
     /** Vrai si le relevé du relais est plus récent que ce qu'on a déjà. */
     static boolean plusRecent(JSONObject relais, JSONObject local) {
         long a = relais == null ? 0 : relais.optLong("at", 0);

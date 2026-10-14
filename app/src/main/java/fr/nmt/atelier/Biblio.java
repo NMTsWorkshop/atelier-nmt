@@ -214,6 +214,28 @@ public class Biblio {
         }
     }
 
+    /**
+     * Ce que la boutique doit annoncer : peinture ouverte ou non, délai de
+     * peinture, et la marge ajoutée au délai de fabrication.
+     *
+     * Ça ne passe que par le canal, jamais par le service local : c'est la
+     * boucle du relais qui tient cet état, et elle l'écrit dans la boutique
+     * à son tour suivant. Le jeton d'écriture Shopify, lui, reste sur le Pi.
+     */
+    static JSONObject vitrine(Context c, boolean peintureOuverte,
+                              int peintureJours, int marge) {
+        try {
+            JSONObject o = new JSONObject();
+            o.put("quoi", "vitrine");
+            o.put("peinture_ouverte", peintureOuverte);
+            o.put("peinture_jours", Math.max(0, peintureJours));
+            o.put("marge", Math.max(0, marge));
+            return parLeCanal(c, o);
+        } catch (Exception e) {
+            return erreur(String.valueOf(e.getMessage()));
+        }
+    }
+
     /** Un ordre sans effet, juste pour savoir si le jeton passe. */
     static JSONObject verifierJeton(Context c) {
         try {

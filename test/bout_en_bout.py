@@ -12,6 +12,7 @@ Bambu, et fait tourner la vraie boucle du relais contre eux.
 import ftplib
 import json
 import os
+import re
 import socket
 import struct
 import sys
@@ -103,6 +104,33 @@ class Canal:
         with self.verrou:
             return [m for m in self.messages if titre is None or m["title"] == titre]
 
+    def poster(self, sujet, corps, titre):
+        """Un message brut sur le canal, comme l'app le ferait."""
+        import urllib.request
+        req = urllib.request.Request(self.base + sujet,
+                                     data=corps.encode("utf-8"), method="POST")
+        req.add_header("Title", titre)
+        with urllib.request.urlopen(req, timeout=5):
+            pass
+
+    def publier_compta(self, sujet, commandes, lots=None, at=None, tronquer=0):
+        """Ce que l'app publie pour la compta : la liste ENTIÈRE, découpée en
+        lots qui tiennent dans une notification, chacun portant le même
+        horodatage et le nombre de lots attendus.
+
+        « tronquer » en retire quelques-uns : un envoi incomplet ne doit pas
+        passer pour une liste qui a rétréci."""
+        self._compta = getattr(self, "_compta", 0) + 1
+        at = int(at if at is not None else time.time() * 1000 + self._compta)
+        paquets = lots if lots is not None else [commandes]
+        messages = [json.dumps({"t": "compta", "at": at, "lot": i + 1,
+                                "lots": len(paquets), "c": p},
+                               ensure_ascii=False)
+                    for i, p in enumerate(paquets)]
+        for m in (messages[:-tronquer] if tronquer else messages):
+            self.poster(sujet, m, "compta")
+        return at
+
     def publier_ordre(self, sujet, ordre, jeton, signer=True):
         """Exactement ce que fait Relay.ordre() dans l'app : poser t, id et
         at, puis signer le tout. L'ordre des champs compte : la signature
@@ -112,12 +140,7 @@ class Canal:
         ordre.setdefault("id", "ordre-%d" % (time.time() * 1000000 % 10000000))
         ordre.setdefault("at", int(time.time() * 1000))
         ordre["sig"] = biblio.signer(jeton, ordre) if signer else "0" * 32
-        corps = json.dumps(ordre, ensure_ascii=False).encode("utf-8")
-        import urllib.request
-        req = urllib.request.Request(self.base + sujet, data=corps, method="POST")
-        req.add_header("Title", "ordre")
-        with urllib.request.urlopen(req, timeout=5):
-            pass
+        self.poster(sujet, json.dumps(ordre, ensure_ascii=False), "ordre")
         return ordre["id"]
 
 
@@ -179,6 +202,82 @@ class FauxMoonraker:
 def charger_faux_bambu():
     from faux_bambu import FauxBambu
     return FauxBambu
+
+
+# ----------------------------------------------------------------------
+# la fausse boutique : assez de l'API Admin pour ce que le relais demande
+# ----------------------------------------------------------------------
+
+class FausseBoutique:
+    """L'identifiant de la boutique, et metafieldsSet. Rien d'autre.
+
+    Elle vérifie le jeton : un jeton oublié dans relais.json doit se voir
+    ici, pas chez Nathan."""
+
+    JETON = "shpat_de_test"
+
+    def __init__(self, refus=None):
+        self.appels = []            # « shop » ou « metafieldsSet », dans l'ordre
+        self.ecrits = {}            # cle -> le champ entier tel qu'il est arrivé
+        self.jetons = []
+        self.refus = refus          # message d'erreur à faire renvoyer
+        faux = self
+
+        class H(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def do_POST(self):
+                n = int(self.headers.get("Content-Length") or 0)
+                brut = self.rfile.read(n).decode("utf-8")
+                faux.jetons.append(self.headers.get("X-Shopify-Access-Token"))
+                if self.headers.get("X-Shopify-Access-Token") != FausseBoutique.JETON:
+                    return self._rendre(401, {"errors": [
+                        {"message": "Invalid API key or access token"}]})
+                try:
+                    charge = json.loads(brut)
+                except ValueError:
+                    return self._rendre(400, {"errors": [{"message": "corps illisible"}]})
+                requete = charge.get("query") or ""
+                if "metafieldsSet" in requete:
+                    champs = (charge.get("variables") or {}).get("m") or []
+                    faux.appels.append("metafieldsSet")
+                    if faux.refus:
+                        return self._rendre(200, {"data": {"metafieldsSet": {
+                            "userErrors": [{"field": ["metafields", "0", "value"],
+                                            "message": faux.refus}]}}})
+                    for c in champs:
+                        faux.ecrits[c.get("key")] = c
+                    return self._rendre(200, {"data": {"metafieldsSet":
+                                                       {"userErrors": []}}})
+                if "shop" in requete:
+                    faux.appels.append("shop")
+                    return self._rendre(200, {"data": {"shop": {
+                        "id": "gid://shopify/Shop/770000"}}})
+                return self._rendre(200, {"errors": [{"message": "requête inconnue"}]})
+
+            def _rendre(self, code, charge):
+                corps = json.dumps(charge, ensure_ascii=False).encode("utf-8")
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(corps)))
+                self.end_headers()
+                self.wfile.write(corps)
+
+            def log_message(self, *a):
+                pass
+
+        self.srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.domaine = "127.0.0.1:%d" % self.srv.server_address[1]
+
+    def valeur(self, cle):
+        return (self.ecrits.get(cle) or {}).get("value")
+
+    def genre(self, cle):
+        return (self.ecrits.get(cle) or {}).get("type")
+
+    def combien(self, quoi="metafieldsSet"):
+        return sum(1 for a in self.appels if a == quoi)
 
 
 # ----------------------------------------------------------------------
@@ -587,6 +686,227 @@ def main():
             "plate_idx" not in pr and "bed_levelling" not in pr,
             ", ".join(k for k in ("plate_idx", "bed_levelling") if k in pr))
     biblio.lancer_bambu = lancer_de_test
+
+    # === 7. la boutique : le délai de fabrication et les metafields =====
+    # Trois choses s'enchaînent ici et aucune n'est vérifiable seule : le
+    # relais apprend les commandes sur le canal, les rapproche des fichiers
+    # tranchés pour savoir ce qu'il reste à sortir, et n'écrit dans la
+    # boutique qu'une fois par heure et seulement si le chiffre a bougé.
+    import commerce
+    commerce.SERVEUR = canal.base
+    commerce.PROTOCOLE = "http"          # la fausse boutique est en clair
+    fausse = FausseBoutique()
+
+    # deux commandes, une par famille de machines, avec leurs fichiers
+    # tranchés. Les en-têtes sont celles qu'écrit OrcaSlicer.
+    def poser(chemin, heures, grammes):
+        entier = os.path.join(dossier, chemin)
+        os.makedirs(os.path.dirname(entier), exist_ok=True)
+        with open(entier, "w", encoding="utf-8") as f:
+            f.write("; generated by OrcaSlicer\nG28\nG1 X0 Y0\n"
+                    "; filament used [g] = %.1f\n"
+                    "; estimated printing time (normal mode) = %dh 0m 0s\n"
+                    % (grammes, heures))
+
+    # 48 h × 2 exemplaires sur les K2, 24 h sur les Bambu : l'exemple exact
+    # que Nathan a donné (« 1 jour P1S et 2 jours K2 → 2 jours »).
+    poser("k2/1045/socle_x2.gcode", 48, 40.0)
+    poser("p1s/1046/casque.gcode", 24, 90.0)
+
+    quatre = [
+        {"nom": "K2 Plus 1", "type": "moonraker", "hote": "10.1.2.11"},
+        {"nom": "K2 Plus 2", "type": "moonraker", "hote": "10.1.2.12"},
+        {"nom": "P1S 1", "type": "bambu", "hote": "10.1.2.21"},
+        {"nom": "P1S 2", "type": "bambu", "hote": "10.1.2.22"},
+    ]
+
+    idx7 = bib.index()
+    c1045 = [c for c in idx7["commandes"] if c["nom"] == "1045"]
+    verifie("le temps et le poids viennent du fichier tranché",
+            c1045 and c1045[0]["minutes_total"] == 2 * 48 * 60
+            and c1045[0]["grammes_total"] == 80,
+            json.dumps(c1045[:1], ensure_ascii=False)[:200])
+
+    cmd = commerce.Commandes(os.path.join(dossier, "commandes.json"))
+    vit = commerce.Vitrine(os.path.join(dossier, "vitrine.json"))
+    btq = commerce.Boutique(fausse.domaine, FausseBoutique.JETON, "2026-04")
+    reglages = {"sujet": sujet}
+
+    def reculer(v, secondes=3700):
+        """Fait comme si le dernier envoi datait d'une heure : le test ne
+        va pas attendre soixante minutes pour vérifier une cadence."""
+        v._ecrire(dict(v.etat(), at=time.time() - secondes))
+
+    def prevenir(forcer=False):
+        return R.prevenir_boutique(reglages, bib, quatre, cmd, vit, btq,
+                                   forcer=forcer)
+
+    # --- l'app publie sa liste de commandes -----------------------------
+    maintenant = int(time.time() * 1000)
+    canal.publier_compta(sujet, [
+        {"r": "#1045", "d": maintenant, "s": "not started", "g": 999},
+        {"r": "#1046", "d": maintenant, "s": "started"},
+    ])
+    dit7 = prevenir()
+    verifie("le relais apprend les commandes publiées sur le canal",
+            len(cmd.toutes()) == 2 and {c["numero"] for c in cmd.toutes()}
+            == {"1045", "1046"},
+            json.dumps(cmd.toutes(), ensure_ascii=False)[:200])
+    verifie("le délai tombe sur le plus chargé des deux parcs, pas la somme",
+            fausse.valeur("lead_time_days") == "2",
+            "%s — %s" % (fausse.valeur("lead_time_days"), dit7))
+    verifie("les quatre metafields partent ensemble",
+            set(fausse.ecrits) == {"lead_time_days", "lead_time_updated_at",
+                                   "painting_open", "painting_lead_time_days"},
+            str(sorted(fausse.ecrits)))
+    verifie("avec les types et l'espace de noms que le thème attend",
+            fausse.genre("lead_time_days") == "number_integer"
+            and fausse.genre("lead_time_updated_at") == "date_time"
+            and fausse.genre("painting_open") == "boolean"
+            and all(c.get("namespace") == "nmt" for c in fausse.ecrits.values()),
+            json.dumps(list(fausse.ecrits.values()), ensure_ascii=False)[:220])
+    verifie("sur la boutique elle-même, pas sur une commande",
+            all(str(c.get("ownerId", "")).startswith("gid://shopify/Shop/")
+                for c in fausse.ecrits.values()),
+            str([c.get("ownerId") for c in fausse.ecrits.values()]))
+    verifie("l'horodatage est celui que Shopify accepte",
+            re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$",
+                     fausse.valeur("lead_time_updated_at") or ""),
+            str(fausse.valeur("lead_time_updated_at")))
+
+    # --- la cadence : seulement si ça bouge, et pas trop souvent ---------
+    ecritures = fausse.combien()
+    prevenir()
+    verifie("rien ne repart si rien n'a changé",
+            fausse.combien() == ecritures,
+            "%d → %d écritures" % (ecritures, fausse.combien()))
+    reculer(vit, 7200)
+    dit_rien = prevenir()
+    verifie("et deux heures plus tard, toujours rien si rien n'a bougé",
+            fausse.combien() == ecritures,
+            "%d → %d écritures (%s)" % (ecritures, fausse.combien(), dit_rien))
+    verifie("l'horodatage ne compte pas comme un changement",
+            "lead_time_updated_at" not in (vit.etat().get("envoye") or {}),
+            str(sorted(vit.etat().get("envoye") or {})))
+
+    # Le statut peinture est une décision prise à la main : la boutique doit
+    # le dire tout de suite, pas à l'heure suivante. Avec un plancher quand
+    # même, pour qu'un doigt qui hésite ne fasse pas dix écritures.
+    vit.regler(peinture_ouverte=False)
+    reculer(vit, 60)
+    dit_tot = prevenir()
+    verifie("deux changements de peinture coup sur coup n'en font qu'un",
+            fausse.combien() == ecritures and fausse.valeur("painting_open") == "true",
+            "%d écritures — %s" % (fausse.combien(), dit_tot))
+    reculer(vit, 400)
+    prevenir()
+    verifie("passé le plancher, la peinture part sans attendre l'heure",
+            fausse.valeur("painting_open") == "false"
+            and fausse.combien() == ecritures + 1,
+            "%s après %d écritures" % (fausse.valeur("painting_open"),
+                                       fausse.combien()))
+    ecritures = fausse.combien()
+
+    # Le délai de fabrication, lui, n'a aucune raison de partir plus souvent
+    # qu'une fois par heure : il bouge tout seul à chaque plateau sorti.
+    vit.regler(marge=2)
+    reculer(vit, 600)
+    dit_delai = prevenir()
+    verifie("le délai attend l'heure même quand il a changé",
+            fausse.combien() == ecritures and fausse.valeur("lead_time_days") == "2",
+            "%s après %d écritures — %s" % (fausse.valeur("lead_time_days"),
+                                            fausse.combien(), dit_delai))
+    reculer(vit)
+    prevenir()
+    verifie("et part à l'heure suivante",
+            fausse.valeur("lead_time_days") == "4"
+            and fausse.combien() == ecritures + 1,
+            "%s après %d écritures" % (fausse.valeur("lead_time_days"),
+                                       fausse.combien()))
+    vit.regler(marge=0)
+    ecritures = fausse.combien()
+
+    # --- une commande expédiée ne pèse plus sur le délai ----------------
+    canal.publier_compta(sujet, [
+        {"r": "#1045", "d": maintenant, "s": "delivered"},
+        {"r": "#1046", "d": maintenant, "s": "started"},
+    ])
+    reculer(vit)
+    dit_exp = prevenir()
+    verifie("une commande expédiée sort du calcul",
+            fausse.valeur("lead_time_days") == "1"
+            and fausse.combien() == ecritures + 1,
+            "%s — %s" % (fausse.valeur("lead_time_days"), dit_exp))
+
+    # --- un envoi incomplet ne doit pas passer pour une liste rétrécie ---
+    avant_incomplet = sorted(c["numero"] for c in cmd.toutes())
+    canal.publier_compta(sujet, None, lots=[
+        [{"r": "#1047", "d": maintenant, "s": "not started"}],
+        [{"r": "#1048", "d": maintenant, "s": "not started"}],
+    ], tronquer=1)
+    reculer(vit)
+    prevenir()
+    verifie("un envoi dont un lot manque est ignoré en entier",
+            sorted(c["numero"] for c in cmd.toutes()) == avant_incomplet,
+            str(sorted(c["numero"] for c in cmd.toutes())))
+
+    # --- le statut peinture, décidé par l'app ---------------------------
+    canal.publier_ordre(sujet, {
+        "quoi": "vitrine", "peinture_ouverte": False, "peinture_jours": 5,
+        "marge": 1}, jeton)
+    for ordre in R.lire_ordres(sujet, "2h"):
+        biblio.appliquer_ordre(bib, ordre, jeton, machines, vit)
+    verifie("l'app ferme la peinture et le relais le range",
+            vit.etat()["peinture"] == {"ouverte": False, "jours": 5}
+            and vit.etat()["marge"] == 1,
+            json.dumps(vit.etat(), ensure_ascii=False)[:160])
+    reculer(vit)
+    dit_p = prevenir()
+    # 1 jour de fabrication (la K2 est expédiée) + 1 jour de marge = 2
+    verifie("la peinture et la marge partent à la boutique",
+            fausse.valeur("painting_open") == "false"
+            and fausse.valeur("painting_lead_time_days") == "5"
+            and fausse.valeur("lead_time_days") == "2",
+            "%s / %s / %s — %s" % (fausse.valeur("painting_open"),
+                                   fausse.valeur("painting_lead_time_days"),
+                                   fausse.valeur("lead_time_days"), dit_p))
+    verifie("l'identifiant de la boutique n'est lu qu'une fois",
+            fausse.combien("shop") == 1, "%d lectures" % fausse.combien("shop"))
+
+    # --- ce qui arrive quand c'est mal configuré -------------------------
+    refus = FausseBoutique(refus="Value can't be blank")
+    btq_refus = commerce.Boutique(refus.domaine, FausseBoutique.JETON)
+    try:
+        btq_refus.ecrire({"lead_time_days": ("number_integer", 2)})
+        verifie("un metafield refusé par Shopify est rapporté tel quel", False,
+                "l'écriture est passée alors que Shopify l'a refusée")
+    except Exception as e:
+        verifie("un metafield refusé par Shopify est rapporté tel quel",
+                "Value can't be blank" in str(e), str(e)[:140])
+
+    mauvais = commerce.Boutique(fausse.domaine, "shpat_perime")
+    try:
+        mauvais.identifiant()
+        verifie("un jeton refusé se lit dans le message, pas dans un code",
+                False, "aucune erreur alors que le jeton est faux")
+    except Exception as e:
+        verifie("un jeton refusé se lit dans le message, pas dans un code",
+                "401" in str(e) and "jeton" in str(e), str(e)[:160])
+
+    sans = commerce.Boutique("", "")
+    dit_sans = R.prevenir_boutique(reglages, bib, quatre, cmd, vit, sans,
+                                   forcer=True)
+    verifie("sans boutique configurée, le relais le dit et continue",
+            dit_sans and "shopify.domaine" in dit_sans, str(dit_sans)[:140])
+
+    # l'installeur écrit « A-REMPLIR » : tant qu'il est là, rien ne part, et
+    # le journal nomme la clé à remplir plutôt que de répéter un 401.
+    vide = commerce.Boutique("nmts-workshop.myshopify.com", "A-REMPLIR")
+    dit_vide = R.prevenir_boutique(reglages, bib, quatre, cmd, vit, vide,
+                                   forcer=True)
+    verifie("un jeton resté à remplir n'est pas un jeton",
+            not vide.prete() and dit_vide and "A-REMPLIR" in dit_vide,
+            str(dit_vide)[:140])
 
     # === 6. la boucle survit à tout ce qui précède ======================
     verifie("la boucle principale n'est jamais tombée", True)

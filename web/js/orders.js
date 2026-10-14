@@ -49,8 +49,12 @@ function orderCard(o) {
   const v = orderStockVerdict(o);
   const lines = o.lines || [];
   const doneN = lines.filter(l => l.done).length;
-  const totalG = o.grams || 0;
+  /* le poids lu dans les fichiers tranchés prime sur la saisie à la main :
+     il est exact, et il se met à jour tout seul quand le fichier change */
+  const lu = poidsBiblio(o);
+  const totalG = lu || o.grams || 0;
   const noWeight = !totalG;
+  const minutes = minutesBiblio(o);
 
   return '<div class="card tight click" onclick="openOrder(\'' + o.id + '\')">' +
     '<div class="card-head">' +
@@ -61,6 +65,7 @@ function orderCard(o) {
           lines.length + ' pièce' + (lines.length > 1 ? 's' : '') +
           (doneN ? ' · ' + doneN + ' faite' + (doneN > 1 ? 's' : '') : '') +
           (totalG ? ' · ' + fmtG(totalG) : '') +
+          (minutes ? ' · ' + fmtDurShort(minutes * 60000) + ' à sortir' : '') +
         '</div>' +
       '</div>' +
       badge(st.cls, st.label) +
@@ -143,13 +148,33 @@ function orderLineRow(o, l) {
 /* poids total, matière et couleur : une fois pour toute la commande */
 function orderWeightBlock(o) {
   const rem = rememberedOrderWeight(o);
-  return '<div class="card tight" style="margin-bottom:14px">' +
+  const c = biblioDeCommande(o);
+  /* quand le relais a lu les fichiers, il n'y a plus rien à saisir : on le
+     montre au lieu de demander, et la saisie reste là pour les commandes
+     dont aucun fichier n'est encore dans la bibliothèque */
+  const bloc = c
+    ? '<div class="card tight" style="margin-bottom:14px">' +
+        '<div class="rowitem"><div class="grow">' +
+          '<div class="t">' + fmtG(c.grammes_total || 0) +
+            (c.minutes_total ? ' · ' + fmtDurShort(c.minutes_total * 60000) : '') + '</div>' +
+          '<div class="s">lu dans les fichiers de « ' + esc(c.nom) + ' » — ' +
+            c.plateaux + ' plateau' + (c.plateaux > 1 ? 'x' : '') +
+            (c.reste ? ', ' + c.reste + ' à sortir (' +
+              fmtG(c.grammes_reste || 0) + ', ' +
+              fmtDurShort((c.minutes_reste || 0) * 60000) + ')' : ', tout est sorti') +
+          '</div>' +
+        '</div>' + badge('ok', 'Mesuré') + '</div>' +
+      '</div>'
+    : '';
+  return bloc + '<div class="card tight" style="margin-bottom:14px">' +
     '<label class="field" style="margin-bottom:10px"><span>Poids total de la commande (g)</span>' +
       '<div class="row" style="gap:8px">' +
         '<input type="number" id="o-grams" inputmode="numeric" value="' + esc(o.grams || '') + '" placeholder="' + (rem || 0) + '" style="flex:1">' +
         '<button class="btn sm primary" onclick="saveOrderWeight(\'' + o.id + '\')">OK</button>' +
       '</div>' +
-      '<div class="hint">Toutes pièces et quantités comprises.' +
+      '<div class="hint">' +
+        (c ? 'Le poids lu dans les fichiers prime sur cette saisie. '
+           : 'Toutes pièces et quantités comprises.') +
         (rem && rem !== o.grams ? ' Même commande déjà vue : ' + fmtG(rem) + '.' : '') +
         (o.used ? ' Déjà imprimé : ' + fmtG(o.used) + ', reste ' + fmtG(orderRemaining(o)) + '.' : '') +
       '</div>' +
@@ -280,6 +305,51 @@ function ordersQuery(niveau) {
     '{edges{node{' + ORDERS_NIVEAUX[niveau] + '}}}}';
 }
 
+/* Une commande traitée dans Shopify est partie : elle n'a plus à peser sur
+   le délai de fabrication, ni à rester dans la liste à imprimer.
+
+   La requête ci-dessus ne demande que les commandes NON traitées, donc une
+   commande expédiée en disparaît — mais cette disparition ne prouve rien :
+   elle peut aussi être sortie des cinquante dernières. On interroge donc
+   nommément celles que l'app connaît.
+
+   Les commandes de plus de soixante jours demandent l'autorisation
+   read_all_orders ; sans elle Shopify renvoie un trou à leur place, et on
+   laisse la commande telle quelle plutôt que de conclure à tort. */
+const EXPEDIEES_PAR_FOIS = 40;
+
+async function majExpediees(url, st) {
+  const connus = DB.orders.filter(o => o.shopifyId && o.status !== 'shipped')
+                          .map(o => o.shopifyId);
+  let parties = 0;
+  for (let i = 0; i < connus.length; i += EXPEDIEES_PAR_FOIS) {
+    const ids = connus.slice(i, i + EXPEDIEES_PAR_FOIS);
+    const res = await nativeHttp('POST', url,
+      { 'X-Shopify-Access-Token': st.token, 'Content-Type': 'application/json' },
+      JSON.stringify({
+        query: 'query($ids:[ID!]!){nodes(ids:$ids){... on Order{id displayFulfillmentStatus}}}',
+        variables: { ids: ids }
+      }));
+    if (!res.ok) throw new Error(res.error || ('HTTP ' + res.status));
+    const d = JSON.parse(res.body);
+    const noeuds = (d.data && d.data.nodes) || null;
+    if (!noeuds) {
+      throw new Error((d.errors && d.errors[0] && d.errors[0].message) || 'Réponse inattendue');
+    }
+    /* Shopify peut refuser certaines commandes et répondre pour les autres :
+       on prend ce qu'il donne au lieu de tout jeter. */
+    noeuds.forEach(nd => {
+      if (!nd || nd.displayFulfillmentStatus !== 'FULFILLED') return;
+      const o = DB.orders.find(x => x.shopifyId === nd.id);
+      if (!o || o.status === 'shipped') return;
+      o.status = 'shipped';
+      (o.lines || []).forEach(l => { l.done = true; });
+      parties++;
+    });
+  }
+  return parties;
+}
+
 let syncing = false;
 
 async function syncShopify() {
@@ -323,14 +393,26 @@ async function syncShopify() {
     if (!data) throw new Error(dernier || 'Réponse inattendue — vérifie les autorisations du jeton');
 
     const n = mergeShopifyOrders(data.data.orders.edges.map(e => e.node));
+
+    /* les commandes déjà connues : celles que Shopify dit traitées passent
+       en expédiées, et sortent du délai de fabrication */
+    let parties = 0, ratees = '';
+    try {
+      parties = await majExpediees(url, st);
+    } catch (e) {
+      ratees = e.message;
+    }
+
     DB.settings.lastSync = Date.now();
     DB.settings.orderFields = niveau;
     save(); render();
     comptaPlanifier();
     const manque = niveau === 'base' ? ' · prix et pays à saisir dans l\'app'
                  : niveau === 'prix' ? ' · pays à saisir dans l\'app' : '';
+    const expedie = parties ? ' · ' + parties + ' expédiée' + (parties > 1 ? 's' : '') : '';
     toast((n.added ? n.added + ' nouvelle' + (n.added > 1 ? 's' : '') + ' commande' + (n.added > 1 ? 's' : '')
-                   : 'Tout est à jour') + manque, 'ok');
+                   : 'Tout est à jour') + expedie + manque, 'ok');
+    if (ratees) toast('Expéditions non vérifiées — ' + ratees, 'bad');
   } catch (e) {
     toast('Échec : ' + e.message, 'bad');
   } finally {
