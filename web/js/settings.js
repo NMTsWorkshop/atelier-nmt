@@ -91,7 +91,7 @@ function renderSettings() {
 
   /* ---- remettre le Pi d'aplomb ---- */
   if (sujet) {
-    vitrineAuBesoin();
+    etatRelaisAuBesoin();
     const pi = PI_VU;
     const partage = pi && pi.partage;
     out += '<div class="sec-title">Le Pi</div>' +
@@ -119,7 +119,7 @@ function renderSettings() {
 
   /* ---- délai annoncé dans la boutique ---- */
   if (sujet) {
-    vitrineAuBesoin();
+    etatRelaisAuBesoin();
     const v = VITRINE_VUE;
     const p = (v && v.peinture) || {};
     const ouverte = p.ouverte !== false;
@@ -176,7 +176,7 @@ function renderSettings() {
         '</label>' +
         '<div class="btn-row">' +
           '<button class="btn primary" onclick="envoyerVitrine()">Envoyer au relais</button>' +
-          '<button class="btn" onclick="vitrineAuBesoin(true)">Relire</button>' +
+          '<button class="btn" onclick="etatRelaisAuBesoin(true)">Relire</button>' +
         '</div>' +
         '<div class="hint" id="vitrine-out" style="margin-top:9px">' + VITRINE_DIT + '</div>' +
       '</div>';
@@ -471,7 +471,7 @@ function piGeste(cible, quandMeme) {
           toast('Le relais a pris en compte', 'ok');
           /* le partage relancé change l'état affiché ; les deux autres
              gestes coupent le relais, inutile de le relire tout de suite */
-          if (cible === 'partage') vitrineAuBesoin(true);
+          if (cible === 'partage') etatRelaisAuBesoin(true);
         } else if (a && !a.ok && /transfert/.test(a.dit || '')) {
           /* refusé parce qu'un fichier est en route : on propose d'insister
              plutôt que de laisser l'utilisateur deviner */
@@ -516,7 +516,7 @@ function envoyerVitrine() {
             esc(a.dit || '') + '</span>');
           /* on relit ce que le relais annonce : l'écran doit montrer son
              état, pas ce qu'on vient de taper */
-          vitrineAuBesoin(true);
+          etatRelaisAuBesoin(true);
           toast('Le relais a pris en compte', 'ok');
         } else {
           vitrineDire('<span style="color:var(--bad)">Pas de réponse du relais — ' +

@@ -38,6 +38,9 @@ sudo curl -fsSL "$BASE/relais_atelier.py" -o "$DOSSIER/relais_atelier.py"
 sudo curl -fsSL "$BASE/biblio.py" -o "$DOSSIER/biblio.py"
 sudo curl -fsSL "$BASE/commerce.py" -o "$DOSSIER/commerce.py"
 sudo curl -fsSL "$BASE/entretien.py" -o "$DOSSIER/entretien.py"
+sudo curl -fsSL "$BASE/prises.py" -o "$DOSSIER/prises.py"
+sudo curl -fsSL "$BASE/meross_diag.py" -o "$DOSSIER/meross_diag.py"
+sudo curl -fsSL "$BASE/meross_cle.py" -o "$DOSSIER/meross_cle.py"
 sudo curl -fsSL "$BASE/bambu_diag.py" -o "$DOSSIER/bambu_diag.py"
 sudo curl -fsSL "$BASE/relais-atelier.service" -o /etc/systemd/system/relais-atelier@.service
 sudo systemctl daemon-reload
@@ -100,6 +103,12 @@ if not c.get("jeton"):
 if c.get("marge_delai") is None:
     c["marge_delai"] = 0
     ajouts.append("marge_delai")
+if not isinstance(c.get("prises"), dict):
+    # Les multiprises connectees. La cle se recupere avec meross_cle.py, les
+    # adresses et les canaux avec meross_diag.py --chercher : on n'invente ni
+    # l'une ni les autres.
+    c["prises"] = {"cle": "A-REMPLIR", "barrettes": []}
+    ajouts.append("prises")
 if not isinstance(c.get("shopify"), dict):
     # Le jeton d'ecriture Shopify vit ici et nulle part ailleurs : l'app n'en
     # a qu'un de lecture, et un telephone perdu ne doit pas emporter le droit

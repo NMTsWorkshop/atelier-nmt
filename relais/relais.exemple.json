@@ -13,6 +13,21 @@
   "//": "Jours ajoutes au delai calcule, 0 pour n'en ajouter aucun.",
   "marge_delai": 0,
 
+  "//prises": "Les multiprises Meross, pilotees en local. La cle vient de meross_cle.py, les adresses et canaux de meross_diag.py --chercher. Un role parmi pi/switch/relais/reseau verrouille la sortie : le relais ne se coupe pas le courant a lui-meme.",
+  "prises": {
+    "cle": "A-REMPLIR",
+    "barrettes": [
+      { "nom": "machines", "hote": "10.1.2.70", "sorties": [
+        { "canal": 1, "machine": "K2 Plus 1" },
+        { "canal": 2, "machine": "K2 Plus 2" },
+        { "canal": 3, "machine": "P1S 1" },
+        { "canal": 4, "machine": "P1S 2" } ] },
+      { "nom": "reseau", "hote": "10.1.2.71", "sorties": [
+        { "canal": 1, "role": "switch" },
+        { "canal": 5, "role": "pi" } ] }
+    ]
+  },
+
   "//shopify": "Le jeton d'ecriture de la boutique. Il reste sur le Pi : celui de l'app ne sait que lire les commandes.",
   "shopify": {
     "domaine": "A-REMPLIR.myshopify.com",

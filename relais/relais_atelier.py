@@ -41,6 +41,7 @@ import urllib.request
 import biblio as bibliotheque
 import commerce
 import entretien
+import prises as prises_mod
 
 ICI = os.path.dirname(os.path.abspath(__file__))
 SERVEUR = "https://ntfy.sh/"
@@ -487,6 +488,8 @@ def publier(sujet, etats, envois=None):
         charge["pi"] = entretien.etat()
     except Exception:
         pass
+    if PRISES.get("releve"):
+        charge["prises"] = PRISES["releve"]
     corps = json.dumps(charge, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(SERVEUR + sujet, data=corps, method="POST")
     req.add_header("Content-Type", "application/json")
@@ -538,6 +541,12 @@ def demarrer_api(c, machines):
 # La boutique n'est prévenue qu'une fois par heure : un délai de
 # fabrication ne change pas à la minute, et chaque écriture coûte du quota.
 BOUTIQUE = {"at": 0}
+
+# Ce que les multiprises ont répondu au dernier passage. Les interroger
+# coûte un aller-retour chacune : on le fait au rythme de la publication,
+# pas à chaque relève.
+PRISES = {"at": 0, "releve": []}
+
 
 # Le dernier calcul, gardé pour que le relevé l'emporte : l'app montre ce
 # que la boutique annonce, et d'où le chiffre vient.
@@ -601,6 +610,7 @@ def main():
     biblio, contexte = demarrer_api(c, machines)
     commandes = commerce.Commandes(os.path.join(biblio.racine, "commandes.json"))
     vitrine = commerce.Vitrine(os.path.join(biblio.racine, "vitrine.json"))
+    parc = prises_mod.Parc(c.get("prises"))
     sh = c.get("shopify") or {}
     boutique = commerce.Boutique(sh.get("domaine"), sh.get("jeton"),
                                  sh.get("version") or "2026-04")
@@ -608,6 +618,10 @@ def main():
         vitrine.regler(marge=c.get("marge_delai"))
     print("Boutique : %s" % ("%s, délai publié chaque heure" % boutique.domaine
                              if boutique.prete() else "non configurée"), flush=True)
+    print("Prises : %s" % ("%d sortie(s) sur %d multiprise(s)"
+                           % (len(parc.sorties()), len(parc.barrettes))
+                           if parc.prete() else (parc.pourquoi_pas() or "aucune")),
+          flush=True)
     # au démarrage on regarde deux heures en arrière, pour reprendre un ordre
     # publié pendant que le Pi redémarrait ; ensuite une fenêtre glissante
     derniers_ordres = "2h"
@@ -628,7 +642,7 @@ def main():
                 for ordre in lire_ordres(c["sujet"], derniers_ordres):
                     dit = bibliotheque.appliquer_ordre(biblio, ordre,
                                                        c.get("jeton"), machines,
-                                                       vitrine)
+                                                       vitrine, parc)
                     if dit:
                         print("%s — %s" % (time.strftime("%H:%M:%S"), dit), flush=True)
                         bibliotheque.oublier_publication()
@@ -651,6 +665,14 @@ def main():
                     print("%s — %s" % (time.strftime("%H:%M:%S"), dit), flush=True)
             except Exception as e:
                 print("%s — boutique non prévenue : %s"
+                      % (time.strftime("%H:%M:%S"), e), file=sys.stderr, flush=True)
+
+        if parc.prete() and time.time() - PRISES["at"] >= 300:
+            PRISES["at"] = time.time()
+            try:
+                PRISES["releve"] = parc.releve()
+            except Exception as e:
+                print("%s — prises non relevées : %s"
                       % (time.strftime("%H:%M:%S"), e), file=sys.stderr, flush=True)
 
         oui, pourquoi = faut_publier(etats, repos)

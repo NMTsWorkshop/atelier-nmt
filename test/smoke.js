@@ -1,12 +1,37 @@
 const { chromium } = require('playwright');
 const path = require('path');
+const fs = require('fs');
+const http = require('http');
 
-const WEB = 'file://' + path.resolve(__dirname, '../web/index.html');
+/* L'interface est servie en HTTP, pas ouverte en file://.
+   Chromium ne garde pas le stockage local d'une page file:// d'un
+   chargement a l'autre : l'etape « rechargement de la page » tombait donc
+   au hasard, et le reste du test avec elle. Un serveur de trois lignes
+   suffit a donner une vraie origine au stockage. */
+const RACINE = path.resolve(__dirname, '../web');
+const TYPES = { '.html': 'text/html', '.js': 'text/javascript',
+                '.css': 'text/css', '.png': 'image/png',
+                '.svg': 'image/svg+xml', '.json': 'application/json' };
+
+const serveur = http.createServer((req, rep) => {
+  const rel = decodeURIComponent(req.url.split('?')[0]);
+  const fichier = path.join(RACINE, rel === '/' ? '/index.html' : rel);
+  if (!fichier.startsWith(RACINE)) { rep.writeHead(403); rep.end(); return; }
+  fs.readFile(fichier, (err, data) => {
+    if (err) { rep.writeHead(404); rep.end('non trouve'); return; }
+    rep.writeHead(200, { 'Content-Type': TYPES[path.extname(fichier)] || 'text/plain' });
+    rep.end(data);
+  });
+});
+
 const OUT = path.resolve(__dirname, '../test/shots');
 
 const errors = [];
 
 (async () => {
+  await new Promise(r => serveur.listen(0, '127.0.0.1', r));
+  const WEB = 'http://127.0.0.1:' + serveur.address().port + '/index.html';
+
   const browser = await chromium.launch();
   const ctx = await browser.newContext({
     viewport: { width: 412, height: 915 },
@@ -923,7 +948,7 @@ const errors = [];
         },
         pi: { partage: 'actif', debout: 120 }
       })), 10);
-      vitrineAuBesoin(true);
+      etatRelaisAuBesoin(true);
     });
     await page.waitForFunction(() => /A-REMPLIR/.test(
       (document.getElementById('view') || {}).textContent || ''), null, { timeout: 5000 });
@@ -1009,7 +1034,7 @@ const errors = [];
     /* l'etape precedente a remis l'horloge des accuses a sa valeur reelle :
        ici on la resserre, sinon chaque geste attendrait vingt secondes */
     Biblio.cadence = { premier: 150, ensuite: 150, duree: 5000 };
-    vitrineAuBesoin(true);
+    etatRelaisAuBesoin(true);
   });
 
   await step('un partage arrêté se voit sur l\'écran', async () => {
@@ -1064,6 +1089,90 @@ const errors = [];
     });
   });
 
+  console.log('\n— lumières et courant —');
+
+  await page.evaluate(() => {
+    window.NMT = Object.assign(window.NMT || {}, {
+      relayTopic: () => 'nmt-test',
+      relayEtat: (id) => setTimeout(() => window.NMTcb(id, JSON.stringify({
+        ok: true,
+        vitrine: {}, pi: { partage: 'actif', debout: 3600 },
+        prises: [
+          { barrette: 'machines', canal: 1, machine: 'K2 Plus', role: '',
+            verrouillee: false, allumee: true },
+          { barrette: 'reseau', canal: 5, machine: '', role: 'pi',
+            verrouillee: true, allumee: true }
+        ]
+      })), 10),
+      biblioLumiere: (machine, hote, allumer, id) => {
+        window.__lum = [machine, hote, allumer];
+        setTimeout(() => window.NMTcb(id, '{"ok":true,"dit":"lumière allumée"}'), 10);
+      },
+      biblioPrise: (cible, allumer, quandMeme, id) => {
+        window.__prise = [cible, allumer, quandMeme];
+        setTimeout(() => window.NMTcb(id,
+          '{"ok":true,"differe":true,"id":"p1"}'), 10);
+      },
+      biblioAck: (ident, id) => setTimeout(() => window.NMTcb(id, JSON.stringify({
+        id: ident, ok: true, dit: 'courant coupé : K2 Plus : éteinte' })), 10)
+    });
+    PRISES_VUES = null; VITRINE_DEMANDEE = false;
+    Biblio.cadence = { premier: 150, ensuite: 150, duree: 5000 };
+    DB.settings.lights = {};
+    save();
+    etatRelaisAuBesoin(true);
+  });
+
+  await step('la barre de l\'atelier dit ce qui est sous tension', async () => {
+    await page.click('#tabbar .tab[data-tab=machines]');
+    await page.waitForFunction(() => /sous tension/.test(
+      (document.getElementById('view') || {}).textContent || ''), null, { timeout: 5000 });
+    const txt = await page.textContent('#view');
+    /* la prise du Pi est verrouillée : elle ne compte pas parmi les machines */
+    if (!/1\/1 sous tension/.test(txt))
+      throw new Error('compte faux : ' + txt.slice(0, 200));
+  });
+
+  await step('allumer la lumière d\'une machine', async () => {
+    await page.evaluate(() => { window.__lum = null; });
+    await page.click('button[onclick="lumieresToutes(true)"]');
+    await page.waitForFunction(() => !!window.__lum, null, { timeout: 5000 });
+    const vu = await page.evaluate(() => window.__lum);
+    if (vu[2] !== true) throw new Error('mauvais sens : ' + JSON.stringify(vu));
+  });
+
+  await step('le bouton dit ce que l\'appui va faire, pas l\'inverse', async () => {
+    await page.waitForFunction(() => /Éteindre la lumière/.test(
+      (document.getElementById('view') || {}).textContent || ''), null, { timeout: 5000 });
+  });
+
+  await step('couper le courant demande confirmation', async () => {
+    await page.evaluate(() => {
+      window.__prise = null;
+      DB.machines[0].name = 'K2 Plus';
+      save(); render();
+    });
+    await page.click('button[onclick="courantTout(false)"]');
+    await page.waitForSelector('.sheet', { timeout: 5000 });
+    const txt = await page.textContent('.sheet');
+    if (!/jamais coupés/.test(txt))
+      throw new Error('le refus du relais n\'est pas annoncé : ' + txt.slice(0, 200));
+    await page.click('.sheet [data-x=yes]');
+    await page.waitForFunction(() => !!window.__prise, null, { timeout: 5000 });
+    const vu = await page.evaluate(() => window.__prise);
+    if (vu[0] !== 'toutes' || vu[1] !== false)
+      throw new Error('ordre faux : ' + JSON.stringify(vu));
+  });
+
+  await step('et l\'app attend l\'accusé du relais', async () => {
+    await page.waitForFunction(() => /courant coupé/.test(
+      (document.getElementById('atelier-out') || {}).textContent || ''), null, { timeout: 6000 });
+  });
+
+  await page.evaluate(() => {
+    Biblio.cadence = { premier: 20000, ensuite: 60000, duree: 900000 };
+  });
+
   for (const t of ['machines', 'stock', 'biblio', 'orders', 'profiles']) {
     await page.click(`#tabbar .tab[data-tab=${t}]`);
     await page.waitForTimeout(250);
@@ -1071,6 +1180,7 @@ const errors = [];
   }
 
   await browser.close();
+  serveur.close();
 
   console.log('\n══════════════════════════════');
   if (errors.length) {

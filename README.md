@@ -136,6 +136,13 @@ Côté Bambu, **il n'est pas nécessaire de couper le cloud** : le MQTT local
 répond avec le seul code d'accès, vérifié sur P1S. Le téléphone doit être sur
 le même réseau que l'atelier.
 
+**Lumières et courant** — en haut de l'onglet Machines, une barre allume ou
+éteint l'éclairage de tout le parc d'un coup, et coupe ou rétablit le courant
+des machines. Chaque fiche a les mêmes boutons pour elle seule. L'éclairage
+passe par la machine elle-même ; le courant par les multiprises connectées.
+Le relais refuse de couper une machine qui imprime sans confirmation, et
+refuse toujours de couper ce qui l'alimente lui-même.
+
 **Le Pi** — Réglages → *Le Pi*. Quand le partage ne répond plus alors que la
 machine est allumée, « Relancer le partage » règle le cas sans rien
 interrompre d'autre ; « Relancer le relais » et « Redémarrer le Pi » sont là
@@ -206,8 +213,12 @@ npm i playwright && node test/smoke.js
   réglages, pour qu'on voie ce qui manque plutôt que de croire à un délai trop
   court. Une commande annulée dans Shopify, elle, continue de compter : il faut
   la passer en expédiée à la main.
-- Allumer ou éteindre une machine à distance demande une prise commandée : une
-  imprimante éteinte n'a plus de réseau, et rien ne peut la réveiller par
-  l'adresse IP.
+- Le courant des machines passe par les multiprises Meross, pilotées en local.
+  Une imprimante éteinte n'a plus de réseau : c'est la prise qui la réveille,
+  pas l'adresse IP. La prise qui alimente le Pi et celle du switch ne sont
+  jamais commandées depuis l'app — il n'y aurait plus personne pour rallumer.
+- L'app ne sait pas lire l'état d'une lampe : elle se souvient de ce qu'elle a
+  demandé. Si quelqu'un appuie sur le bouton de la machine, le libellé se
+  trompe une fois, et se remet d'aplomb à l'appui suivant.
 - APK signé avec la clé de debug : parfait pour un usage perso, à refaire avec
   une vraie clé pour une distribution publique.

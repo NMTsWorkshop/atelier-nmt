@@ -426,6 +426,18 @@ const Relais = {
     return nativeCall('biblioService', [String(cible || ''), !!quandMeme]);
   },
 
+  /* L'éclairage de chambre d'une machine. */
+  lumiere(machine, hote, allumer) {
+    return nativeCall('biblioLumiere',
+      [String(machine || ''), String(hote || ''), !!allumer]);
+  },
+
+  /* Le courant d'une machine, ou « toutes ». */
+  prise(cible, allumer, quandMeme) {
+    return nativeCall('biblioPrise',
+      [String(cible || ''), !!allumer, !!quandMeme]);
+  },
+
   reglerVitrine(peintureOuverte, peintureJours, marge) {
     return nativeCall('biblioVitrine',
       [!!peintureOuverte, Math.max(0, peintureJours | 0), Math.max(0, marge | 0)]);
@@ -436,6 +448,7 @@ const Relais = {
    qu'une fois par visite au lieu d'à chaque redessin. */
 let VITRINE_VUE = null;
 let PI_VU = null;
+let PRISES_VUES = null;
 let VITRINE_DEMANDEE = false;
 /* le dernier mot du relais sur un réglage envoyé. Il est gardé ici, et non
    écrit dans la page, parce que relire ce que le relais annonce redessine
@@ -456,7 +469,7 @@ function vitrineDire(html) {
   if (o) o.innerHTML = VITRINE_DIT;
 }
 
-function vitrineAuBesoin(forcer) {
+function etatRelaisAuBesoin(forcer) {
   if (forcer) { VITRINE_DEMANDEE = false; VITRINE_VUE = null; PI_VU = null; }
   if (VITRINE_DEMANDEE || !Relais.ok() || !Relais.sujet()) return;
   VITRINE_DEMANDEE = true;
@@ -465,9 +478,19 @@ function vitrineAuBesoin(forcer) {
       const r = e && typeof e === 'object' ? e : {};
       VITRINE_VUE = r.vitrine || {};
       PI_VU = r.pi || {};
-      if (typeof TAB !== 'undefined' && TAB === 'settings') render();
+      PRISES_VUES = Array.isArray(r.prises) ? r.prises : [];
+      if (typeof TAB !== 'undefined' && (TAB === 'settings' || TAB === 'machines')) render();
     })
-    .catch(() => { VITRINE_VUE = {}; PI_VU = {}; });
+    .catch(() => { VITRINE_VUE = {}; PI_VU = {}; PRISES_VUES = []; });
+}
+
+/* La prise qui alimente une machine, d'après le dernier relevé — ou null si
+   le relais n'en connaît pas. On compare sur le nom, c'est ce que relais.json
+   écrit en face du canal. */
+function priseDe(nom) {
+  if (!Array.isArray(PRISES_VUES)) return null;
+  const cible = String(nom || '').trim().toLowerCase();
+  return PRISES_VUES.find(p => String(p.machine || '').trim().toLowerCase() === cible) || null;
 }
 
 /* « 3 j », « 5 h », « 12 min » — depuis combien de temps le Pi est debout.

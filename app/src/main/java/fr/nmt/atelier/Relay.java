@@ -236,6 +236,8 @@ public class Relay {
         out.put("vitrine", v == null ? new JSONObject() : v);
         JSONObject pi = releve.optJSONObject("pi");
         out.put("pi", pi == null ? new JSONObject() : pi);
+        org.json.JSONArray prises = releve.optJSONArray("prises");
+        out.put("prises", prises == null ? new org.json.JSONArray() : prises);
         return out;
     }
 

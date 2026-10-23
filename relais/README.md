@@ -44,6 +44,7 @@ journalctl -u relais-atelier@$USER -f                      # le service en direc
 | `machines` | `type` = `moonraker` (Creality) ou `bambu` ; `hote` = adresse IP  |
 | `marge_delai` | jours ajoutés au délai calculé (0 par défaut)                  |
 | `shopify`  | `domaine`, `jeton` d'écriture, `version` de l'API Admin           |
+| `prises`   | les multiprises Meross : `cle`, puis `barrettes`                  |
 
 Une machine Bambu demande en plus `serie` (numéro de série) et `code`
 (code d'accès LAN, visible sur l'écran de la machine).
@@ -208,6 +209,59 @@ ntfy garde les messages une douzaine d'heures. L'app renvoie la liste complète 
 chaque changement, donc un seul message récent suffit — mais si le PC reste
 éteint plusieurs jours, il faut retoucher **Envoyer maintenant** dans l'app avant
 de lancer le script.
+
+## Les lumières et le courant des machines
+
+L'app commande deux choses qui se ressemblent à l'usage et n'ont rien en
+commun dessous.
+
+**La lumière de chambre.** Sur une Bambu, c'est une commande du firmware
+(`ledctrl`) en MQTT local. Sur une Creality, c'est une broche de sortie
+Klipper — et son nom change d'une machine et d'une configuration à l'autre.
+Le relais ne le devine pas : il demande à Klipper la liste de ses objets et
+prend celui qui ressemble à un éclairage (`output_pin caselight` et
+compagnie). Une machine dont la configuration n'en déclare aucun le dit, au
+lieu d'avoir l'air de marcher.
+
+À l'atelier l'ordre passe en direct et la lumière s'allume quand on appuie ;
+ailleurs il passe par le canal et s'applique à la relève suivante.
+
+**Le courant**, lui, passe par les multiprises Meross. Elles acceptent des
+ordres en local — un POST signé sur `http://<ip>/config` — donc rien ne sort
+de la maison et une panne d'Internet ne prive pas l'atelier de ses
+interrupteurs.
+
+Deux garde-fous, dans cet ordre d'importance :
+
+1. **Ce qui alimente le relais ne se coupe jamais depuis l'app.** Une sortie
+   dont le `role` vaut `pi`, `switch`, `relais` ou `reseau` est verrouillée
+   dans le code. Couper le courant du Pi ou du switch qui le relie, c'est
+   perdre le moyen de le rallumer : personne ne serait là pour recevoir
+   l'ordre inverse.
+2. **Une machine qui imprime n'est pas coupée** sans une confirmation
+   explicite. L'app propose alors de forcer, et dit ce qu'on y perd.
+
+### Mettre les prises en service
+
+```
+python3 /opt/relais-atelier/meross_cle.py            # la clé du compte
+python3 /opt/relais-atelier/meross_diag.py --chercher # trouver les multiprises
+python3 /opt/relais-atelier/meross_diag.py --montrer  # quelle prise porte quoi
+```
+
+Le premier demande l'adresse et le mot de passe du compte Meross, s'identifie
+une fois, et ne garde que la clé — dans `relais.json`, à côté du reste. Le mot
+de passe n'est écrit nulle part. La clé ne vaut que sur le réseau local : un
+ordre signé avec elle n'est accepté que par une multiprise qu'on peut déjà
+joindre.
+
+Le deuxième balaye le réseau du Pi et imprime un bloc `prises` prêt à recopier,
+avec une ligne par sortie. Reste à écrire en face de chaque canal soit le nom
+exact de la machine (le même que dans `machines`), soit un `role`.
+
+Le troisième coupe chaque sortie une seconde, l'une après l'autre, pour qu'on
+voie laquelle porte quoi. Il ne touche pas aux sorties verrouillées, et il
+demande confirmation — à ne pas lancer pendant une impression.
 
 ## Remettre le Pi d'aplomb depuis l'app
 

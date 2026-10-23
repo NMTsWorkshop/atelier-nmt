@@ -256,6 +256,45 @@ public class Biblio {
         }
     }
 
+    /**
+     * L'éclairage de chambre. Sur place le relais répond tout de suite —
+     * on appuie, ça s'allume ; ailleurs ça part par le canal et s'applique
+     * à la relève suivante.
+     */
+    static JSONObject lumiere(Context c, String machine, String hote,
+                              boolean allumer) {
+        try {
+            JSONObject o = new JSONObject();
+            o.put("quoi", "lumiere");
+            o.put("machine", machine == null ? "" : machine);
+            o.put("hote", hote == null ? "" : hote);
+            o.put("allumer", allumer);
+            if (surPlace(c)) return appel(c, "/lumiere", o, DELAI_LECTURE);
+            return parLeCanal(c, o);
+        } catch (Exception e) {
+            return erreur(String.valueOf(e.getMessage()));
+        }
+    }
+
+    /**
+     * Le courant d'une machine, par sa multiprise. Toujours par le canal :
+     * c'est la boucle du relais qui tient le parc de prises, et c'est elle
+     * qui refuse de couper une machine en train d'imprimer.
+     */
+    static JSONObject prise(Context c, String cible, boolean allumer,
+                            boolean quandMeme) {
+        try {
+            JSONObject o = new JSONObject();
+            o.put("quoi", "prise");
+            o.put("cible", cible == null ? "" : cible);
+            o.put("allumer", allumer);
+            if (quandMeme) o.put("quand_meme", true);
+            return parLeCanal(c, o);
+        } catch (Exception e) {
+            return erreur(String.valueOf(e.getMessage()));
+        }
+    }
+
     /** Un ordre sans effet, juste pour savoir si le jeton passe. */
     static JSONObject verifierJeton(Context c) {
         try {

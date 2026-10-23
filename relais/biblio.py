@@ -42,6 +42,7 @@ import zipfile
 import zlib
 
 import entretien
+import prises as prises_mod
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # nombre d'exemplaires écrit dans le nom du fichier
@@ -1201,6 +1202,133 @@ def lancer_moonraker(machine, nom):
         co.close()
 
 
+# ----------------------------------------------------------------------
+# la lumière dans la chambre
+# ----------------------------------------------------------------------
+#
+# Les deux familles n'ont rien en commun ici. Une Bambu a une commande
+# dédiée en MQTT ; une Creality n'a qu'une broche de sortie Klipper, dont
+# le nom change d'une machine et d'une version de configuration à l'autre.
+# On ne devine donc pas ce nom : on demande à la machine la liste de ses
+# objets et on prend celui qui ressemble à un éclairage. C'est une requête
+# de plus au premier allumage, et plus jamais ensuite.
+
+NOMS_LUMIERE = ("caselight", "case_light", "chamber_light", "chamberlight",
+                "light", "lumiere", "led", "leds", "toolhead_light")
+
+# le nom trouvé par machine, pour ne pas réinterroger à chaque appui
+_BROCHE_LUMIERE = {}
+
+
+def _objets_klipper(machine):
+    base_h, base_p = machine["hote"], machine.get("port", 7125)
+    co = http.client.HTTPConnection(base_h, base_p, timeout=10)
+    try:
+        co.request("GET", "/printer/objects/list")
+        rep = co.getresponse()
+        charge = json.loads(rep.read().decode("utf-8", "replace"))
+    finally:
+        co.close()
+    return (charge.get("result") or {}).get("objects") or []
+
+
+def broche_lumiere(machine):
+    """Le nom de la broche qui commande l'éclairage, ou « » si la machine
+    n'en déclare aucune. Gardé en mémoire : la liste ne change pas."""
+    cle = machine.get("hote") or machine.get("nom") or ""
+    if cle in _BROCHE_LUMIERE:
+        return _BROCHE_LUMIERE[cle]
+    trouve = ""
+    try:
+        objets = _objets_klipper(machine)
+    except Exception:
+        return ""          # pas de cache : la machine était peut-être éteinte
+    # « output_pin caselight », « led chamber », « neopixel leds »…
+    candidats = []
+    for o in objets:
+        bouts = str(o).split(None, 1)
+        if len(bouts) != 2:
+            continue
+        genre, nom = bouts[0].lower(), bouts[1].strip()
+        if genre not in ("output_pin", "led", "neopixel", "pca9533", "dotstar"):
+            continue
+        if any(m in nom.lower().replace(" ", "_") for m in NOMS_LUMIERE):
+            candidats.append((genre, nom))
+    # une broche simple se commande plus sûrement qu'un ruban adressable
+    for genre, nom in candidats:
+        if genre == "output_pin":
+            trouve = "output_pin:" + nom
+            break
+    else:
+        if candidats:
+            trouve = "%s:%s" % candidats[0]
+    _BROCHE_LUMIERE[cle] = trouve
+    return trouve
+
+
+def _gcode_moonraker(machine, script):
+    co = http.client.HTTPConnection(machine["hote"], machine.get("port", 7125),
+                                    timeout=15)
+    try:
+        co.putrequest("POST", "/printer/gcode/script?script="
+                      + urllib.parse.quote(script))
+        co.putheader("Content-Length", "0")
+        co.endheaders()
+        rep = co.getresponse()
+        lu = rep.read()
+        if rep.status >= 400:
+            raise ValueError("%s a refusé « %s » (HTTP %d) : %s"
+                             % (machine.get("nom"), script, rep.status,
+                                lu[:120].decode("utf-8", "replace")))
+    finally:
+        co.close()
+
+
+def lumiere_moonraker(machine, allumer):
+    broche = broche_lumiere(machine)
+    if not broche:
+        raise ValueError("%s ne déclare aucune lumière pilotable — sa "
+                         "configuration Klipper n'a pas de broche d'éclairage"
+                         % machine.get("nom"))
+    genre, nom = broche.split(":", 1)
+    if genre == "output_pin":
+        _gcode_moonraker(machine, "SET_PIN PIN=%s VALUE=%d" % (nom, 1 if allumer else 0))
+    else:
+        # un ruban adressable : blanc à fond, ou tout éteint
+        v = 1 if allumer else 0
+        _gcode_moonraker(machine, "SET_LED LED=%s RED=%d GREEN=%d BLUE=%d WHITE=%d SYNC=0"
+                         % (nom, v, v, v, v))
+    return "lumière %s sur %s" % ("allumée" if allumer else "éteinte",
+                                  machine.get("nom"))
+
+
+def lumiere_bambu(machine, allumer):
+    """La commande dédiée du firmware. Les quatre champs de durée ne
+    servent qu'au mode clignotant, mais le firmware les veut quand même."""
+    ordre = {"system": {
+        "sequence_id": str(int(time.time()) % 100000),
+        "command": "ledctrl",
+        "led_node": "chamber_light",
+        "led_mode": "on" if allumer else "off",
+        "led_on_time": 500, "led_off_time": 500,
+        "loop_times": 1, "interval_time": 1000}}
+    dits = _mqtt_dialogue(machine,
+                          json.dumps(ordre, ensure_ascii=False).encode("utf-8"),
+                          ecoute=2.0)
+    for d in dits:
+        if "fail" in str(d).lower():
+            raise ValueError("%s a refusé : %s" % (machine.get("nom"), str(d)[:120]))
+    return "lumière %s sur %s" % ("allumée" if allumer else "éteinte",
+                                  machine.get("nom"))
+
+
+def lumiere(machines, nom_machine, allumer, hote=""):
+    machine = trouver_machine(machines, nom_machine, hote)
+    if famille_de(machine) == "k2":
+        return lumiere_moonraker(machine, allumer)
+    return lumiere_bambu(machine, allumer)
+
+
 def lancer_seul(biblio, machines, nom_machine, chemin_relatif, plateau=1,
                 hote=""):
     """Lancer un fichier DÉJÀ déposé, sans le renvoyer.
@@ -1466,6 +1594,30 @@ class Service(BaseHTTPRequestHandler):
                 rel = self.ctx.biblio.fixer_commande(corps.get("chemin"),
                                                      corps.get("commande"))
                 return self._repondre(200, {"ok": True, "chemin": rel})
+            if route.path == "/lumiere":
+                # a l'atelier on veut que ca s'allume quand on appuie, pas
+                # a la releve suivante : d'ou cette route directe
+                allumer = bool(corps.get("allumer", True))
+                cibles = corps.get("machines")
+                if not isinstance(cibles, list) or not cibles:
+                    cibles = [{"machine": corps.get("machine"),
+                               "hote": corps.get("hote") or ""}]
+                faits, ratees = [], []
+                for c in cibles:
+                    try:
+                        lumiere(self.ctx.machines, c.get("machine"), allumer,
+                                c.get("hote") or "")
+                        faits.append(c.get("machine"))
+                    except Exception as e:
+                        ratees.append("%s (%s)" % (c.get("machine"), str(e)[:80]))
+                dit = "lumiere %s : %s" % (
+                    "allumee" if allumer else "eteinte",
+                    ", ".join(faits) if faits else "aucune machine")
+                if ratees:
+                    dit += " — sans reponse : " + ", ".join(ratees)
+                return self._repondre(200 if faits else 502,
+                                      {"ok": bool(faits), "dit": dit,
+                                       "faites": faits, "ratees": ratees})
             if route.path == "/pousser":
                 res = pousser(self.ctx.biblio, self.ctx.machines,
                               corps.get("machine"), corps.get("chemin"),
@@ -1958,7 +2110,8 @@ def _pousser_a_part(biblio, machines, machine, chemin, lancer, plateau=1,
     oublier_publication()
 
 
-def appliquer_ordre(biblio, ordre, jeton, machines=None, vitrine=None):
+def appliquer_ordre(biblio, ordre, jeton, machines=None, vitrine=None,
+                    parc=None):
     """Renvoie une phrase pour le journal, ou None si l'ordre est écarté."""
     ident = ordre.get("id")
     if not ident or ident in ORDRES_VUS:
@@ -2055,6 +2208,74 @@ def appliquer_ordre(biblio, ordre, jeton, machines=None, vitrine=None):
                                         ordre.get("commande") or "aucune commande")
             accuser(ident, True, dit)
             return dit
+        if quoi == "lumiere":
+            # l'éclairage de chambre, comme sur les apps des fabricants
+            allumer = bool(ordre.get("allumer", True))
+            cibles = ordre.get("machines")
+            if not isinstance(cibles, list) or not cibles:
+                cibles = [{"machine": ordre.get("machine"),
+                           "hote": ordre.get("hote") or ""}]
+            faits, ratees = [], []
+            for c in cibles:
+                try:
+                    lumiere(machines or [], c.get("machine"), allumer,
+                            c.get("hote") or "")
+                    faits.append(c.get("machine"))
+                except Exception as e:
+                    ratees.append("%s (%s)" % (c.get("machine"), str(e)[:80]))
+            dit = "lumière %s : %s" % (
+                "allumée" if allumer else "éteinte",
+                ", ".join(faits) if faits else "aucune machine")
+            if ratees:
+                dit += " — sans réponse : " + ", ".join(ratees)
+            accuser(ident, bool(faits), dit)
+            return dit
+        if quoi == "prise":
+            # Le courant des machines. Deux garde-fous : on ne coupe pas une
+            # machine qui imprime sans insister, et on ne coupe jamais ce qui
+            # alimente le relais — ce dernier-là n'est pas négociable.
+            if parc is None or not parc.barrettes:
+                dit = ("aucune multiprise décrite dans relais.json "
+                       "(prises.barrettes)")
+                accuser(ident, False, dit)
+                return dit
+            allumer = bool(ordre.get("allumer", True))
+            cible = str(ordre.get("cible") or "").strip()
+
+            if cible.lower() in ("toutes", "tout", "machines"):
+                choisies = [s for s in parc.sorties() if s.get("machine")]
+            else:
+                une = parc.pour_machine(cible)
+                choisies = [une] if une else []
+                if not choisies:
+                    dit = ("aucune prise ne porte « %s » — vérifie "
+                           "prises.barrettes dans relais.json" % cible)
+                    accuser(ident, False, dit)
+                    return dit
+
+            faits, refus = [], []
+            for sortie in choisies:
+                nom_m = sortie.get("machine") or ""
+                if not allumer and not ordre.get("quand_meme"):
+                    m = None
+                    try:
+                        m = trouver_machine(machines or [], nom_m, "")
+                    except Exception:
+                        m = None
+                    if m is not None:
+                        etat = str((_etat_machine(m) or {}).get("state") or "").lower()
+                        if etat in ("printing", "running", "preparing", "paused"):
+                            refus.append("%s imprime" % nom_m)
+                            continue
+                ok, dit_une = parc.commander(sortie, allumer)
+                (faits if ok else refus).append(dit_une)
+
+            dit = ("courant %s : %s" % ("rétabli" if allumer else "coupé",
+                                        ", ".join(faits))) if faits else ""
+            if refus:
+                dit = ((dit + " — ") if dit else "") + "refusé : " + ", ".join(refus)
+            accuser(ident, bool(faits), dit or "rien à faire")
+            return dit or "rien à faire"
         if quoi == "service":
             # Remettre d'aplomb le Pi lui-même. Deux de ces gestes coupent
             # le relais, donc l'accusé part d'abord et le geste attend la

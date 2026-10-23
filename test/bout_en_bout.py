@@ -18,6 +18,7 @@ import struct
 import sys
 import tempfile
 import threading
+import urllib.parse
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -149,9 +150,16 @@ class Canal:
 # ----------------------------------------------------------------------
 
 class FauxMoonraker:
-    def __init__(self, lenteur=0.0, refuse=False, hote="127.0.0.1"):
+    def __init__(self, lenteur=0.0, refuse=False, hote="127.0.0.1",
+                 objets=None):
         self.recu = {}
         self.lance = []
+        self.scripts = []
+        # ce que Klipper declare : le nom de la broche d'eclairage change
+        # d'une machine a l'autre, le relais doit le trouver tout seul
+        self.objets = objets if objets is not None else [
+            "configfile", "gcode_move", "print_stats", "toolhead",
+            "output_pin caselight", "heater_bed", "extruder"]
         self.lenteur = lenteur
         self.refuse = refuse
         faux = self
@@ -160,6 +168,17 @@ class FauxMoonraker:
             protocol_version = "HTTP/1.1"
 
             def do_POST(self):
+                # le gcode arbitraire (lumière, macros) n'a pas de corps :
+                # il tient dans l'adresse
+                if self.path.startswith("/printer/gcode/script"):
+                    faux.scripts.append(urllib.parse.unquote(
+                        self.path.split("script=", 1)[-1]))
+                    corps = b'{"result":"ok"}'
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(corps)))
+                    self.end_headers()
+                    self.wfile.write(corps)
+                    return
                 n = int(self.headers.get("Content-Length") or 0)
                 lu = 0
                 while lu < n:
@@ -181,6 +200,13 @@ class FauxMoonraker:
                 self.wfile.write(corps)
 
             def do_GET(self):
+                if self.path.startswith("/printer/objects/list"):
+                    corps = json.dumps({"result": {"objects": faux.objets}}).encode()
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(corps)))
+                    self.end_headers()
+                    self.wfile.write(corps)
+                    return
                 corps = json.dumps({"result": {"status": {
                     "print_stats": {"state": "standby", "filename": ""},
                     "heater_bed": {}, "extruder": {},
@@ -1004,6 +1030,218 @@ def main():
     entretien._courir = vrai_courir
     entretien.partage_actif = vrai_actif
     entretien.EN_ATTENTE.clear()
+
+    # === 9. le courant des machines ====================================
+    # Deux choses comptent plus que le reste ici : ne pas couper une machine
+    # qui imprime, et ne jamais couper ce qui alimente le relais. La seconde
+    # n'est pas un reglage, c'est un verrou dans le code.
+    from faux_meross import FausseMeross
+    import prises as prises_mod
+
+    barrette_machines = FausseMeross(cle="cle-de-test", canaux=(1, 2, 3, 4))
+    barrette_reseau = FausseMeross(cle="cle-de-test", canaux=(1, 5))
+
+    parc = prises_mod.Parc({
+        "cle": "cle-de-test",
+        "barrettes": [
+            {"nom": "machines", "hote": barrette_machines.hote, "sorties": [
+                {"canal": 1, "machine": "K2 Plus 1"},
+                {"canal": 2, "machine": "P1S 1"}]},
+            {"nom": "reseau", "hote": barrette_reseau.hote, "sorties": [
+                {"canal": 1, "role": "switch"},
+                {"canal": 5, "role": "pi"}]},
+        ]})
+
+    def ordre_prise(cible, allumer, **extra):
+        ident = canal.publier_ordre(sujet, dict(
+            {"quoi": "prise", "cible": cible, "allumer": allumer}, **extra), jeton)
+        for o in R.lire_ordres(sujet, "2h"):
+            biblio.appliquer_ordre(bib, o, jeton, machines, vit, parc)
+        un_tour()
+        for a in index_courant(canal, sujet).get("accuses", []):
+            if a["id"] == ident:
+                return a
+        return {}
+
+    verifie("le parc se lit depuis relais.json sans rien deviner",
+            parc.prete() and len(parc.sorties()) == 4,
+            json.dumps(parc.sorties(), ensure_ascii=False)[:200])
+
+    # --- couper une machine au repos -----------------------------------
+    a9 = ordre_prise("K2 Plus 1", False)
+    verifie("couper une machine au repos marche",
+            a9.get("ok") and barrette_machines.etats[1] is False,
+            "%s / %s" % (json.dumps(a9, ensure_ascii=False)[:120],
+                         barrette_machines.etats))
+    a9b = ordre_prise("K2 Plus 1", True)
+    verifie("et la rallumer aussi",
+            a9b.get("ok") and barrette_machines.etats[1] is True,
+            str(barrette_machines.etats))
+
+    # --- une machine qui imprime ne se coupe pas par megarde -----------
+    vrai_etat = biblio._etat_machine
+    biblio._etat_machine = lambda m: ({"state": "printing"}
+                                      if m.get("nom") == "P1S 1"
+                                      else vrai_etat(m))
+    a9c = ordre_prise("P1S 1", False)
+    verifie("couper une machine qui imprime est refuse",
+            not a9c.get("ok") and "imprime" in a9c.get("dit", "")
+            and barrette_machines.etats[2] is True,
+            "%s / %s" % (json.dumps(a9c, ensure_ascii=False)[:140],
+                         barrette_machines.etats))
+    a9d = ordre_prise("P1S 1", False, quand_meme=True)
+    verifie("sauf si on insiste",
+            a9d.get("ok") and barrette_machines.etats[2] is False,
+            "%s / %s" % (json.dumps(a9d, ensure_ascii=False)[:120],
+                         barrette_machines.etats))
+    biblio._etat_machine = vrai_etat
+    prises_mod.basculer(barrette_machines.hote, 2, True, "cle-de-test")
+
+    # --- le verrou : le Pi et son switch ne se coupent pas --------------
+    sortie_pi = [s for s in parc.sorties() if s.get("role") == "pi"][0]
+    ok_pi, dit_pi = parc.commander(sortie_pi, False)
+    verifie("la prise qui alimente le Pi est verrouillee",
+            not ok_pi and barrette_reseau.etats[5] is True,
+            "%s / %s" % (dit_pi, barrette_reseau.etats))
+    verifie("et le refus dit pourquoi, pas seulement non",
+            "rallumer" in dit_pi, dit_pi[:140])
+    sortie_switch = [s for s in parc.sorties() if s.get("role") == "switch"][0]
+    ok_sw, _ = parc.commander(sortie_switch, False)
+    verifie("celle du switch aussi",
+            not ok_sw and barrette_reseau.etats[1] is True,
+            str(barrette_reseau.etats))
+
+    # --- « toutes » ne touche que les machines --------------------------
+    a9e = ordre_prise("toutes", False)
+    verifie("« toutes » coupe les machines et rien d'autre",
+            a9e.get("ok") and barrette_machines.etats[1] is False
+            and barrette_machines.etats[2] is False
+            and barrette_reseau.etats[1] is True
+            and barrette_reseau.etats[5] is True,
+            "%s / %s" % (barrette_machines.etats, barrette_reseau.etats))
+    ordre_prise("toutes", True)
+
+    # --- une prise qu'on ne connait pas ---------------------------------
+    a9f = ordre_prise("Ender 3", False)
+    verifie("une machine sans prise declaree est dite telle quelle",
+            not a9f.get("ok") and "relais.json" in a9f.get("dit", ""),
+            json.dumps(a9f, ensure_ascii=False)[:160])
+
+    # --- une multiprise qui ne repond pas -------------------------------
+    parc_muet = prises_mod.Parc({"cle": "cle-de-test", "barrettes": [
+        {"nom": "absente", "hote": "127.0.0.1:1", "sorties": [
+            {"canal": 1, "machine": "K2 Plus 1"}]}]})
+    ok_m, dit_m = parc_muet.commander(parc_muet.pour_machine("K2 Plus 1"), True)
+    verifie("une multiprise injoignable le dit sans faire tomber le relais",
+            not ok_m and "injoignable" in dit_m.lower() or "repons" in dit_m.lower(),
+            dit_m[:140])
+
+    # --- la cle fausse --------------------------------------------------
+    parc_faux = prises_mod.Parc({"cle": "pas-la-bonne", "barrettes": [
+        {"nom": "machines", "hote": barrette_machines.hote, "sorties": [
+            {"canal": 1, "machine": "K2 Plus 1"}]}]})
+    ok_c, dit_c = parc_faux.commander(parc_faux.pour_machine("K2 Plus 1"), False)
+    verifie("une cle qui ne correspond pas est nommee comme telle",
+            not ok_c and "clé" in dit_c.lower() and barrette_machines.etats[1] is True,
+            dit_c[:140])
+
+    # --- le releve emporte l'etat des prises ----------------------------
+    etat_prises = parc.releve()
+    verifie("le releve dit ce qui est allume, et ce qui est verrouille",
+            len(etat_prises) == 4
+            and all(p["allumee"] is not None for p in etat_prises)
+            and sum(1 for p in etat_prises if p["verrouillee"]) == 2,
+            json.dumps(etat_prises, ensure_ascii=False)[:220])
+
+    # === 10. la lumiere dans la chambre ================================
+    # Cote Creality, le nom de la broche d'eclairage change d'une machine a
+    # l'autre : on ne le devine pas, on demande sa liste d'objets a Klipper.
+    # Cote Bambu, c'est une commande dediee, et le firmware veut tous ses
+    # champs meme ceux qui ne servent qu'au clignotement.
+    biblio._BROCHE_LUMIERE.clear()
+
+    def ordre_lumiere(cible, allumer, **extra):
+        ident = canal.publier_ordre(sujet, dict(
+            {"quoi": "lumiere", "machine": cible, "allumer": allumer,
+             "hote": "127.0.0.2"}, **extra), jeton)
+        for o in R.lire_ordres(sujet, "2h"):
+            biblio.appliquer_ordre(bib, o, jeton, machines, vit, parc)
+        un_tour()
+        for a in index_courant(canal, sujet).get("accuses", []):
+            if a["id"] == ident:
+                return a
+        return {}
+
+    a10 = ordre_lumiere("K2 Plus 1", True)
+    verifie("la broche d'eclairage est trouvee, pas devinee",
+            moon.scripts and moon.scripts[-1] == "SET_PIN PIN=caselight VALUE=1",
+            str(moon.scripts[-2:]))
+    verifie("et l'app apprend que c'est allume",
+            a10.get("ok") and "allum" in a10.get("dit", ""),
+            json.dumps(a10, ensure_ascii=False)[:140])
+    ordre_lumiere("K2 Plus 1", False)
+    verifie("eteindre passe par la meme broche",
+            moon.scripts[-1] == "SET_PIN PIN=caselight VALUE=0",
+            str(moon.scripts[-1:]))
+
+    # la liste n'est demandee qu'une fois : le nom ne change pas en service
+    biblio._BROCHE_LUMIERE.clear()
+    moon_nu = FauxMoonraker(hote="127.0.0.5", objets=["configfile", "toolhead"])
+    machines_nues = [{"nom": "K2 nue", "type": "moonraker",
+                      "hote": "127.0.0.5", "port": moon_nu.port}]
+    try:
+        biblio.lumiere(machines_nues, "K2 nue", True, "127.0.0.5")
+        verifie("une machine sans lumiere declaree le dit", False,
+                "a pretendu allumer une lumiere qui n'existe pas")
+    except ValueError as e:
+        verifie("une machine sans lumiere declaree le dit",
+                "aucune lumi" in str(e), str(e)[:130])
+
+    # --- cote Bambu : la commande exacte du firmware -------------------
+    from faux_bambu_mqtt import FauxBambuMqtt
+    capture_sys = {}
+    faux_l = FauxBambuMqtt(accepte="aucune")
+
+    def espion_sys(c):
+        try:
+            from faux_bambu_mqtt import _paquet as _pq
+            _pq(c)
+            c.sendall(bytes([0x20, 2, 0, 0]))
+            while True:
+                t, b = _pq(c)
+                if t == 8:
+                    c.sendall(bytes([0x90, 3, 0, 1, 0]))
+                elif t == 3:
+                    lg = struct.unpack(">H", b[:2])[0]
+                    capture_sys["sys"] = json.loads(b[2 + lg:].decode()).get("system")
+                    return
+        except Exception:
+            pass
+
+    faux_l._session = espion_sys
+    m_l = {"nom": "P1S 1", "hote": "127.0.0.1", "type": "bambu",
+           "serie": faux_l.serie, "code": "x"}
+    vraie_co = biblio.socket.create_connection
+    biblio.socket.create_connection = (
+        lambda a, timeout=None: vraie_co(("127.0.0.1", faux_l.port), timeout=timeout))
+    try:
+        biblio.lumiere_bambu(m_l, True)
+    except Exception:
+        pass
+    finally:
+        biblio.socket.create_connection = vraie_co
+
+    sysp = capture_sys.get("sys") or {}
+    attendus_l = {"command": "ledctrl", "led_node": "chamber_light",
+                  "led_mode": "on"}
+    manque_l = [k for k, v in attendus_l.items() if sysp.get(k) != v]
+    verifie("la commande d'eclairage Bambu porte ce que le firmware attend",
+            not manque_l, "manquent ou faux : %s — recu %s"
+            % (manque_l, json.dumps(sysp, ensure_ascii=False)[:160]))
+    verifie("y compris les champs de duree, qui ne servent qu'au clignotement",
+            all(k in sysp for k in ("led_on_time", "led_off_time",
+                                    "loop_times", "interval_time")),
+            json.dumps(sysp, ensure_ascii=False)[:160])
 
     # === 6. la boucle survit à tout ce qui précède ======================
     verifie("la boucle principale n'est jamais tombée", True)

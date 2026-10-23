@@ -566,6 +566,26 @@ public class Bridge {
     }
 
     @JavascriptInterface
+    public void biblioLumiere(final String machine, final String hote,
+                              final boolean allumer, final String cbId) {
+        new Thread(new Runnable() {
+            public void run() {
+                callBack(cbId, Biblio.lumiere(act, machine, hote, allumer).toString());
+            }
+        }).start();
+    }
+
+    @JavascriptInterface
+    public void biblioPrise(final String cible, final boolean allumer,
+                            final boolean quandMeme, final String cbId) {
+        new Thread(new Runnable() {
+            public void run() {
+                callBack(cbId, Biblio.prise(act, cible, allumer, quandMeme).toString());
+            }
+        }).start();
+    }
+
+    @JavascriptInterface
     public void biblioService(final String cible, final boolean quandMeme,
                               final String cbId) {
         new Thread(new Runnable() {
