@@ -551,16 +551,26 @@ public class Bridge {
     }
 
     @JavascriptInterface
-    public void relayVitrine(final String cbId) {
+    public void relayEtat(final String cbId) {
         new Thread(new Runnable() {
             public void run() {
                 String payload;
                 try {
-                    payload = Relay.vitrine(act).toString();
+                    payload = Relay.etat(act).toString();
                 } catch (Throwable t) {
                     payload = "{}";
                 }
                 callBack(cbId, payload);
+            }
+        }).start();
+    }
+
+    @JavascriptInterface
+    public void biblioService(final String cible, final boolean quandMeme,
+                              final String cbId) {
+        new Thread(new Runnable() {
+            public void run() {
+                callBack(cbId, Biblio.service(act, cible, quandMeme).toString());
             }
         }).start();
     }

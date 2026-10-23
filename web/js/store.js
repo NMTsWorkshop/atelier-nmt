@@ -417,7 +417,14 @@ const Relais = {
      Le jeton qui écrit dans la boutique ne passe jamais par le téléphone :
      il vit sur le Pi. L'app envoie une décision, pas une écriture. */
 
-  vitrine() { return nativeCall('relayVitrine', []); },
+  /* Tout ce que le relais raconte de lui-même dans son relevé, en un seul
+     appel : le délai qu'il annonce à la boutique, et l'état du Pi. */
+  etat() { return nativeCall('relayEtat', []); },
+
+  /* Remettre le Pi d'aplomb. cible : 'partage', 'relais' ou 'pi'. */
+  service(cible, quandMeme) {
+    return nativeCall('biblioService', [String(cible || ''), !!quandMeme]);
+  },
 
   reglerVitrine(peintureOuverte, peintureJours, marge) {
     return nativeCall('biblioVitrine',
@@ -428,11 +435,20 @@ const Relais = {
 /* Le dernier état lu, pour que l'écran des réglages n'interroge le canal
    qu'une fois par visite au lieu d'à chaque redessin. */
 let VITRINE_VUE = null;
+let PI_VU = null;
 let VITRINE_DEMANDEE = false;
 /* le dernier mot du relais sur un réglage envoyé. Il est gardé ici, et non
    écrit dans la page, parce que relire ce que le relais annonce redessine
    l'écran — et effacerait la phrase au moment où elle devient vraie. */
 let VITRINE_DIT = '';
+
+let PI_DIT = '';
+
+function piDire(html) {
+  PI_DIT = html || '';
+  const o = typeof $ === 'function' ? $('#pi-out') : null;
+  if (o) o.innerHTML = PI_DIT;
+}
 
 function vitrineDire(html) {
   VITRINE_DIT = html || '';
@@ -441,15 +457,28 @@ function vitrineDire(html) {
 }
 
 function vitrineAuBesoin(forcer) {
-  if (forcer) { VITRINE_DEMANDEE = false; VITRINE_VUE = null; }
+  if (forcer) { VITRINE_DEMANDEE = false; VITRINE_VUE = null; PI_VU = null; }
   if (VITRINE_DEMANDEE || !Relais.ok() || !Relais.sujet()) return;
   VITRINE_DEMANDEE = true;
-  Relais.vitrine()
-    .then(v => {
-      VITRINE_VUE = v && typeof v === 'object' ? v : {};
+  Relais.etat()
+    .then(e => {
+      const r = e && typeof e === 'object' ? e : {};
+      VITRINE_VUE = r.vitrine || {};
+      PI_VU = r.pi || {};
       if (typeof TAB !== 'undefined' && TAB === 'settings') render();
     })
-    .catch(() => { VITRINE_VUE = {}; });
+    .catch(() => { VITRINE_VUE = {}; PI_VU = {}; });
+}
+
+/* « 3 j », « 5 h », « 12 min » — depuis combien de temps le Pi est debout.
+   Une durée ronde suffit : ce qu'on veut savoir, c'est s'il vient de
+   redémarrer ou s'il traîne depuis des semaines. */
+function dureeRonde(secondes) {
+  const s = Math.max(0, secondes | 0);
+  if (s >= 86400) return Math.floor(s / 86400) + ' j';
+  if (s >= 3600) return Math.floor(s / 3600) + ' h';
+  if (s >= 60) return Math.floor(s / 60) + ' min';
+  return s + ' s';
 }
 
 /* ============================================================

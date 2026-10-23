@@ -40,6 +40,7 @@ import urllib.request
 
 import biblio as bibliotheque
 import commerce
+import entretien
 
 ICI = os.path.dirname(os.path.abspath(__file__))
 SERVEUR = "https://ntfy.sh/"
@@ -479,6 +480,13 @@ def publier(sujet, etats, envois=None):
     # demande à Nathan de régler un délai qu'elle ne sait pas lire
     if VITRINE:
         charge["vitrine"] = VITRINE
+    # l'etat du Pi lui-meme : l'app doit pouvoir dire « le partage est
+    # arrete » plutot que de laisser Nathan deviner pourquoi Windows ne
+    # montre plus rien
+    try:
+        charge["pi"] = entretien.etat()
+    except Exception:
+        pass
     corps = json.dumps(charge, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(SERVEUR + sujet, data=corps, method="POST")
     req.add_header("Content-Type", "application/json")
@@ -695,6 +703,19 @@ def main():
                 bibliotheque.oublier_publication()
                 print("%s — bibliothèque non publiée : %s"
                       % (time.strftime("%H:%M:%S"), e), file=sys.stderr, flush=True)
+        # --- le Pi se remet d'aplomb, une fois la releve partie ------
+        # Apres la publication : les deux gestes lourds coupent le relais,
+        # et l'accuse doit etre parti avant, sinon l'app conclut au silence.
+        try:
+            dit = entretien.executer_si_demande(
+                journal=lambda m: print("%s — %s" % (time.strftime("%H:%M:%S"), m),
+                                        flush=True))
+            if dit:
+                print("%s — %s" % (time.strftime("%H:%M:%S"), dit), flush=True)
+        except Exception as e:
+            print("%s — entretien impossible : %s" % (time.strftime("%H:%M:%S"), e),
+                  file=sys.stderr, flush=True)
+
         if unique:
             print(json.dumps(etats, ensure_ascii=False, indent=1))
             return

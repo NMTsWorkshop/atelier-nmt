@@ -215,20 +215,28 @@ public class Relay {
     }
 
     /**
-     * Ce que le relais annonce à la boutique : le délai calculé, d'où il
-     * vient, le statut peinture, et la dernière fois qu'il l'a écrit.
+     * Ce que le relais raconte de lui-même dans son relevé : le délai qu'il
+     * annonce à la boutique, et l'état du Pi (partage de fichiers, temps
+     * depuis le dernier démarrage).
      *
      * Ça voyage dans le relevé qu'il publie de toute façon. On regarde trois
      * heures en arrière : le calcul ne se refait qu'une fois par heure, et un
      * relevé publié juste avant ne doit pas passer pour une absence.
      */
-    static JSONObject vitrine(Context c) throws Exception {
+    static JSONObject etat(Context c) throws Exception {
+        JSONObject out = new JSONObject();
         String sujet = sujet(c);
-        if (sujet.length() == 0) return new JSONObject();
+        if (sujet.length() == 0) return out;
         String url = "https://ntfy.sh/" + URLEncoder.encode(sujet, "UTF-8")
                 + "/json?poll=1&since=3h";
-        JSONObject v = releveDepuis(lire(url)).optJSONObject("vitrine");
-        return v == null ? new JSONObject() : v;
+        JSONObject releve = releveDepuis(lire(url));
+        out.put("ok", releve.length() > 0);
+        out.put("at", releve.optLong("at", 0));
+        JSONObject v = releve.optJSONObject("vitrine");
+        out.put("vitrine", v == null ? new JSONObject() : v);
+        JSONObject pi = releve.optJSONObject("pi");
+        out.put("pi", pi == null ? new JSONObject() : pi);
+        return out;
     }
 
     /** Vrai si le relevé du relais est plus récent que ce qu'on a déjà. */

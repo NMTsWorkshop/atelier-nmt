@@ -222,7 +222,13 @@ const errors = [];
       } catch (e) { return false; }
     }, null, { timeout: 5000 });
     await page.reload();
-    await page.waitForTimeout(300);
+    /* attendre que l'app ait fini de relire son stockage, et pas un delai
+       fixe : sur une machine chargee le rechargement prend plus de 300 ms
+       et le test concluait a des donnees perdues alors qu'elles arrivaient */
+    await page.waitForFunction(
+      () => typeof DB !== 'undefined' && DB && (DB.machines || []).length === 1
+            && (DB.spools || []).length === 2 && (DB.orders || []).length === 1,
+      null, { timeout: 8000 });
     const n = await page.evaluate(() => DB.machines.length + '/' + DB.spools.length + '/' + DB.orders.length);
     if (n !== '1/2/1') throw new Error('données perdues : ' + n);
     const kg = await page.evaluate(() => spoolTotal(DB.spools[0]));
@@ -845,13 +851,22 @@ const errors = [];
     window.NMT = Object.assign(window.NMT || {}, {
       relayTopic: () => 'nmt-test',
       saveRelay: () => {},
-      relayVitrine: (id) => setTimeout(() => window.NMTcb(id, JSON.stringify({
-        jours: 3, heures: 60, par_famille: { k2: 48, p1s: 12 },
-        machines: { k2: 2, p1s: 2 }, marge: 1, commandes: 4,
-        sans_fichier: ['#1051'],
-        peinture: { ouverte: false, jours: 5 },
-        envoye_at: Date.now() - 600000, boutique: ''
+      relayEtat: (id) => setTimeout(() => window.NMTcb(id, JSON.stringify({
+        ok: true, at: Date.now(),
+        vitrine: {
+          jours: 3, heures: 60, par_famille: { k2: 48, p1s: 12 },
+          machines: { k2: 2, p1s: 2 }, marge: 1, commandes: 4,
+          sans_fichier: ['#1051'],
+          peinture: { ouverte: false, jours: 5 },
+          envoye_at: Date.now() - 600000, boutique: ''
+        },
+        pi: { partage: 'arrêté', debout: 259200 }
       })), 10),
+      biblioService: (cible, quandMeme, id) => {
+        window.__service = [cible, quandMeme];
+        setTimeout(() => window.NMTcb(id,
+          '{"ok":true,"differe":true,"id":"s1"}'), 10);
+      },
       biblioVitrine: (ouverte, jours, marge, id) => {
         window.__vitrine = [ouverte, jours, marge];
         setTimeout(() => window.NMTcb(id,
@@ -864,7 +879,7 @@ const errors = [];
         dit: 'peinture ouverte, délai peinture 7 j, marge 2 j'
       })), 10)
     });
-    VITRINE_VUE = null; VITRINE_DEMANDEE = false;
+    VITRINE_VUE = null; PI_VU = null; VITRINE_DEMANDEE = false;
     Biblio.cadence = { premier: 200, ensuite: 200, duree: 4000 };
   });
 
@@ -899,10 +914,14 @@ const errors = [];
 
   await step('sans jeton de boutique, le relais le dit sur l\'écran', async () => {
     await page.evaluate(() => {
-      window.NMT.relayVitrine = (id) => setTimeout(() => window.NMTcb(id, JSON.stringify({
-        jours: 2, par_famille: {}, marge: 0, commandes: 1, sans_fichier: [],
-        peinture: { ouverte: true, jours: 0 }, envoye_at: 0,
-        boutique: 'shopify.jeton est resté à A-REMPLIR dans relais.json'
+      window.NMT.relayEtat = (id) => setTimeout(() => window.NMTcb(id, JSON.stringify({
+        ok: true,
+        vitrine: {
+          jours: 2, par_famille: {}, marge: 0, commandes: 1, sans_fichier: [],
+          peinture: { ouverte: true, jours: 0 }, envoye_at: 0,
+          boutique: 'shopify.jeton est resté à A-REMPLIR dans relais.json'
+        },
+        pi: { partage: 'actif', debout: 120 }
       })), 10);
       vitrineAuBesoin(true);
     });
@@ -972,6 +991,77 @@ const errors = [];
     if (!ids) throw new Error('aucune vérification d\'expédition : ' + qs);
     const envoyes = await page.evaluate(() => DB.orders.length);
     if (envoyes !== 3) throw new Error('la liste a changé de taille');
+  });
+
+  console.log('\n— remettre le Pi d\'aplomb —');
+
+  await page.evaluate(() => {
+    window.NMT.biblioAck = (ident, id) => setTimeout(() => window.NMTcb(id,
+      JSON.stringify({ id: ident, ok: true,
+        dit: 'partage relancé — les fichiers redeviennent visibles' })), 10);
+    window.NMT.relayEtat = (id) => setTimeout(() => window.NMTcb(id, JSON.stringify({
+      ok: true, vitrine: { jours: 2, par_famille: {}, marge: 0, commandes: 0,
+                           sans_fichier: [], peinture: { ouverte: true, jours: 0 },
+                           envoye_at: 0, boutique: '' },
+      pi: { partage: 'arrêté', debout: 259200 }
+    })), 10);
+    window.__service = null;
+    /* l'etape precedente a remis l'horloge des accuses a sa valeur reelle :
+       ici on la resserre, sinon chaque geste attendrait vingt secondes */
+    Biblio.cadence = { premier: 150, ensuite: 150, duree: 5000 };
+    vitrineAuBesoin(true);
+  });
+
+  await step('un partage arrêté se voit sur l\'écran', async () => {
+    await page.click('#tabbar .tab[data-tab=settings]');
+    await page.waitForFunction(() => /Debout depuis/.test(
+      (document.getElementById('view') || {}).textContent || ''), null, { timeout: 5000 });
+    const txt = await page.textContent('#view');
+    if (!/arrêté/.test(txt)) throw new Error('l\'état du partage n\'est pas dit');
+    if (!/3 j/.test(txt)) throw new Error('durée depuis le démarrage absente : ' + txt.slice(0, 300));
+  });
+
+  await step('relancer le partage ne demande pas de confirmation', async () => {
+    await page.click('button[onclick="piGeste(\'partage\')"]');
+    await page.waitForFunction(() => !!window.__service, null, { timeout: 5000 });
+    const vu = await page.evaluate(() => window.__service);
+    if (vu[0] !== 'partage' || vu[1] !== false)
+      throw new Error('geste envoyé faux : ' + JSON.stringify(vu));
+    await page.waitForFunction(() => /redeviennent visibles/.test(
+      (document.getElementById('pi-out') || {}).textContent || ''), null, { timeout: 6000 });
+  });
+
+  await step('un transfert en cours fait refuser le redémarrage', async () => {
+    await page.evaluate(() => {
+      window.__service = null;
+      window.__confirme = [];
+      window.confirm = (m) => { window.__confirme.push(m); return false; };
+      window.NMT.biblioAck = (ident, id) => setTimeout(() => window.NMTcb(id,
+        JSON.stringify({ id: ident, ok: false,
+          dit: 'un transfert est en cours — redémarrer le Pi le couperait.' })), 10);
+      piGeste('pi', true);          // on saute la confirmation d'ouverture
+    });
+    await page.waitForFunction(() => /transfert est en cours/.test(
+      (document.getElementById('pi-out') || {}).textContent || ''), null, { timeout: 6000 });
+    const demandes = await page.evaluate(() => window.__confirme);
+    if (!demandes.some(m => /Forcer quand même/.test(m)))
+      throw new Error('il n\'a pas propose de forcer : ' + JSON.stringify(demandes));
+  });
+
+  await step('un relais parti sans répondre n\'est pas annoncé en panne', async () => {
+    await page.evaluate(() => {
+      window.confirm = () => true;
+      /* le relais redémarre : il ne republiera jamais d'accusé */
+      window.NMT.biblioAck = (ident, id) => setTimeout(() => window.NMTcb(id,
+        JSON.stringify({ id: ident, ok: true, fini: false, dit: 'reçu' })), 10);
+      Biblio.cadence = { premier: 100, ensuite: 100, duree: 600 };
+      piGeste('relais');
+    });
+    await page.waitForFunction(() => /en train de repartir/.test(
+      (document.getElementById('pi-out') || {}).textContent || ''), null, { timeout: 8000 });
+    await page.evaluate(() => {
+      Biblio.cadence = { premier: 20000, ensuite: 60000, duree: 900000 };
+    });
   });
 
   for (const t of ['machines', 'stock', 'biblio', 'orders', 'profiles']) {

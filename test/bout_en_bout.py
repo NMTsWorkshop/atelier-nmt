@@ -908,6 +908,103 @@ def main():
             not vide.prete() and dit_vide and "A-REMPLIR" in dit_vide,
             str(dit_vide)[:140])
 
+    # === 8. remettre le Pi d'aplomb sans aller debrancher ===============
+    # Le cas de Nathan : le Pi est allume, il repond, mais le partage ne
+    # montre plus rien. Couper le courant marcherait ; relancer smbd aussi,
+    # et ca n'interrompt rien d'autre.
+    import entretien
+
+    appels = []
+
+    def faux_courir(commande, delai=25):
+        appels.append(list(commande))
+        return entretien._REPONSE.get(tuple(commande[-2:]), (True, ""))
+
+    entretien._REPONSE = {}
+    vrai_courir = entretien._courir
+    vrai_actif = entretien.partage_actif
+    entretien._courir = faux_courir
+    entretien.partage_actif = lambda: entretien._ETAT_PARTAGE
+    entretien._ETAT_PARTAGE = "actif"
+
+    def ordre_service(cible, **extra):
+        """Publie l'ordre, laisse le relais faire son tour, rend l'accusé.
+
+        Le tour complet compte : c'est lui qui publie l'accusé, et toute la
+        question du redémarrage est justement de savoir si l'accusé part
+        avant que le relais s'en aille."""
+        ident = canal.publier_ordre(
+            sujet, dict({"quoi": "service", "cible": cible}, **extra), jeton)
+        un_tour()
+        for a in index_courant(canal, sujet).get("accuses", []):
+            if a["id"] == ident:
+                return a
+        return {}
+
+    # --- le geste doux : relancer le partage ---------------------------
+    a8 = ordre_service("partage")
+    verifie("relancer le partage passe par smbd, pas par le courant",
+            appels and appels[-1][-2:] == ["restart", "smbd"],
+            str(appels[-1:]))
+    verifie("et l'app apprend que c'est reparti",
+            a8.get("ok") and "partage relanc" in a8.get("dit", ""),
+            json.dumps(a8, ensure_ascii=False)[:160])
+
+    # --- smbd qui ne tient pas ne doit pas passer pour un succes -------
+    entretien._ETAT_PARTAGE = "arrêté"
+    a8b = ordre_service("partage")
+    verifie("un partage qui ne redemarre pas est rapporte comme tel",
+            a8b and not a8b.get("ok"),
+            json.dumps(a8b, ensure_ascii=False)[:160])
+    entretien._ETAT_PARTAGE = "actif"
+
+    # --- sudo qui demande un mot de passe : dire quoi faire ------------
+    entretien._REPONSE = {("restart", "smbd"):
+                          (False, entretien.AIDE_SUDO)}
+    a8c = ordre_service("partage")
+    verifie("un sudo qui demande un mot de passe nomme le script a lancer",
+            a8c and not a8c.get("ok") and "pi-13-sans-mdp" in a8c.get("dit", ""),
+            json.dumps(a8c, ensure_ascii=False)[:180])
+    entretien._REPONSE = {}
+
+    # --- le geste lourd attend la publication --------------------------
+    partis = []
+    entretien.SORTIE = lambda code: partis.append(code)
+    a8d = ordre_service("relais")
+    verifie("le relais accuse AVANT de s'en aller",
+            a8d.get("ok") and not partis,
+            "accuse=%s parti=%s" % (json.dumps(a8d, ensure_ascii=False)[:120], partis))
+    entretien.executer_si_demande()
+    verifie("et s'en va seulement apres",
+            partis == [0], str(partis))
+
+    # --- un transfert en cours protege le redemarrage ------------------
+    biblio.envoi_commence("faux-envoi", "casque.3mf", "P1S 1", 1000000)
+    a8e = ordre_service("pi")
+    verifie("un redemarrage pendant un transfert est refuse",
+            a8e and not a8e.get("ok") and "transfert" in a8e.get("dit", ""),
+            json.dumps(a8e, ensure_ascii=False)[:180])
+    verifie("et rien n'a ete programme",
+            not entretien.EN_ATTENTE, str(entretien.EN_ATTENTE))
+
+    a8f = ordre_service("pi", quand_meme=True)
+    verifie("sauf s'il insiste",
+            a8f.get("ok"), json.dumps(a8f, ensure_ascii=False)[:160])
+    biblio.envoi_termine("faux-envoi", True, "fini")
+    entretien.executer_si_demande()
+    verifie("et alors la machine redemarre pour de bon",
+            appels and appels[-1][-1] == "reboot", str(appels[-1:]))
+
+    # --- un geste qui n'existe pas -------------------------------------
+    a8g = ordre_service("formater")
+    verifie("un geste inconnu est refuse sans rien tenter",
+            a8g and not a8g.get("ok") and "inconnu" in a8g.get("dit", ""),
+            json.dumps(a8g, ensure_ascii=False)[:160])
+
+    entretien._courir = vrai_courir
+    entretien.partage_actif = vrai_actif
+    entretien.EN_ATTENTE.clear()
+
     # === 6. la boucle survit à tout ce qui précède ======================
     verifie("la boucle principale n'est jamais tombée", True)
     verifie("aucun envoi resté bloqué en cours",

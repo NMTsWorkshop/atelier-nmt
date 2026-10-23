@@ -236,6 +236,26 @@ public class Biblio {
         }
     }
 
+    /**
+     * Remettre le Pi d'aplomb : relancer le partage de fichiers, relancer le
+     * relais, ou redémarrer la machine.
+     *
+     * Ça ne passe que par le canal, et c'est voulu : le service local du
+     * relais meurt avec lui, alors que l'ordre publié survit au redémarrage
+     * qu'il demande. « quandMeme » force malgré un transfert en cours.
+     */
+    static JSONObject service(Context c, String cible, boolean quandMeme) {
+        try {
+            JSONObject o = new JSONObject();
+            o.put("quoi", "service");
+            o.put("cible", cible == null ? "" : cible);
+            if (quandMeme) o.put("quand_meme", true);
+            return parLeCanal(c, o);
+        } catch (Exception e) {
+            return erreur(String.valueOf(e.getMessage()));
+        }
+    }
+
     /** Un ordre sans effet, juste pour savoir si le jeton passe. */
     static JSONObject verifierJeton(Context c) {
         try {

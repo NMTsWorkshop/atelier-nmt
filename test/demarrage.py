@@ -74,5 +74,9 @@ if R.VITRINE.get("jours") != 2: rate("délai faux ou absent : %s" % R.VITRINE)
 rel = [json.loads(c) for t, c in recu if t == "atelier"][-1]
 if rel.get("vitrine", {}).get("marge") != 2: rate("la marge n'est pas publiée")
 if "A-REMPLIR" not in rel["vitrine"]["boutique"]: rate(str(rel["vitrine"]))
+# l'etat du Pi voyage avec la releve : c'est ce qui permet a l'app de dire
+# « le partage est arrete » au lieu de laisser deviner
+if "pi" not in rel: rate("l'etat du Pi n'est pas publie : %s" % sorted(rel))
+if "partage" not in rel["pi"]: rate(str(rel["pi"]))
 print("démarrage : ok — relevé, bibliothèque et vitrine publiés "
       "(délai %d j, marge %d j)" % (R.VITRINE["jours"], R.VITRINE["marge"]))

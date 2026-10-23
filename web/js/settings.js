@@ -89,6 +89,34 @@ function renderSettings() {
       '</div>';
   }
 
+  /* ---- remettre le Pi d'aplomb ---- */
+  if (sujet) {
+    vitrineAuBesoin();
+    const pi = PI_VU;
+    const partage = pi && pi.partage;
+    out += '<div class="sec-title">Le Pi</div>' +
+      '<div class="card">' +
+        '<div class="hint" style="margin-bottom:10px">Quand le partage ne répond plus ' +
+          'alors que le Pi est allumé, inutile d\'aller débrancher : relancer le partage ' +
+          'suffit presque toujours, et ça n\'interrompt rien d\'autre.</div>' +
+        (pi === null
+          ? '<div class="hint">Lecture du relais…</div>'
+          : '<div class="kv"><span>Partage de fichiers</span><b class="mono"' +
+              (partage === 'arrêté' ? ' style="color:var(--bad)"' : '') + '>' +
+              esc(partage || 'inconnu') + '</b></div>' +
+            '<div class="kv"><span>Debout depuis</span><b class="mono">' +
+              (pi.debout ? dureeRonde(pi.debout) : '—') + '</b></div>') +
+        '<div class="btn-row">' +
+          '<button class="btn primary" onclick="piGeste(\'partage\')">Relancer le partage</button>' +
+          '<button class="btn" onclick="piGeste(\'relais\')">Relancer le relais</button>' +
+        '</div>' +
+        '<div class="btn-row">' +
+          '<button class="btn" onclick="piGeste(\'pi\')">Redémarrer le Pi</button>' +
+        '</div>' +
+        '<div class="hint" id="pi-out" style="margin-top:9px">' + PI_DIT + '</div>' +
+      '</div>';
+  }
+
   /* ---- délai annoncé dans la boutique ---- */
   if (sujet) {
     vitrineAuBesoin();
@@ -409,6 +437,61 @@ function envoyerCompta() {
     .catch(e => {
       toast('Échec — ' + e.message, 'bad');
       if (out) out.innerHTML = '<span style="color:var(--bad)">Échec — ' + esc(e.message) + '</span>';
+    });
+}
+
+/* Les trois gestes d'entretien du Pi. Les deux derniers coupent le relais,
+   donc on prévient avant, et on attend son accusé plutôt que de dire « c'est
+   fait » à un relais qui est peut-être déjà parti. */
+const PI_GESTES = {
+  partage: { titre: 'Relancer le partage', confirme: '',
+             attente: 'Relance du partage…' },
+  relais: { titre: 'Relancer le relais',
+            confirme: 'Relancer le relais ? Il revient tout seul dans la demi-minute.',
+            attente: 'Relais en train de repartir…' },
+  pi: { titre: 'Redémarrer le Pi',
+        confirme: 'Redémarrer le Pi ? Compte une minute sans relevé ni bibliothèque.',
+        attente: 'Redémarrage demandé…' }
+};
+
+function piGeste(cible, quandMeme) {
+  const g = PI_GESTES[cible];
+  if (!g) return;
+  if (g.confirme && !quandMeme && !confirm(g.confirme)) return;
+
+  piDire(g.attente);
+  Relais.service(cible, !!quandMeme)
+    .then(r => {
+      if (!r || !r.ok) throw new Error((r && r.error) || 'refusé');
+      piDire('<span style="color:var(--txt-3)">Envoyé. Le relais répond dans la minute…</span>');
+      if (!r.id) return;
+      return Biblio.suivreOrdre(r.id).then(a => {
+        if (a && a.ok) {
+          piDire('<span style="color:var(--ok)">' + esc(a.dit || 'fait') + '</span>');
+          toast('Le relais a pris en compte', 'ok');
+          /* le partage relancé change l'état affiché ; les deux autres
+             gestes coupent le relais, inutile de le relire tout de suite */
+          if (cible === 'partage') vitrineAuBesoin(true);
+        } else if (a && !a.ok && /transfert/.test(a.dit || '')) {
+          /* refusé parce qu'un fichier est en route : on propose d'insister
+             plutôt que de laisser l'utilisateur deviner */
+          piDire('<span style="color:var(--bad)">' + esc(a.dit) + '</span>');
+          if (confirm(a.dit + '\n\nForcer quand même ?')) piGeste(cible, true);
+        } else if (a) {
+          piDire('<span style="color:var(--bad)">' + esc(a.dit || 'refusé') + '</span>');
+        } else {
+          /* pas de réponse : pour un redémarrage c'est normal, le relais
+             est parti avant de pouvoir republier quoi que ce soit */
+          piDire(cible === 'partage'
+            ? '<span style="color:var(--bad)">Pas de réponse du relais.</span>'
+            : '<span style="color:var(--txt-3)">Pas de réponse — c\'est attendu, ' +
+              'le relais est en train de repartir. Recharge dans une minute.</span>');
+        }
+      });
+    })
+    .catch(e => {
+      toast('Échec — ' + e.message, 'bad');
+      piDire('<span style="color:var(--bad)">Échec — ' + esc(e.message) + '</span>');
     });
 }
 

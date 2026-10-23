@@ -10,8 +10,8 @@ android {
         applicationId "fr.nmt.atelier"
         minSdk 26
         targetSdk 34
-        versionCode 34
-        versionName "4.3"
+        versionCode 35
+        versionName "4.4"
     }
 
     // L'interface web vit dans /web à la racine du projet et devient

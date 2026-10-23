@@ -37,6 +37,7 @@ sudo mkdir -p "$DOSSIER"
 sudo curl -fsSL "$BASE/relais_atelier.py" -o "$DOSSIER/relais_atelier.py"
 sudo curl -fsSL "$BASE/biblio.py" -o "$DOSSIER/biblio.py"
 sudo curl -fsSL "$BASE/commerce.py" -o "$DOSSIER/commerce.py"
+sudo curl -fsSL "$BASE/entretien.py" -o "$DOSSIER/entretien.py"
 sudo curl -fsSL "$BASE/bambu_diag.py" -o "$DOSSIER/bambu_diag.py"
 sudo curl -fsSL "$BASE/relais-atelier.service" -o /etc/systemd/system/relais-atelier@.service
 sudo systemctl daemon-reload

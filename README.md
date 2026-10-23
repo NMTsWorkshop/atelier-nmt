@@ -136,6 +136,12 @@ Côté Bambu, **il n'est pas nécessaire de couper le cloud** : le MQTT local
 répond avec le seul code d'accès, vérifié sur P1S. Le téléphone doit être sur
 le même réseau que l'atelier.
 
+**Le Pi** — Réglages → *Le Pi*. Quand le partage ne répond plus alors que la
+machine est allumée, « Relancer le partage » règle le cas sans rien
+interrompre d'autre ; « Relancer le relais » et « Redémarrer le Pi » sont là
+pour le reste. L'écran dit aussi si le partage tourne et depuis combien de
+temps la machine est debout. Rien de tout ça ne demande d'être à la maison.
+
 **Profils** — tes réglages habituels : matière, couche, buse, remplissage,
 températures, notes. Un profil peut être rattaché par défaut à une machine.
 

@@ -40,6 +40,8 @@ import urllib.parse
 import urllib.request
 import zipfile
 import zlib
+
+import entretien
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # nombre d'exemplaires écrit dans le nom du fichier
@@ -2052,6 +2054,27 @@ def appliquer_ordre(biblio, ordre, jeton, machines=None, vitrine=None):
             dit = "%s rattaché à %s" % (os.path.basename(chemin),
                                         ordre.get("commande") or "aucune commande")
             accuser(ident, True, dit)
+            return dit
+        if quoi == "service":
+            # Remettre d'aplomb le Pi lui-même. Deux de ces gestes coupent
+            # le relais, donc l'accusé part d'abord et le geste attend la
+            # publication : voir entretien.py.
+            geste = str(ordre.get("cible") or "").strip()
+            if geste not in entretien.GESTES:
+                dit = "geste inconnu : %s" % (geste or "aucun")
+                accuser(ident, False, dit)
+                return dit
+            if geste != "partage" and envoi_actif() and not ordre.get("quand_meme"):
+                dit = ("un transfert est en cours — %s le couperait. "
+                       "Attends qu'il finisse, ou arrête-le."
+                       % entretien.PHRASES[geste])
+                accuser(ident, False, dit)
+                return dit
+            if geste == "partage":
+                ok, dit = entretien.relancer_partage()
+            else:
+                ok, dit = entretien.demander(geste)
+            accuser(ident, ok, dit)
             return dit
         if quoi == "ping":
             # sert au bouton Tester de l'app : il prouve que le jeton passe

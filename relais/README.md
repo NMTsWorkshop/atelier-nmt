@@ -209,6 +209,37 @@ chaque changement, donc un seul message récent suffit — mais si le PC reste
 éteint plusieurs jours, il faut retoucher **Envoyer maintenant** dans l'app avant
 de lancer le script.
 
+## Remettre le Pi d'aplomb depuis l'app
+
+Le symptôme le plus courant n'est pas une panne : le Pi est allumé, il répond,
+mais le partage de fichiers ne montre plus rien depuis Windows. Couper le
+courant réglerait ça — c'est aussi le seul geste qu'on ne peut pas annuler à
+distance, et il tombe à l'aveugle sur un disque qui écrit peut-être.
+
+Réglages → **Le Pi** montre l'état du partage et depuis combien de temps la
+machine est debout, et propose trois gestes, du plus doux au plus brutal :
+
+| geste | ce qu'il fait | quand |
+|---|---|---|
+| Relancer le partage | `systemctl restart smbd` | les fichiers ne sont plus visibles depuis Windows |
+| Relancer le relais | le service sort, systemd le relance | le relevé est figé ou la bibliothèque ne répond plus |
+| Redémarrer le Pi | `systemctl reboot` | plus rien ne répond |
+
+Les deux derniers coupent le relais, et c'est lui qui répond à l'app :
+l'accusé de réception part donc **avant** le geste. Sans ça l'app conclurait
+au silence et annoncerait que l'ordre n'est pas passé, alors qu'il l'est.
+
+Un transfert en cours fait refuser les deux gestes lourds — l'app propose
+alors de forcer. Le relais n'a besoin d'aucun droit particulier pour se
+relancer lui-même (son service est en `Restart=always`) ; les deux autres
+gestes passent par `sudo`, sur la règle posée par `pi-13-sans-mdp.bat`, qui
+n'autorise que ces commandes-là.
+
+Ces gestes voyagent par le canal, signés comme les autres ordres. Qui connaît
+à la fois le sujet et le jeton peut donc redémarrer le Pi — c'est le même
+niveau d'accès que celui qui permet déjà d'envoyer un fichier sur une machine
+et de lancer une impression.
+
 ## Vérifier le relais sans y toucher
 
 Trois tests tournent sans Pi ni imprimante, et à chaque envoi sur GitHub :
