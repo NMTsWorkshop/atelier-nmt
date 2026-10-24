@@ -255,7 +255,16 @@ de passe n'est écrit nulle part. La clé ne vaut que sur le réseau local : un
 ordre signé avec elle n'est accepté que par une multiprise qu'on peut déjà
 joindre.
 
-Le deuxième balaye le réseau du Pi et imprime un bloc `prises` prêt à recopier,
+Le deuxième balaye le réseau du Pi **et ceux de tes machines** — l'atelier n'est
+pas forcément sur un seul sous-réseau, et les objets connectés sont souvent mis
+à part. Si les multiprises sont ailleurs encore, ajoute le préfixe dans
+`relais.json` : `"prises": { "reseaux": ["10.1.4"], … }`.
+
+Sans clé, aucune multiprise ne peut se présenter : elle répond, mais refuse la
+signature. Le balayage le dit explicitement — un appareil qui refuse est un
+appareil trouvé, et c'est déjà la moitié du chemin.
+
+Il imprime un bloc `prises` prêt à recopier,
 avec une ligne par sortie. Reste à écrire en face de chaque canal soit le nom
 exact de la machine (le même que dans `machines`), soit un `role`.
 

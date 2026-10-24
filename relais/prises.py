@@ -74,7 +74,11 @@ def _appel(hote, espace, charge, cle, methode="SET", delai=DELAI):
     except Exception as e:
         raise ValueError("%s injoignable : %s" % (hote, str(e)[:90]))
 
-    entete = lu.get("header") or {}
+    entete = lu.get("header") if isinstance(lu, dict) else None
+    if not isinstance(entete, dict) or not entete.get("method"):
+        # n'importe quel serveur web peut renvoyer du JSON sur /config ;
+        # une Meross, elle, renvoie toujours un entête avec sa méthode
+        raise ValueError("%s répond, mais ce n'est pas une Meross" % hote)
     if entete.get("method") == "ERROR":
         code = (lu.get("payload") or {}).get("error") or {}
         if str(code.get("code")) == "5001":
@@ -114,6 +118,29 @@ def decrire(hote, cle):
         "firmware": logiciel.get("version") or "",
         "sorties": sorties,
     }
+
+
+def sonder(hote, cle):
+    """Est-ce une Meross, et que peut-on en dire ?
+
+    Trois réponses possibles, et la deuxième compte autant que la première :
+    une multiprise qui REFUSE la signature est une multiprise trouvée. Sans
+    clé on ne peut identifier personne — ce n'est pas une raison de conclure
+    qu'il n'y a rien.
+
+    Renvoie ("meross", description) | ("sans-cle", None) | ("autre", None)."""
+    try:
+        d = decrire(hote, cle)
+        if d["modele"] == "?" and not d["sorties"]:
+            return "autre", None
+        return "meross", d
+    except ValueError as e:
+        mot = str(e).lower()
+        if "clé meross refusée" in mot or "cle meross refusee" in mot:
+            return "sans-cle", None
+        return "autre", None
+    except Exception:
+        return "autre", None
 
 
 def etats(hote, cle):

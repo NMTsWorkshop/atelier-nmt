@@ -1145,6 +1145,22 @@ def main():
             not ok_c and "clé" in dit_c.lower() and barrette_machines.etats[1] is True,
             dit_c[:140])
 
+    # --- une multiprise sans cle est trouvee quand meme -----------------
+    # Sans cle on ne peut identifier personne ; ce n'est pas une raison de
+    # conclure qu'il n'y a rien. Une multiprise qui REFUSE la signature est
+    # une multiprise trouvee, et c'est ce qu'il faut dire.
+    verifie("sans cle, la multiprise est reperee comme telle",
+            prises_mod.sonder(barrette_machines.hote, "")[0] == "sans-cle",
+            str(prises_mod.sonder(barrette_machines.hote, "")))
+    verifie("avec la bonne cle, elle se presente",
+            prises_mod.sonder(barrette_machines.hote, "cle-de-test")[0] == "meross",
+            str(prises_mod.sonder(barrette_machines.hote, "cle-de-test")[0]))
+    verifie("un appareil qui n'est pas une Meross n'est pas pris pour une",
+            prises_mod.sonder(canal.base.split("//")[1].rstrip("/"),
+                              "cle-de-test")[0] == "autre",
+            str(prises_mod.sonder(canal.base.split("//")[1].rstrip("/"),
+                                  "cle-de-test")[0]))
+
     # --- le releve emporte l'etat des prises ----------------------------
     etat_prises = parc.releve()
     verifie("le releve dit ce qui est allume, et ce qui est verrouille",

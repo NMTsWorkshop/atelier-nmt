@@ -44,7 +44,6 @@ def reglages():
 
 
 def mon_reseau():
-    """Le /24 du Pi. Suffit : les multiprises sont sur le même."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         s.connect(("8.8.8.8", 80))
@@ -56,6 +55,27 @@ def mon_reseau():
     return ip.rsplit(".", 1)[0], ip
 
 
+def reseaux_a_voir(c):
+    """Tous les /24 où une multiprise peut se trouver.
+
+    Celui du Pi, et ceux des machines : l'atelier n'est pas forcément sur un
+    seul sous-réseau, et les objets connectés sont souvent mis à part. Ne
+    chercher que là où on est, c'est trouver seulement ce qui est déjà sous
+    la main."""
+    base, moi = mon_reseau()
+    vus = [base]
+    for m in (c.get("machines") or []):
+        h = str(m.get("hote") or "")
+        if h.count(".") == 3:
+            b = h.rsplit(".", 1)[0]
+            if b not in vus:
+                vus.append(b)
+    for b in (c.get("prises") or {}).get("reseaux") or []:
+        if b not in vus:
+            vus.append(b)
+    return vus, moi
+
+
 def repond(hote, delai=DELAI_SCAN):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(delai)
@@ -65,10 +85,36 @@ def repond(hote, delai=DELAI_SCAN):
         s.close()
 
 
-def chercher(cle):
-    """Balaye le /24 et garde ce qui se présente comme une Meross."""
-    base, moi = mon_reseau()
-    print("Je balaye %s.1 à %s.254 (le Pi est en %s)…" % (base, base, moi))
+def chercher(cle, c=None):
+    """Balaye les sous-réseaux plausibles et garde ce qui parle Meross."""
+    reseaux, moi = reseaux_a_voir(c or {})
+    print("Le Pi est en %s. Je balaye : %s"
+          % (moi, ", ".join("%s.0/24" % b for b in reseaux)))
+    trouvees, refus = [], []
+    for base in reseaux:
+        t, r = chercher_un(base, cle)
+        trouvees.extend(t)
+        refus.extend(r)
+    if refus:
+        print()
+        print("  %d appareil(s) parlent Meross mais refusent la signature :"
+              % len(refus))
+        for hote in refus:
+            print("     %s" % hote)
+        print("  C'est le signe que la clé manque ou ne correspond pas.")
+        print("  Lance meross_cle.py, puis reviens ici : ils se présenteront.")
+    if not trouvees and not refus:
+        print()
+        print("  Aucune multiprise trouvée sur ces sous-réseaux.")
+        print("  Si elles sont sur un autre Wi-Fi que le Pi (un réseau IoT")
+        print("  séparé, par exemple), ajoute son préfixe dans relais.json :")
+        print('     "prises": { "reseaux": ["10.1.4"], ... }')
+    return trouvees
+
+
+def chercher_un(base, cle):
+    print()
+    print("  %s.0/24 …" % base)
     ouverts = []
     verrou = threading.Lock()
 
@@ -90,20 +136,17 @@ def chercher(cle):
     for x in fils:
         x.join()
 
-    print("  %d appareil(s) écoutent sur le port 80." % len(ouverts))
-    trouvees = []
+    print("     %d appareil(s) écoutent sur le port 80." % len(ouverts))
+    trouvees, refus = [], []
     for hote in sorted(ouverts, key=lambda a: int(a.rsplit(".", 1)[1])):
-        try:
-            d = prises.decrire(hote, cle)
-        except Exception:
-            continue
-        trouvees.append(d)
-        print("  %-15s %-10s %d sortie(s)  firmware %s"
-              % (hote, d["modele"], len(d["sorties"]), d["firmware"]))
-    if not trouvees:
-        print("  Aucune ne s'est présentée. Si la clé est fausse, elles")
-        print("  répondent quand même mais refusent : regarde l'étape 2.")
-    return trouvees
+        genre, d = prises.sonder(hote, cle)
+        if genre == "meross":
+            trouvees.append(d)
+            print("     %-15s %-10s %d sortie(s)  firmware %s"
+                  % (hote, d["modele"], len(d["sorties"]), d["firmware"]))
+        elif genre == "sans-cle":
+            refus.append(hote)
+    return trouvees, refus
 
 
 def montrer(barrettes, cle):
@@ -157,7 +200,11 @@ def main():
 
     if "--chercher" in sys.argv:
         print("2. Qui est sur le réseau")
-        trouvees = chercher(cle)
+        if not cle or "A-REMPLIR" in cle:
+            print("   Sans clé, aucune multiprise ne peut se présenter : elles")
+            print("   répondent mais refusent de parler. Le balayage dira")
+            print("   lesquelles refusent — c'est déjà les avoir trouvées.")
+        trouvees = chercher(cle, c)
         print()
         if trouvees and not barrettes:
             print("   À recopier dans relais.json, sous \"prises\" :")
