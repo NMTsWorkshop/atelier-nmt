@@ -1161,6 +1161,25 @@ def main():
             str(prises_mod.sonder(canal.base.split("//")[1].rstrip("/"),
                                   "cle-de-test")[0]))
 
+    # --- la regle est inversee : tout est verrouille sauf les machines --
+    # Une liste de mots interdits se contourne par une faute de frappe.
+    # Avec la regle inverse, une faute de frappe verrouille au lieu
+    # d'ouvrir — et chez Nathan les deux multiprises sont branchees sur un
+    # troisieme bloc qui alimente le Pi : ce bloc doit etre hors de portee
+    # sans que personne ait eu a y penser.
+    for sortie, attendu, quoi in (
+            ({"canal": 1, "machine": "K2 Plus 1"}, False, "une machine nommee"),
+            ({"canal": 5, "role": "pi"}, True, "la prise du Pi"),
+            ({"canal": 1, "role": "switsh"}, True, "un role mal orthographie"),
+            ({"canal": 0, "role": "general"}, True, "le bloc qui alimente tout"),
+            ({"canal": 2}, True, "une sortie sans rien dessus"),
+            (None, True, "une sortie inconnue"),
+            ({"canal": 3, "role": "ventilo", "commandable": True}, False,
+             "une sortie ouverte explicitement")):
+        verifie("verrou : %s" % quoi,
+                prises_mod.Parc.verrouillee(sortie) is attendu,
+                "verrouillee=%s" % prises_mod.Parc.verrouillee(sortie))
+
     # --- trouver les multiprises sans se faire prendre pour un scanner --
     # Un balayage de 254 adresses est la signature d'un scan de ports :
     # une box avec detection bloque la machine fautive pendant plusieurs

@@ -33,9 +33,21 @@ import urllib.request
 
 DELAI = 6
 
-# Ce qu'on refuse de couper, quoi qu'on nous demande. Le relais et le
-# réseau qui le porte ne se coupent pas eux-mêmes.
-VERROUS = ("pi", "relais", "switch", "reseau", "réseau")
+# La règle est inversée, et c'est voulu : on ne commande QUE ce qu'on a
+# nommé comme machine. Tout le reste est verrouillé, y compris ce qu'on
+# n'a pas su nommer.
+#
+# Une liste de mots interdits se contourne par une faute de frappe :
+# « switsh » n'est pas dans la liste, donc la prise du switch devient
+# commandable, et on s'en aperçoit le jour où tout s'éteint. Avec la règle
+# inverse, une faute de frappe verrouille au lieu d'ouvrir.
+#
+# Chez Nathan, les deux multiprises sont branchées sur un troisième bloc
+# qui alimente tout : le couper depuis l'app, c'est éteindre le relais qui
+# tient l'interrupteur. Ce bloc-là n'a pas de nom de machine, donc il est
+# verrouillé sans rien avoir à déclarer.
+VERROUS = ("pi", "relais", "switch", "reseau", "réseau", "general",
+           "général", "tout", "bloc", "mesure", "serveur")
 
 
 def _signer(identifiant, cle, horodatage):
@@ -228,8 +240,15 @@ class Parc:
 
     @staticmethod
     def verrouillee(sortie):
-        role = str((sortie or {}).get("role") or "").strip().lower()
-        return role in VERROUS
+        """Tout est verrouillé sauf une sortie qui porte un nom de machine.
+
+        Une sortie déclarée « commandable » explicitement fait exception —
+        c'est le seul moyen d'ouvrir, et il faut l'avoir écrit."""
+        if not sortie:
+            return True
+        if sortie.get("commandable") is True:
+            return False
+        return not str(sortie.get("machine") or "").strip()
 
     def releve(self):
         """Ce qui est allumé, barrette par barrette. Jamais d'exception :
@@ -255,8 +274,9 @@ class Parc:
             return False, "prise inconnue"
         quoi = sortie.get("machine") or sortie.get("role") or "cette prise"
         if self.verrouillee(sortie):
-            return False, ("%s alimente le relais lui-même — le couper "
-                           "d'ici, c'est perdre le moyen de le rallumer. "
+            return False, ("%s n'est pas une machine — le relais ne commande "
+                           "que ce qui porte un nom de machine. Couper ce qui "
+                           "l'alimente, c'est perdre le moyen de le rallumer. "
                            "Ça se fait à la main, sur place." % quoi)
         if not self.prete():
             return False, self.pourquoi_pas()

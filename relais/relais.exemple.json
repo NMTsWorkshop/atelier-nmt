@@ -13,7 +13,7 @@
   "//": "Jours ajoutes au delai calcule, 0 pour n'en ajouter aucun.",
   "marge_delai": 0,
 
-  "//prises": "Les multiprises Meross, pilotees en local. La cle vient de meross_cle.py, les adresses et canaux de meross_diag.py --chercher. Un role parmi pi/switch/relais/reseau verrouille la sortie : le relais ne se coupe pas le courant a lui-meme.",
+  "//prises": "Les multiprises Meross, pilotees en local. La cle vient de meross_cle.py, les adresses et canaux de meross_diag.py --chercher. Le relais ne commande QUE les sorties qui portent un nom de machine : tout le reste est verrouille, y compris ce qu'on a oublie de decrire. Pour ouvrir une sortie qui n'est pas une machine, ecrire \"commandable\": true.",
   "prises": {
     "cle": "A-REMPLIR",
     "barrettes": [

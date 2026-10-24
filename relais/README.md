@@ -233,11 +233,24 @@ interrupteurs.
 
 Deux garde-fous, dans cet ordre d'importance :
 
-1. **Ce qui alimente le relais ne se coupe jamais depuis l'app.** Une sortie
-   dont le `role` vaut `pi`, `switch`, `relais` ou `reseau` est verrouillée
-   dans le code. Couper le courant du Pi ou du switch qui le relie, c'est
-   perdre le moyen de le rallumer : personne ne serait là pour recevoir
-   l'ordre inverse.
+1. **Le relais ne commande que ce qui porte un nom de machine.** Tout le
+   reste est verrouillé : une sortie décrite par un `role`, une sortie qu'on
+   a oublié de décrire, une sortie qu'on ne connaît pas.
+
+   La règle est volontairement dans ce sens. Une liste de mots interdits se
+   contourne par une faute de frappe — `switsh` n'y figure pas, donc la prise
+   du switch devient commandable, et on s'en aperçoit le jour où tout
+   s'éteint. Avec la règle inverse, une faute de frappe verrouille.
+
+   C'est ce qui protège le montage de l'atelier : les deux multiprises sont
+   elles-mêmes branchées sur un troisième bloc qui alimente tout, Pi compris.
+   Ce bloc n'a aucun nom de machine en face, donc il est hors de portée sans
+   avoir eu à le déclarer. Couper ce qui alimente le relais, c'est perdre le
+   moyen de le rallumer : personne ne serait là pour recevoir l'ordre
+   inverse. Ça se fait sur le bouton physique, là où on est devant.
+
+   Pour ouvrir une sortie qui n'est pas une machine, il faut l'écrire :
+   `"commandable": true`.
 2. **Une machine qui imprime n'est pas coupée** sans une confirmation
    explicite. L'app propose alors de forcer, et dit ce qu'on y perd.
 
