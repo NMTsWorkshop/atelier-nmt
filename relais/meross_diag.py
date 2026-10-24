@@ -218,33 +218,83 @@ def chercher_un(base, cle):
     return trouvees, refus
 
 
-def montrer(barrettes, cle):
+def imprime(machines, nom):
+    """La machine est-elle en train d'imprimer ? « Je ne sais pas » compte
+    comme oui : on ne coupe pas le courant sur une supposition."""
+    cible = str(nom or "").strip().lower()
+    for m in machines or []:
+        if str(m.get("nom") or "").strip().lower() != cible:
+            continue
+        try:
+            import biblio
+            etat = str((biblio._etat_machine(m) or {}).get("state") or "").lower()
+        except Exception:
+            return True, "injoignable"
+        if etat in ("printing", "running", "preparing", "paused"):
+            return True, etat
+        return False, etat or "?"
+    return True, "inconnue du relais"
+
+
+def montrer(barrettes, cle, machines=None):
     """Fait clignoter chaque sortie l'une après l'autre.
 
     C'est la seule façon honnête de savoir quelle prise porte quelle
-    machine : on la coupe une seconde et on regarde ce qui s'éteint."""
+    machine : on la coupe une seconde et on regarde ce qui s'éteint.
+
+    Mais c'est bien une coupure de courant. La première version se
+    contentait d'un avertissement, et elle a coupé quatre imprimantes en
+    pleine impression : l'utilisateur ne savait pas forcément ce qui
+    tournait, et moi non plus. Elle demande donc maintenant son état à
+    chaque machine, et passe son tour quand elle imprime — ou quand elle
+    ne répond pas, ce qui revient au même tant qu'on ne sait pas."""
     print()
-    print("ATTENTION : chaque sortie va être coupée une seconde, l'une après")
-    print("l'autre. Ne lance pas ça pendant une impression.")
+    print("Chaque sortie va être coupée une seconde, l'une après l'autre.")
+    print("Les machines qui impriment sont sautées, les prises verrouillées")
+    print("aussi. On vérifie d'abord ce qui tourne.")
+    print()
+
+    a_faire, sautees = [], []
+    for b in barrettes:
+        for s in b.get("sorties") or []:
+            quoi = s.get("machine") or s.get("role") or "?"
+            if prises.Parc.verrouillee(s):
+                sautees.append("%s (verrouillée)" % quoi)
+                continue
+            occupee, dit = imprime(machines, s.get("machine"))
+            if occupee:
+                sautees.append("%s (%s)" % (quoi, dit))
+                continue
+            a_faire.append((b, s, quoi))
+
+    for x in sautees:
+        print("   sautée : %s" % x)
+    if not a_faire:
+        print()
+        print("Rien à montrer : tout est soit verrouillé, soit occupé.")
+        return
+    print()
+    print("À faire clignoter : %s" % ", ".join(q for _, _, q in a_faire))
     rep = input("Continuer ? (o/N) ").strip().lower()
     if rep not in ("o", "oui", "y"):
         print("Rien touché.")
         return
-    for b in barrettes:
-        for s in b.get("sorties") or []:
-            canal = int(s.get("canal", 0))
-            quoi = s.get("machine") or s.get("role") or "?"
-            if str(s.get("role") or "").lower() in prises.VERROUS:
-                print("  canal %d (%s) : verrouillé, on n'y touche pas" % (canal, quoi))
-                continue
-            print("  canal %d (%s) — regarde ce qui s'éteint…" % (canal, quoi))
-            try:
-                prises.basculer(b["hote"], canal, False, cle)
-                time.sleep(1.2)
-                prises.basculer(b["hote"], canal, True, cle)
-            except Exception as e:
-                print("    raté : %s" % e)
-            time.sleep(0.8)
+
+    for b, s, quoi in a_faire:
+        canal = int(s.get("canal", 0))
+        # on redemande juste avant : une impression a pu partir entre-temps
+        occupee, dit = imprime(machines, s.get("machine"))
+        if occupee:
+            print("  canal %d (%s) : %s entre-temps, on saute" % (canal, quoi, dit))
+            continue
+        print("  canal %d (%s) — regarde ce qui s'éteint…" % (canal, quoi))
+        try:
+            prises.basculer(b["hote"], canal, False, cle)
+            time.sleep(1.2)
+            prises.basculer(b["hote"], canal, True, cle)
+        except Exception as e:
+            print("    raté : %s" % e)
+        time.sleep(0.8)
 
 
 def main():
@@ -312,7 +362,7 @@ def main():
     print()
 
     if "--montrer" in sys.argv:
-        montrer(barrettes, cle)
+        montrer(barrettes, cle, c.get("machines"))
     else:
         print("Pour savoir quelle prise porte quelle machine :")
         print("   python3 %s --montrer" % os.path.basename(__file__))

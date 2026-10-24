@@ -1163,6 +1163,58 @@ def main():
             str(prises_mod.sonder(canal.base.split("//")[1].rstrip("/"),
                                   "cle-de-test")[0]))
 
+    # --- un redemarrage ne rejoue pas un ordre deja execute -------------
+    # C'est le defaut qui a coute quatre impressions a Nathan. Le relais
+    # relit deux heures d'ordres au demarrage pour ne pas perdre ce qui a
+    # ete publie pendant qu'il redemarrait ; la liste de ce qu'il avait
+    # deja fait ne vivait qu'en memoire. Cinq redemarrages dans la soiree,
+    # cinq coupures de courant rejouees.
+    coupures = []
+
+    class ParcEspion:
+        barrettes = [1]
+
+        def sorties(self):
+            return [{"canal": 1, "machine": "K2 Plus 1", "hote": "x"}]
+
+        def pour_machine(self, n):
+            return self.sorties()[0]
+
+        def commander(self, sortie, allumer):
+            coupures.append(allumer)
+            return True, "ok"
+
+    o_rejeu = {"id": "rejeu-1", "quoi": "prise", "cible": "K2 Plus 1",
+               "allumer": False, "at": int(time.time() * 1000)}
+    o_rejeu["sig"] = biblio.signer(jeton, o_rejeu)
+    biblio.appliquer_ordre(bib, o_rejeu, jeton, machines, vit, ParcEspion())
+    verifie("un ordre de coupure s'execute une fois",
+            coupures == [False], str(coupures))
+
+    # le relais redemarre : la memoire repart a zero, le disque non
+    biblio.ORDRES_VUS[:] = []
+    biblio.FICHIER_VUS["chemin"] = ""
+    biblio.appliquer_ordre(bib, o_rejeu, jeton, machines, vit, ParcEspion())
+    verifie("et pas une seconde fois apres un redemarrage du relais",
+            coupures == [False], str(coupures))
+
+    # et un ordre qu'on a oublie en route ne se reveille pas une heure apres
+    o_vieux = dict(o_rejeu, id="rejeu-2",
+                   at=int(time.time() * 1000) - 20 * 60 * 1000)
+    o_vieux["sig"] = biblio.signer(jeton, o_vieux)
+    biblio.appliquer_ordre(bib, o_vieux, jeton, machines, vit, ParcEspion())
+    verifie("un ordre de coupure vieux de vingt minutes est ignore",
+            coupures == [False], str(coupures))
+
+    # mais cocher un plateau garde sa fenetre large : rien n'y est dangereux
+    o_lent = {"id": "lent-1", "quoi": "marquer", "chemin": "k2/socle.gcode",
+              "plateau": 1, "fait": True,
+              "at": int(time.time() * 1000) - 40 * 60 * 1000}
+    o_lent["sig"] = biblio.signer(jeton, o_lent)
+    verifie("un plateau coche il y a quarante minutes s'applique encore",
+            biblio.appliquer_ordre(bib, o_lent, jeton, machines, vit, None),
+            "l'ordre a ete ecarte")
+
     # --- la regle est inversee : tout est verrouille sauf les machines --
     # Une liste de mots interdits se contourne par une faute de frappe.
     # Avec la regle inverse, une faute de frappe verrouille au lieu

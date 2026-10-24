@@ -355,6 +355,21 @@ Ces gestes voyagent par le canal, signés comme les autres ordres. Qui connaît
 niveau d'accès que celui qui permet déjà d'envoyer un fichier sur une machine
 et de lancer une impression.
 
+## Un ordre exécuté le reste
+
+Le relais relit deux heures d'ordres au démarrage : sans ça, un plateau coché
+pendant qu'il redémarrait serait perdu. Mais la liste de ce qu'il avait déjà
+fait ne vivait qu'en mémoire — vide après un redémarrage. Un soir de mises à
+jour, il a rejoué des coupures de courant sur des machines en train
+d'imprimer, à chaque relance.
+
+Cette liste est maintenant sur le disque, à côté de la bibliothèque
+(`ordres_vus.json`). Et les ordres qui agissent sur le monde physique — le
+courant, le redémarrage du Pi, l'éclairage, le démarrage d'une impression —
+ont une fenêtre de dix minutes au lieu de deux heures : passé ce délai,
+personne ne les attend plus, et les exécuter serait une surprise. Cocher un
+plateau garde sa fenêtre large, puisque rien n'y est dangereux.
+
 ## Vérifier le relais sans y toucher
 
 Trois tests tournent sans Pi ni imprimante, et à chaque envoi sur GitHub :

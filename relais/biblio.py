@@ -1986,8 +1986,57 @@ def oublier_publication():
 # ordre porte donc une signature calculée avec le jeton, que seuls l'app
 # et le Pi connaissent.
 
+# Les ordres déjà exécutés. Sur disque, pas seulement en mémoire : au
+# démarrage le relais relit deux heures d'ordres sur le canal pour ne pas
+# perdre ce qui a été publié pendant qu'il redémarrait, et une liste vide
+# en mémoire voulait dire « je n'ai rien vu ». Un soir de mises à jour, ça
+# a rejoué des coupures de courant sur des machines en train d'imprimer, à
+# chaque redémarrage. Ce qui a été fait doit le rester.
 ORDRES_VUS = []
+FICHIER_VUS = {"chemin": ""}
+GARDE_VUS = 500
+
 PEREMPTION_ORDRE = 2 * 3600 * 1000
+
+# Deux heures, c'est la bonne fenêtre pour rattraper un plateau coché
+# pendant une coupure réseau. C'est beaucoup trop pour un ordre qui coupe
+# du courant ou redémarre une machine : passé quelques minutes, personne
+# ne l'attend plus, et l'exécuter devient une surprise.
+PEREMPTION_COURTE = 10 * 60 * 1000
+ORDRES_PERISSABLES = ("prise", "service", "lumiere", "lancer")
+
+
+def _charger_vus(racine):
+    """Relit la liste des ordres déjà exécutés. Une seule fois."""
+    if FICHIER_VUS["chemin"]:
+        return
+    chemin = os.path.join(racine or os.path.dirname(os.path.abspath(__file__)),
+                          "ordres_vus.json")
+    FICHIER_VUS["chemin"] = chemin
+    try:
+        with open(chemin, encoding="utf-8") as f:
+            vus = json.load(f)
+        if isinstance(vus, list):
+            ORDRES_VUS.extend(str(v) for v in vus[-GARDE_VUS:])
+    except Exception:
+        pass
+
+
+def _noter_vu(ident):
+    ORDRES_VUS.append(ident)
+    del ORDRES_VUS[:-GARDE_VUS]
+    chemin = FICHIER_VUS["chemin"]
+    if not chemin:
+        return
+    try:
+        provisoire = chemin + ".tmp"
+        with open(provisoire, "w", encoding="utf-8") as f:
+            json.dump(ORDRES_VUS, f)
+        os.replace(provisoire, chemin)
+    except Exception:
+        # ne jamais faire tomber un ordre parce qu'on n'a pas pu l'écrire :
+        # la protection en mémoire tient encore pour cette session
+        pass
 
 # Un ordre parti par le canal ne rend aucune reponse : l'app publie et s'en
 # va. Le relais consigne donc ce qu'il a fait de chaque ordre, et le joint à
@@ -2114,21 +2163,26 @@ def appliquer_ordre(biblio, ordre, jeton, machines=None, vitrine=None,
                     parc=None):
     """Renvoie une phrase pour le journal, ou None si l'ordre est écarté."""
     ident = ordre.get("id")
+    _charger_vus(getattr(biblio, "racine", ""))
     if not ident or ident in ORDRES_VUS:
         return None
     quand = int(ordre.get("at") or 0)
-    if abs(int(time.time() * 1000) - quand) > PEREMPTION_ORDRE:
+    age = abs(int(time.time() * 1000) - quand)
+    if age > PEREMPTION_ORDRE:
         return None          # trop vieux : sans doute un message rejoué
+    if age > PEREMPTION_COURTE and ordre.get("quoi") in ORDRES_PERISSABLES:
+        # couper un courant que plus personne n'attend, c'est pire que de
+        # ne rien faire : on le note comme vu pour ne pas y revenir
+        _noter_vu(ident)
+        return None
     if jeton and not signature_valide(jeton, ordre):
         # on le note comme vu : sans ça le même ordre serait rejugé à chaque
         # relève et remplirait le journal
-        ORDRES_VUS.append(ident)
-        del ORDRES_VUS[:-200]
+        _noter_vu(ident)
         accuser(ident, False, "jeton de l'app différent de celui du relais")
         return "ordre refusé (signature)"
 
-    ORDRES_VUS.append(ident)
-    del ORDRES_VUS[:-200]
+    _noter_vu(ident)
 
     quoi = ordre.get("quoi")
     chemin = ordre.get("chemin") or ""

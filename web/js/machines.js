@@ -47,13 +47,18 @@ function barreAtelier() {
   if (!Relais.ok() || !Relais.sujet()) return '';
   etatRelaisAuBesoin();
   const prises = Array.isArray(PRISES_VUES) ? PRISES_VUES.filter(p => p.machine) : [];
-  const allumees = prises.filter(p => p.allumee === true).length;
+  /* « je ne sais pas » n'est pas « éteint ». Quand le relais n'a pas pu
+     lire les multiprises, l'écran annonçait quatre prises coupées alors
+     qu'elles étaient allumées. */
+  const connues = prises.filter(p => typeof p.allumee === 'boolean');
+  const allumees = connues.filter(p => p.allumee).length;
 
   return '<div class="card" style="margin-bottom:10px">' +
     '<div class="kv" style="margin-bottom:8px"><span>Tout l\'atelier</span>' +
-      (prises.length
-        ? '<b class="mono">' + allumees + '/' + prises.length + ' sous tension</b>'
-        : '') +
+      (!prises.length ? ''
+        : connues.length
+          ? '<b class="mono">' + allumees + '/' + connues.length + ' sous tension</b>'
+          : '<b class="mono" style="color:var(--txt-3)">état des prises inconnu</b>') +
     '</div>' +
     '<div class="btn-row">' +
       '<button class="btn sm" onclick="lumieresToutes(true)">Lumières allumées</button>' +
@@ -113,25 +118,36 @@ function lumiereMachine(id) {
     .catch(e => toast('Échec — ' + e.message, 'bad'));
 }
 
+/* Une machine après l'autre, jamais les quatre d'un coup.
+
+   Côté Bambu, chaque ordre ouvre une session MQTT sur la machine, et une
+   P1S n'en accepte qu'un petit nombre à la fois : quatre connexions
+   simultanées, et elle décroche. C'est ce qui est arrivé le premier soir.
+   En série c'est un peu plus lent et ça ne bouscule personne. */
 function lumieresToutes(allumer) {
   const cibles = DB.machines.filter(m => m.printer && m.printer.host);
   if (!cibles.length) { toast('Aucune machine branchée', 'bad'); return; }
-  atelierDire('Lumières…');
-  let restant = cibles.length, ratees = 0;
-  cibles.forEach(m => {
+
+  let ratees = 0;
+  const suivante = (i) => {
+    if (i >= cibles.length) {
+      atelierDire(ratees
+        ? '<span style="color:var(--bad)">' + ratees + ' machine(s) sans réponse</span>'
+        : '');
+      toast(ratees ? ratees + ' sans réponse' : 'Lumières ' +
+            (allumer ? 'allumées' : 'éteintes'), ratees ? 'bad' : 'ok');
+      render();
+      return;
+    }
+    const m = cibles[i];
+    atelierDire('Lumières… (' + (i + 1) + '/' + cibles.length + ' — ' +
+                esc(m.name) + ')');
     Relais.lumiere(m.name, m.printer.host, allumer)
       .then(r => { if (!r || (!r.ok && !r.differe)) ratees++; else retenirLumiere(m.id, allumer); })
       .catch(() => { ratees++; })
-      .then(() => {
-        if (--restant) return;
-        atelierDire(ratees
-          ? '<span style="color:var(--bad)">' + ratees + ' machine(s) sans réponse</span>'
-          : '');
-        toast(ratees ? ratees + ' sans réponse' : 'Lumières ' +
-              (allumer ? 'allumées' : 'éteintes'), ratees ? 'bad' : 'ok');
-        render();
-      });
-  });
+      .then(() => suivante(i + 1));
+  };
+  suivante(0);
 }
 
 /* Le courant passe toujours par le relais : c'est lui qui tient le parc de

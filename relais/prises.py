@@ -156,13 +156,28 @@ def sonder(hote, cle):
 
 
 def etats(hote, cle):
-    """{canal: allumée}. Une lecture, pas une écriture."""
+    """{canal: allumée}. Une lecture, pas une écriture.
+
+    Un dictionnaire vide veut dire « je n'ai pas pu lire », pas « tout est
+    éteint » — la nuance compte, parce que l'écran affichait quatre prises
+    éteintes alors qu'elles étaient allumées et que c'était la lecture qui
+    avait échoué.
+
+    D'où la deuxième tentative : certaines multiprises ne répondent pas à
+    une interrogation ToggleX mais donnent le même état dans leur
+    description complète."""
     try:
         charge = _appel(hote, "Appliance.Control.ToggleX", {}, cle, methode="GET")
+        lus = charge.get("togglex")
     except ValueError:
-        return {}
+        lus = None
+    if not lus:
+        try:
+            return {s["canal"]: s["allumee"] for s in decrire(hote, cle)["sorties"]}
+        except Exception:
+            return {}
     out = {}
-    for t in (charge.get("togglex") or []):
+    for t in lus:
         out[int(t.get("channel", 0))] = bool(int(t.get("onoff", 0)))
     return out
 
