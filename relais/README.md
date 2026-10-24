@@ -264,7 +264,17 @@ python3 /opt/relais-atelier/meross_diag.py --montrer  # quelle prise porte quoi
 
 Le premier demande l'adresse et le mot de passe du compte Meross, s'identifie
 une fois, et ne garde que la clé — dans `relais.json`, à côté du reste. Le mot
-de passe n'est écrit nulle part. La clé ne vaut que sur le réseau local : un
+de passe n'est écrit nulle part, et ne part même pas en clair : le service
+attend son empreinte.
+
+Il n'y a rien à installer. L'échange tient en trente lignes de bibliothèque
+standard, comme le reste du relais. La première version passait par un paquet
+tiers, qui demandait pip, qui demandait apt, qui demandait un miroir à jour —
+et le Pi s'est arrêté à la troisième marche.
+
+Si le compte est rattaché à une autre région, le service le dit et le script
+suit la redirection tout seul. S'il demande une validation en deux étapes, il
+faut la désactiver le temps de cette seule opération. La clé ne vaut que sur le réseau local : un
 ordre signé avec elle n'est accepté que par une multiprise qu'on peut déjà
 joindre.
 

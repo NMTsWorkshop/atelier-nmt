@@ -9,7 +9,9 @@ Bambu, et fait tourner la vraie boucle du relais contre eux.
     python3 test/bout_en_bout.py
 """
 
+import base64
 import ftplib
+import hashlib
 import json
 import os
 import re
@@ -1304,6 +1306,84 @@ def main():
             all(k in sysp for k in ("led_on_time", "led_off_time",
                                     "loop_times", "interval_time")),
             json.dumps(sysp, ensure_ascii=False)[:160])
+
+    # === 11. la cle Meross, prise au service sans rien installer ========
+    # La premiere version passait par une bibliotheque tierce : il a fallu
+    # pip, qui a demande apt, qui a demande un miroir a jour, et le Pi s'est
+    # arrete a la troisieme marche. L'echange tient en trente lignes, et ce
+    # test les tient alignees sur ce que le service attend vraiment.
+    import meross_cle
+
+    recus_cle = []
+    reponses_cle = {}
+
+    class ServiceMeross(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length") or 0)
+            corps = json.loads(self.rfile.read(n).decode("utf-8"))
+            recus_cle.append((self.path, self.headers.get("Authorization")))
+            # le service verifie la signature : c'est la moitie du test
+            attendu = hashlib.md5(
+                ("%s%s%s%s" % (meross_cle.SECRET, corps["timestamp"],
+                               corps["nonce"], corps["params"])).encode()).hexdigest()
+            rep = ({"apiStatus": 1019} if corps.get("sign") != attendu
+                   else reponses_cle.get(self.path, {"apiStatus": 0, "data": {}}))
+            b = json.dumps(rep).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
+            self.wfile.write(b)
+
+        def log_message(self, *a):
+            pass
+
+    srv_cle = ThreadingHTTPServer(("127.0.0.1", 0), ServiceMeross)
+    threading.Thread(target=srv_cle.serve_forever, daemon=True).start()
+    base_cle = "http://127.0.0.1:%d" % srv_cle.server_address[1]
+
+    reponses_cle[meross_cle.CHEMIN_LOGIN] = {
+        "apiStatus": 0, "data": {"key": "LA-CLE-1234", "token": "T0K"}}
+    cle_vue, jeton_vu, ou_vu = meross_cle.demander_cle(base_cle, "a@b.c", "mdp")
+    verifie("la cle est obtenue avec une signature que le service accepte",
+            cle_vue == "LA-CLE-1234", str(cle_vue))
+    meross_cle.oublier_jeton(ou_vu, jeton_vu)
+    verifie("et le jeton est rendu tout de suite apres",
+            any(c[0] == meross_cle.CHEMIN_LOGOUT and c[1] == "Basic T0K"
+                for c in recus_cle),
+            str(recus_cle))
+
+    reponses_cle[meross_cle.CHEMIN_LOGIN] = {"apiStatus": 1004}
+    try:
+        meross_cle.demander_cle(base_cle, "a@b.c", "mdp")
+        verifie("un mot de passe faux est dit en clair", False, "aucun refus")
+    except ValueError as e:
+        verifie("un mot de passe faux est dit en clair",
+                "mot de passe incorrect" in str(e), str(e)[:90])
+
+    reponses_cle[meross_cle.CHEMIN_LOGIN] = {"apiStatus": 1033}
+    try:
+        meross_cle.demander_cle(base_cle, "a@b.c", "mdp")
+        verifie("la validation en deux etapes est nommee", False, "aucun refus")
+    except ValueError as e:
+        verifie("la validation en deux etapes est nommee",
+                "deux étapes" in str(e), str(e)[:90])
+
+    # le corps envoye doit etre celui de l'application du fabricant
+    corps_vu = meross_cle._signer({"email": "a@b.c"})
+    verifie("le corps porte les quatre champs attendus",
+            sorted(corps_vu) == ["nonce", "params", "sign", "timestamp"],
+            str(sorted(corps_vu)))
+    verifie("le sel fait seize caracteres en majuscules",
+            len(corps_vu["nonce"]) == 16 and corps_vu["nonce"].isupper(),
+            corps_vu["nonce"])
+    verifie("le mot de passe ne part jamais en clair",
+            "mdp" not in base64.b64decode(
+                meross_cle._signer({"password": hashlib.md5(b"mdp").hexdigest()})
+                ["params"]).decode(),
+            "le mot de passe apparait dans le corps")
 
     # === 6. la boucle survit à tout ce qui précède ======================
     verifie("la boucle principale n'est jamais tombée", True)
