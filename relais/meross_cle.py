@@ -32,7 +32,12 @@ REGIONS = {
 }
 
 MANQUE = """La bibliothèque meross_iot n'est pas installée sur ce Pi.
-Elle ne sert qu'à cette identification, une seule fois :
+Elle ne sert qu'à cette identification, une seule fois.
+
+Le plus simple : relance pi-17-meross.bat depuis le PC, il l'installe
+tout seul avant de redemander la clé.
+
+Sinon, à taper SUR LE PI — pas dans PowerShell sur le PC :
 
     pip3 install --break-system-packages meross_iot
 
