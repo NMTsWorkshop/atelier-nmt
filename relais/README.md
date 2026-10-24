@@ -257,9 +257,10 @@ Deux garde-fous, dans cet ordre d'importance :
 ### Mettre les prises en service
 
 ```
-python3 /opt/relais-atelier/meross_cle.py            # la clé du compte
+python3 /opt/relais-atelier/meross_cle.py             # la clé du compte
 python3 /opt/relais-atelier/meross_diag.py --chercher # trouver les multiprises
-python3 /opt/relais-atelier/meross_diag.py --montrer  # quelle prise porte quoi
+python3 /opt/relais-atelier/prises_regler.py 10.1.3.5 10.1.3.6   # qui est au bout
+python3 /opt/relais-atelier/meross_diag.py --montrer  # vérifier en le voyant
 ```
 
 Le premier demande l'adresse et le mot de passe du compte Meross, s'identifie
@@ -298,9 +299,21 @@ Il imprime un bloc `prises` prêt à recopier,
 avec une ligne par sortie. Reste à écrire en face de chaque canal soit le nom
 exact de la machine (le même que dans `machines`), soit un `role`.
 
-Le troisième coupe chaque sortie une seconde, l'une après l'autre, pour qu'on
+Le troisième demande à chaque multiprise ses sorties réelles, propose pour
+chacune les machines que le relais connaît déjà, et écrit `relais.json`
+lui-même. Personne n'a à compter des accolades. Le défaut de chaque sortie est
+« laisser vide », donc verrouillée : on ouvre en choisissant, jamais par
+omission.
+
+Le quatrième coupe chaque sortie une seconde, l'une après l'autre, pour qu'on
 voie laquelle porte quoi. Il ne touche pas aux sorties verrouillées, et il
 demande confirmation — à ne pas lancer pendant une impression.
+
+**La découverte automatique ne traverse pas les sous-réseaux.** La table des
+voisins du Pi ne connaît que ce qui est sur son propre segment ; des
+multiprises sur un autre Wi-Fi passent par le routeur et n'y figurent jamais.
+Dans ce cas on donne leurs adresses à la main à `prises_regler.py`, ce qui est
+de toute façon plus rapide quand on les connaît.
 
 ## Remettre le Pi d'aplomb depuis l'app
 

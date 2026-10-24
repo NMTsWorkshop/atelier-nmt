@@ -41,6 +41,7 @@ sudo curl -fsSL "$BASE/entretien.py" -o "$DOSSIER/entretien.py"
 sudo curl -fsSL "$BASE/prises.py" -o "$DOSSIER/prises.py"
 sudo curl -fsSL "$BASE/meross_diag.py" -o "$DOSSIER/meross_diag.py"
 sudo curl -fsSL "$BASE/meross_cle.py" -o "$DOSSIER/meross_cle.py"
+sudo curl -fsSL "$BASE/prises_regler.py" -o "$DOSSIER/prises_regler.py"
 sudo curl -fsSL "$BASE/bambu_diag.py" -o "$DOSSIER/bambu_diag.py"
 sudo curl -fsSL "$BASE/relais-atelier.service" -o /etc/systemd/system/relais-atelier@.service
 sudo systemctl daemon-reload
