@@ -1161,6 +1161,33 @@ def main():
             str(prises_mod.sonder(canal.base.split("//")[1].rstrip("/"),
                                   "cle-de-test")[0]))
 
+    # --- trouver les multiprises sans se faire prendre pour un scanner --
+    # Un balayage de 254 adresses est la signature d'un scan de ports :
+    # une box avec detection bloque la machine fautive pendant plusieurs
+    # minutes, et plus rien ne repond. Le Pi connait deja ses voisins.
+    import meross_diag
+    vrai_voisins = meross_diag.voisins
+    vrai_reveil = meross_diag.reveiller
+    vrai_reseaux = meross_diag.reseaux_a_voir
+    vrai_balayage = meross_diag.chercher_un
+    balaye = []
+    meross_diag.voisins = lambda: [barrette_machines.hote, "127.0.0.9"]
+    meross_diag.reveiller = lambda r: None
+    meross_diag.reseaux_a_voir = lambda c: (["127.0.0"], "127.0.0.1")
+    meross_diag.chercher_un = lambda b, c: (balaye.append(b), ([], []))[1]
+    try:
+        vues = meross_diag.chercher("cle-de-test", {}, balayer=True)
+        verifie("la multiprise est trouvee parmi les voisins du Pi",
+                len(vues) == 1 and vues[0]["modele"] == "mss425f",
+                json.dumps(vues, ensure_ascii=False)[:140])
+        verifie("et aucun balayage n'est lance quand ca suffit",
+                not balaye, str(balaye))
+    finally:
+        meross_diag.voisins = vrai_voisins
+        meross_diag.reveiller = vrai_reveil
+        meross_diag.reseaux_a_voir = vrai_reseaux
+        meross_diag.chercher_un = vrai_balayage
+
     # --- le releve emporte l'etat des prises ----------------------------
     etat_prises = parc.releve()
     verifie("le releve dit ce qui est allume, et ce qui est verrouille",

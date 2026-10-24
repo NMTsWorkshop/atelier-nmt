@@ -255,10 +255,17 @@ de passe n'est écrit nulle part. La clé ne vaut que sur le réseau local : un
 ordre signé avec elle n'est accepté que par une multiprise qu'on peut déjà
 joindre.
 
-Le deuxième balaye le réseau du Pi **et ceux de tes machines** — l'atelier n'est
-pas forcément sur un seul sous-réseau, et les objets connectés sont souvent mis
-à part. Si les multiprises sont ailleurs encore, ajoute le préfixe dans
-`relais.json` : `"prises": { "reseaux": ["10.1.4"], … }`.
+Le deuxième **ne balaye pas** : il lit la table des voisins du Pi, celle que le
+système tient tout seul. Ouvrir deux cent cinquante connexions d'affilée est la
+signature d'un scan de ports, et beaucoup de box en ont une détection qui bloque
+la machine fautive pendant plusieurs minutes — on l'a appris à nos dépens. Un
+ping de diffusion fait se manifester les voisins, puis chacun est interrogé une
+fois.
+
+Si les multiprises sont sur un autre Wi-Fi que le Pi, elles ne peuvent pas
+apparaître dans cette table : ajoute le préfixe dans `relais.json`,
+`"prises": { "reseaux": ["10.1.4"], … }`. Et `--balayer` force l'ancien
+balayage, en sachant ce qu'il risque de déclencher.
 
 Sans clé, aucune multiprise ne peut se présenter : elle répond, mais refuse la
 signature. Le balayage le dit explicitement — un appareil qui refuse est un

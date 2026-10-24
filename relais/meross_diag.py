@@ -19,6 +19,8 @@ La troisième est la seule qui agit, et seulement si on la demande.
 
 import json
 import os
+import re
+import subprocess
 import socket
 import sys
 import threading
@@ -85,16 +87,87 @@ def repond(hote, delai=DELAI_SCAN):
         s.close()
 
 
-def chercher(cle, c=None):
-    """Balaye les sous-réseaux plausibles et garde ce qui parle Meross."""
-    reseaux, moi = reseaux_a_voir(c or {})
-    print("Le Pi est en %s. Je balaye : %s"
-          % (moi, ", ".join("%s.0/24" % b for b in reseaux)))
-    trouvees, refus = [], []
+def voisins():
+    """Les machines que le Pi a déjà vues sur le réseau.
+
+    Le système tient cette liste tout seul : chaque appareil avec qui on a
+    échangé un paquet y figure. La lire ne coûte rien et ne se remarque
+    pas — à la différence d'un balayage, qui ouvre deux cent cinquante
+    connexions d'affilée et ressemble à s'y méprendre à un scan de ports.
+    Beaucoup de box en ont une détection, et bloquent la machine fautive
+    pendant quelques minutes. On a appris ça à nos dépens."""
+    vus = []
+    for commande in (["ip", "neigh", "show"], ["arp", "-an"]):
+        try:
+            r = subprocess.run(commande, capture_output=True, text=True, timeout=8)
+        except Exception:
+            continue
+        for ligne in (r.stdout or "").splitlines():
+            m = re.search(r"(\d+\.\d+\.\d+\.\d+)", ligne)
+            if not m:
+                continue
+            if "FAILED" in ligne or "INCOMPLETE" in ligne:
+                continue
+            if m.group(1) not in vus:
+                vus.append(m.group(1))
+        if vus:
+            break
+    return vus
+
+
+def reveiller(reseaux):
+    """Un ping large pour que les voisins se fassent connaître.
+
+    Une diffusion par sous-réseau, pas deux cent cinquante connexions :
+    les appareils qui répondent entrent dans la table des voisins, et on
+    les interroge ensuite un par un."""
     for base in reseaux:
-        t, r = chercher_un(base, cle)
-        trouvees.extend(t)
-        refus.extend(r)
+        for adresse in ("%s.255" % base,):
+            try:
+                subprocess.run(["ping", "-b", "-c", "2", "-W", "1", adresse],
+                               capture_output=True, timeout=8)
+            except Exception:
+                pass
+
+
+def chercher(cle, c=None, balayer=False):
+    """Trouve les multiprises sans se faire prendre pour un scanner."""
+    reseaux, moi = reseaux_a_voir(c or {})
+    trouvees, refus = [], []
+
+    print("Le Pi est en %s." % moi)
+    reveiller(reseaux)
+    candidats = [a for a in voisins()
+                 if a.rsplit(".", 1)[0] in reseaux and a != moi]
+    print("  %d voisin(s) connu(s) sur %s."
+          % (len(candidats), ", ".join("%s.0/24" % b for b in reseaux)))
+    for hote in candidats:
+        genre, d = prises.sonder(hote, cle)
+        if genre == "meross":
+            trouvees.append(d)
+            print("     %-15s %-10s %d sortie(s)  firmware %s"
+                  % (hote, d["modele"], len(d["sorties"]), d["firmware"]))
+        elif genre == "sans-cle":
+            refus.append(hote)
+
+    if not trouvees and not refus and balayer:
+        print()
+        print("  Rien parmi les voisins : je balaye, plus lentement.")
+        for base in reseaux:
+            t, r = chercher_un(base, cle)
+            trouvees.extend(t)
+            refus.extend(r)
+    elif not trouvees and not refus:
+        print()
+        print("  Rien parmi les voisins connus du Pi.")
+        print("  Si les multiprises sont sur un autre Wi-Fi que le Pi (un")
+        print("  réseau IoT séparé), elles ne peuvent pas apparaître ici :")
+        print('     "prises": { "reseaux": ["10.1.4"], ... } dans relais.json')
+        print("  Sinon, pour insister :")
+        print("     python3 %s --chercher --balayer"
+              % os.path.basename(__file__))
+        print("  (ça ouvre beaucoup de connexions d'un coup : certaines box")
+        print("   le prennent pour un scan et bloquent le Pi un moment)")
     if refus:
         print()
         print("  %d appareil(s) parlent Meross mais refusent la signature :"
@@ -103,12 +176,6 @@ def chercher(cle, c=None):
             print("     %s" % hote)
         print("  C'est le signe que la clé manque ou ne correspond pas.")
         print("  Lance meross_cle.py, puis reviens ici : ils se présenteront.")
-    if not trouvees and not refus:
-        print()
-        print("  Aucune multiprise trouvée sur ces sous-réseaux.")
-        print("  Si elles sont sur un autre Wi-Fi que le Pi (un réseau IoT")
-        print("  séparé, par exemple), ajoute son préfixe dans relais.json :")
-        print('     "prises": { "reseaux": ["10.1.4"], ... }')
     return trouvees
 
 
@@ -129,7 +196,8 @@ def chercher_un(base, cle):
         f = threading.Thread(target=essayer, args=(n,), daemon=True)
         f.start()
         fils.append(f)
-        if len(fils) >= 64:
+        time.sleep(0.02)          # doucement : un scan rapide se fait voir
+        if len(fils) >= 16:
             for x in fils:
                 x.join()
             fils = []
@@ -204,7 +272,7 @@ def main():
             print("   Sans clé, aucune multiprise ne peut se présenter : elles")
             print("   répondent mais refusent de parler. Le balayage dira")
             print("   lesquelles refusent — c'est déjà les avoir trouvées.")
-        trouvees = chercher(cle, c)
+        trouvees = chercher(cle, c, balayer="--balayer" in sys.argv)
         print()
         if trouvees and not barrettes:
             print("   À recopier dans relais.json, sous \"prises\" :")
