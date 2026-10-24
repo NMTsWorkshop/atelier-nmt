@@ -124,8 +124,16 @@ def main():
             print("   (je la garde dans le fichier, sans sorties)")
             barrettes.append({"nom": hote, "hote": hote, "sorties": []})
             continue
+        # L'adresse MAC est le seul moyen sûr de distinguer deux
+        # multiprises identiques : c'est elle que l'application Meross
+        # affiche dans les réglages de chaque appareil. Couper une sortie
+        # pour voir ce qui s'éteint marche aussi, mais pas quand c'est le
+        # Pi qui est au bout.
         print("   %s, firmware %s, %d sortie(s)"
               % (d["modele"], d["firmware"], len(d["sorties"])))
+        if d["serie"]:
+            print("   adresse MAC %s" % d["serie"])
+            print("   (app Meross > l'appareil > Réglages > MAC adresse)")
         nom = demander("   Comment l'appeler ? [%s] : " % hote, hote)
         sorties = [choisir(s, machines, deja) for s in d["sorties"]]
         barrettes.append({"nom": nom, "hote": hote, "sorties": sorties})

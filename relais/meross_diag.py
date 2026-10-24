@@ -145,8 +145,9 @@ def chercher(cle, c=None, balayer=False):
         genre, d = prises.sonder(hote, cle)
         if genre == "meross":
             trouvees.append(d)
-            print("     %-15s %-10s %d sortie(s)  firmware %s"
-                  % (hote, d["modele"], len(d["sorties"]), d["firmware"]))
+            print("     %-15s %-10s %d sortie(s)  firmware %s  MAC %s"
+                  % (hote, d["modele"], len(d["sorties"]), d["firmware"],
+                     d["serie"] or "?"))
         elif genre == "sans-cle":
             refus.append(hote)
 
@@ -293,8 +294,9 @@ def main():
         try:
             d = prises.decrire(b["hote"], cle)
             vus = {s["canal"]: s["allumee"] for s in d["sorties"]}
-            print("      %s, firmware %s, %d sortie(s) physiques"
-                  % (d["modele"], d["firmware"], len(d["sorties"])))
+            print("      %s, firmware %s, %d sortie(s) physiques, MAC %s"
+                  % (d["modele"], d["firmware"], len(d["sorties"]),
+                     d["serie"] or "?"))
         except Exception as e:
             print("      INJOIGNABLE : %s" % e)
             continue

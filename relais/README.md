@@ -309,6 +309,15 @@ Le quatrième coupe chaque sortie une seconde, l'une après l'autre, pour qu'on
 voie laquelle porte quoi. Il ne touche pas aux sorties verrouillées, et il
 demande confirmation — à ne pas lancer pendant une impression.
 
+**Deux multiprises identiques se distinguent par leur adresse MAC.** Le
+diagnostic l'affiche pour chacune, et l'application Meross l'affiche aussi,
+dans les réglages de l'appareil. C'est la seule méthode sans risque : couper
+une sortie pour voir ce qui s'éteint marche très bien, sauf quand c'est le Pi
+qui est au bout — et à ce stade rien n'est encore verrouillé, puisque c'est
+justement ce qu'on est en train de déclarer.
+
+Le bloc de mesure, lui, se reconnaît tout seul : ce n'est pas le même modèle.
+
 **La découverte automatique ne traverse pas les sous-réseaux.** La table des
 voisins du Pi ne connaît que ce qui est sur son propre segment ; des
 multiprises sur un autre Wi-Fi passent par le routeur et n'y figurent jamais.
