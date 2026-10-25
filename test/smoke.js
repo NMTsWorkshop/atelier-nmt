@@ -885,7 +885,7 @@ const errors = [];
           peinture: { ouverte: false, jours: 5 },
           envoye_at: Date.now() - 600000, boutique: ''
         },
-        pi: { partage: 'arrêté', debout: 259200 }
+        pi: { partage: 'arrêté', debout: 259200, repos: 900 }
       })), 10),
       biblioService: (cible, quandMeme, id) => {
         window.__service = [cible, quandMeme];
@@ -940,13 +940,13 @@ const errors = [];
   await step('sans jeton de boutique, le relais le dit sur l\'écran', async () => {
     await page.evaluate(() => {
       window.NMT.relayEtat = (id) => setTimeout(() => window.NMTcb(id, JSON.stringify({
-        ok: true,
+        ok: true, at: Date.now(),
         vitrine: {
           jours: 2, par_famille: {}, marge: 0, commandes: 1, sans_fichier: [],
           peinture: { ouverte: true, jours: 0 }, envoye_at: 0,
           boutique: 'shopify.jeton est resté à A-REMPLIR dans relais.json'
         },
-        pi: { partage: 'actif', debout: 120 }
+        pi: { partage: 'actif', debout: 120, repos: 900 }
       })), 10);
       etatRelaisAuBesoin(true);
     });
@@ -1028,7 +1028,8 @@ const errors = [];
       ok: true, vitrine: { jours: 2, par_famille: {}, marge: 0, commandes: 0,
                            sans_fichier: [], peinture: { ouverte: true, jours: 0 },
                            envoye_at: 0, boutique: '' },
-      pi: { partage: 'arrêté', debout: 259200 }
+      at: Date.now(),
+      pi: { partage: 'arrêté', debout: 259200, repos: 900 }
     })), 10);
     window.__service = null;
     /* l'etape precedente a remis l'horloge des accuses a sa valeur reelle :
@@ -1089,6 +1090,82 @@ const errors = [];
     });
   });
 
+  console.log('\n— le Pi est-il allumé ? —');
+
+  /* La question que Nathan posait à voix haute chaque fois que quelque chose
+     ne répondait plus. Vu de loin, la seule preuve de vie est le relevé : on
+     juge son âge contre le rythme que le relais annonce, et surtout on ne
+     présente pas de vieilles nouvelles comme si elles étaient d'instant. */
+  const direLeReleve = (at, repos) => page.evaluate(([at, repos]) => {
+    window.NMT.relayEtat = (id) => setTimeout(() => window.NMTcb(id, JSON.stringify({
+      ok: at !== null, at: at || 0,
+      vitrine: { jours: 2, par_famille: {}, marge: 0, commandes: 0,
+                 sans_fichier: [], peinture: { ouverte: true, jours: 0 },
+                 envoye_at: 0, boutique: '' },
+      pi: { partage: 'actif', debout: 7200, repos: repos }
+    })), 10);
+    etatRelaisAuBesoin(true);
+  }, [at, repos]);
+
+  const texteVue = () => page.textContent('#view');
+
+  await step('un relevé frais dit que le Pi est allumé', async () => {
+    await direLeReleve(Date.now() - 60000, 900);
+    await page.waitForFunction(() => /Le Pi/.test(
+      (document.getElementById('view') || {}).textContent || ''), null, { timeout: 5000 });
+    await page.waitForFunction(() => /allumé/.test(
+      (document.getElementById('view') || {}).textContent || ''), null, { timeout: 5000 });
+    const txt = await texteVue();
+    if (!/relevé il y a/.test(txt))
+      throw new Error('la réponse ne dit pas de quand elle date : ' + txt.slice(0, 300));
+    if (/date du dernier relevé/.test(txt))
+      throw new Error('un relevé d\'il y a une minute est présenté comme périmé');
+  });
+
+  await step('un silence plus long que son rythme ne passe pas inaperçu', async () => {
+    await direLeReleve(Date.now() - 40 * 60000, 900);
+    await page.waitForFunction(() => /silencieux depuis/.test(
+      (document.getElementById('view') || {}).textContent || ''), null, { timeout: 5000 });
+    const txt = await texteVue();
+    if (!/date du dernier relevé/.test(txt))
+      throw new Error('l\'écran présente encore ses vieilles nouvelles comme vraies');
+  });
+
+  await step('et un silence qui dure est dit pour ce qu\'il est', async () => {
+    await direLeReleve(Date.now() - 6 * 3600000, 900);
+    await page.waitForFunction(() => /plus de nouvelles depuis/.test(
+      (document.getElementById('view') || {}).textContent || ''), null, { timeout: 5000 });
+  });
+
+  await step('rien du tout sur le canal : éteint, ou coupé du réseau', async () => {
+    await direLeReleve(null, 900);
+    await page.waitForFunction(() => /éteint, ou coupé du réseau/.test(
+      (document.getElementById('view') || {}).textContent || ''), null, { timeout: 5000 });
+  });
+
+  await step('la question directe au Pi, quand on est à l\'atelier', async () => {
+    await page.evaluate(() => {
+      window.NMT.piVivant = (id) => setTimeout(() => window.NMTcb(id,
+        JSON.stringify({ ok: true, ms: 12, adresse: '10.1.2.60', jeton: true })), 10);
+    });
+    await page.click('button[onclick="piVerifier(\'pi-vivant-reglages\')"]');
+    await page.waitForFunction(() => /répond en 12 ms/.test(
+      (document.getElementById('pi-vivant-reglages') || {}).textContent || ''),
+      null, { timeout: 6000 });
+  });
+
+  await step('et hors de l\'atelier, elle ne crie pas à la panne', async () => {
+    await page.evaluate(() => {
+      window.NMT.piVivant = (id) => setTimeout(() => window.NMTcb(id,
+        JSON.stringify({ ok: false, adresse: '10.1.2.60',
+                         error: 'hors du réseau de l\'atelier' })), 10);
+      piVerifier('pi-vivant-reglages');
+    });
+    await page.waitForFunction(() => /c'est normal/.test(
+      (document.getElementById('pi-vivant-reglages') || {}).textContent || ''),
+      null, { timeout: 6000 });
+  });
+
   console.log('\n— lumières et courant —');
 
   await page.evaluate(() => {
@@ -1096,7 +1173,8 @@ const errors = [];
       relayTopic: () => 'nmt-test',
       relayEtat: (id) => setTimeout(() => window.NMTcb(id, JSON.stringify({
         ok: true,
-        vitrine: {}, pi: { partage: 'actif', debout: 3600 },
+        at: Date.now(),
+        vitrine: {}, pi: { partage: 'actif', debout: 3600, repos: 900 },
         prises: [
           { barrette: 'machines', canal: 1, machine: 'K2 Plus', role: '',
             verrouillee: false, allumee: true },

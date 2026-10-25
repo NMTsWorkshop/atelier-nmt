@@ -99,13 +99,30 @@ function renderSettings() {
         '<div class="hint" style="margin-bottom:10px">Quand le partage ne répond plus ' +
           'alors que le Pi est allumé, inutile d\'aller débrancher : relancer le partage ' +
           'suffit presque toujours, et ça n\'interrompt rien d\'autre.</div>' +
+        ligneStatutPi('pi-vivant-reglages') +
+        '<div class="btn-row" style="margin-bottom:10px">' +
+          '<button class="btn sm ghost" onclick="piVerifier(\'pi-vivant-reglages\')">' +
+            'Le Pi répond-il ?</button>' +
+        '</div>' +
         (pi === null
           ? '<div class="hint">Lecture du relais…</div>'
-          : '<div class="kv"><span>Partage de fichiers</span><b class="mono"' +
-              (partage === 'arrêté' ? ' style="color:var(--bad)"' : '') + '>' +
-              esc(partage || 'inconnu') + '</b></div>' +
-            '<div class="kv"><span>Debout depuis</span><b class="mono">' +
-              (pi.debout ? dureeRonde(pi.debout) : '—') + '</b></div>') +
+          : /* Ces deux lignes viennent du relevé, pas du Pi : quand il se
+               tait, elles décrivent le monde tel qu'il était la dernière
+               fois qu'il a parlé. L'écran les donnait sans le dire, et un
+               partage « actif » affiché pendant que le Pi était éteint
+               faisait chercher la panne ailleurs. */
+            (() => {
+              const frais = !statutPiFige();
+              const gris = frais ? '' : ' style="color:var(--txt-3)"';
+              return (frais ? '' :
+                '<div class="hint" style="margin-bottom:6px">Ce qui suit date du ' +
+                'dernier relevé, pas de maintenant.</div>') +
+              '<div class="kv"><span>Partage de fichiers</span><b class="mono"' +
+                (partage === 'arrêté' && frais ? ' style="color:var(--bad)"' : gris) + '>' +
+                esc(partage || 'inconnu') + '</b></div>' +
+              '<div class="kv"><span>Debout depuis</span><b class="mono"' + gris + '>' +
+                (pi.debout ? dureeRonde(pi.debout) : '—') + '</b></div>';
+            })()) +
         '<div class="btn-row">' +
           '<button class="btn primary" onclick="piGeste(\'partage\')">Relancer le partage</button>' +
           '<button class="btn" onclick="piGeste(\'relais\')">Relancer le relais</button>' +

@@ -550,6 +550,23 @@ public class Bridge {
         }).start();
     }
 
+    /* Le Pi répond-il maintenant ? Question directe, réponse immédiate —
+       mais seulement sur le réseau de l'atelier. */
+    @JavascriptInterface
+    public void piVivant(final String cbId) {
+        new Thread(new Runnable() {
+            public void run() {
+                String payload;
+                try {
+                    payload = Biblio.vivant(act).toString();
+                } catch (Throwable t) {
+                    payload = "{\"ok\":false,\"error\":\"" + t.getMessage() + "\"}";
+                }
+                callBack(cbId, payload);
+            }
+        }).start();
+    }
+
     @JavascriptInterface
     public void relayEtat(final String cbId) {
         new Thread(new Runnable() {

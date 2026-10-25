@@ -372,6 +372,13 @@ def relever(machines):
 
 PUBLICATION = {"at": 0, "signature": None, "muet_jusqu_a": 0}
 
+# Le rythme du relevé de principe, tel qu'il est réglé pour ce tour. Il
+# voyage avec le relevé parce que l'app doit pouvoir juger un silence :
+# sans le rythme, elle le compare à la période de relève — une minute — et
+# conclut que le Pi est éteint alors qu'il se repose simplement entre deux
+# relevés de principe, quinze minutes plus loin.
+RYTHME = {"repos": 900}
+
 # le pourcentage d'avancement n'entre pas dans la signature : il bouge en
 # permanence, et l'app recalcule la fin prévue depuis l'heure du relevé
 def signature(etats):
@@ -485,7 +492,9 @@ def publier(sujet, etats, envois=None):
     # arrete » plutot que de laisser Nathan deviner pourquoi Windows ne
     # montre plus rien
     try:
-        charge["pi"] = entretien.etat()
+        pi = entretien.etat()
+        pi["repos"] = int(RYTHME["repos"])
+        charge["pi"] = pi
     except Exception:
         pass
     if PRISES.get("releve"):
@@ -605,6 +614,7 @@ def main():
     c = charger_reglages()
     periode = max(30, int(c.get("periode", 60)))
     repos = max(120, int(c.get("publication", 900)))
+    RYTHME["repos"] = repos
     unique = "--une-fois" in sys.argv
     machines = c.get("machines") or []
     biblio, contexte = demarrer_api(c, machines)
@@ -650,6 +660,10 @@ def main():
                         # il vient de décider quelque chose : la boutique le
                         # saura à ce tour-ci, pas à l'heure suivante
                         BOUTIQUE["at"] = 0
+                # Le rattrapage est fini : ce qui arrivera maintenant est
+                # publié par quelqu'un qui regarde l'app, et le matériel
+                # peut obéir. Avant cette ligne, il n'obéit pas.
+                bibliotheque.fin_du_rattrapage()
                 derniers_ordres = "70s"
             except Exception as e:
                 print("%s — lecture des ordres impossible : %s"

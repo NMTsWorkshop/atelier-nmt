@@ -401,6 +401,38 @@ def main():
         for morceau in biblio.lots_biblio(bib.index()):
             R.publier_corps(sujet, morceau, "biblio")
 
+    # === 0. un redemarrage ne rejoue jamais un ordre physique ==========
+    # Deux soirs de suite, une mise a jour du relais a coupe des machines en
+    # train d'imprimer. Au demarrage il relit deux heures d'ordres sur le
+    # canal — tres bien pour un plateau coche ou un fichier envoye, et
+    # desastreux pour une coupure de courant : il suffit d'avoir appuye juste
+    # avant la mise a jour pour que l'ordre soit encore frais au redemarrage.
+    # Le rattrapage sert au travail, pas au materiel.
+    verifie("le relais demarre en rattrapage",
+            biblio.RATTRAPAGE["en_cours"], str(biblio.RATTRAPAGE))
+
+    id0 = canal.publier_ordre(sujet, {"quoi": "prise", "cible": "toutes",
+                                      "allumer": False}, jeton)
+    dit0 = None
+    for ordre in R.lire_ordres(sujet, "2h"):
+        if ordre.get("id") == id0:
+            dit0 = biblio.appliquer_ordre(bib, ordre, jeton, machines)
+    verifie("un ordre de courant publie avant le demarrage n'est pas execute",
+            dit0 and "avant le d" in dit0, str(dit0))
+    verifie("et il est note comme vu, pour ne pas revenir au tour suivant",
+            id0 in biblio.ORDRES_VUS, str(biblio.ORDRES_VUS[-3:]))
+
+    biblio.fin_du_rattrapage()
+    verifie("le rattrapage se termine quand le relais a fini de relire",
+            not biblio.RATTRAPAGE["en_cours"], str(biblio.RATTRAPAGE))
+
+    rejoue = None
+    for ordre in R.lire_ordres(sujet, "2h"):
+        if ordre.get("id") == id0:
+            rejoue = biblio.appliquer_ordre(bib, ordre, jeton, machines)
+    verifie("et l'ordre ecarte ne repasse pas une fois le relais debout",
+            rejoue is None, str(rejoue))
+
     # === 1. un dépôt simple ============================================
     ident = canal.publier_ordre(sujet, {
         "quoi": "pousser", "chemin": "k2/socle.gcode",
@@ -1028,6 +1060,20 @@ def main():
     verifie("un geste inconnu est refuse sans rien tenter",
             a8g and not a8g.get("ok") and "inconnu" in a8g.get("dit", ""),
             json.dumps(a8g, ensure_ascii=False)[:160])
+
+    # --- le releve dit a quel rythme il parle --------------------------
+    # L'app juge si le Pi est allume en regardant l'age du dernier releve.
+    # Pour que ce jugement vaille quelque chose, elle doit savoir a quel
+    # rythme le relais parle : entre deux releves de principe il se tait un
+    # quart d'heure, et comparer ca a la periode de releve — une minute —
+    # le ferait passer pour mort toutes les minutes.
+    rel_pi = releve_courant(canal, sujet).get("pi") or {}
+    verifie("le releve annonce le rythme auquel le Pi parle",
+            isinstance(rel_pi.get("repos"), int) and rel_pi["repos"] >= 120,
+            json.dumps(rel_pi, ensure_ascii=False)[:160])
+    verifie("et il dit toujours l'etat du partage et depuis quand il est debout",
+            "partage" in rel_pi and "debout" in rel_pi,
+            json.dumps(sorted(rel_pi.keys()), ensure_ascii=False))
 
     entretien._courir = vrai_courir
     entretien.partage_actif = vrai_actif

@@ -173,6 +173,41 @@ public class Biblio {
         return actif(c) && appel(c, "/vivant", null, 3000).optBoolean("ok");
     }
 
+    /**
+     * Le Pi répond-il, là, maintenant ?
+     *
+     * Le relevé qui passe par ntfy ne dit qu'une chose : le Pi parlait
+     * encore il y a tant de minutes. C'est tout ce qu'on peut savoir de
+     * loin, et c'est flou — entre deux relevés de principe il se tait un
+     * quart d'heure sans être éteint pour autant. Sur le réseau de
+     * l'atelier on peut faire mieux : lui demander directement, et avoir
+     * la réponse en moins d'une seconde.
+     *
+     * Le temps de réponse part avec : un Pi qui met trois secondes à dire
+     * oui est un Pi qui a un problème, et c'est bon à voir.
+     */
+    static JSONObject vivant(Context c) {
+        JSONObject out = new JSONObject();
+        try {
+            out.put("adresse", hote(c));
+            if (!actif(c)) {
+                out.put("ok", false);
+                out.put("error", "aucune adresse de relais réglée");
+                return out;
+            }
+            long debut = System.currentTimeMillis();
+            JSONObject dit = appel(c, "/vivant", null, 4000);
+            long mis = System.currentTimeMillis() - debut;
+            out.put("ok", dit.optBoolean("ok"));
+            out.put("ms", mis);
+            out.put("jeton", dit.optBoolean("jeton"));
+            if (!dit.optBoolean("ok")) out.put("error", dit.optString("error", "sans réponse"));
+        } catch (Throwable t) {
+            return erreur(String.valueOf(t.getMessage()));
+        }
+        return out;
+    }
+
     static JSONObject historique(Context c, int combien) {
         return appel(c, "/historique?n=" + Math.max(1, combien), null, DELAI_LECTURE);
     }

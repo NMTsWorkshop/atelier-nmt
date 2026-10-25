@@ -43,6 +43,69 @@ function renderMachines() {
    machine — le relais refuse de couper celle qui imprime, et il refuse
    toujours celle qui l'alimente lui-même. */
 
+/* Le Pi, en une ligne.
+
+   C'est la première chose à savoir quand plus rien ne répond : est-ce le Pi
+   qui est éteint, ou est-ce autre chose ? L'écran le disait seulement en
+   creux — un partage « arrêté », un délai qui ne bougeait plus — et il
+   fallait deviner. Maintenant il le dit.
+
+   Vu de loin, la réponse est forcément datée : elle vaut ce que vaut le
+   dernier relevé, et la ligne le précise au lieu de faire comme si elle
+   était d'instant. À l'atelier, le bouton va chercher la vraie réponse. */
+function ligneStatutPi(sortie) {
+  const st = piStatut();
+  if (!st) return '';
+  const id = sortie || 'pi-vivant-out';
+  return '<div class="kv"><span>Le Pi</span>' +
+      '<b class="mono" style="color:' + st.couleur + '">' + esc(st.dit) + '</b></div>' +
+    (st.detail
+      ? '<div class="hint" style="margin:-2px 0 8px">' + esc(st.detail) + '</div>'
+      : '<div class="sp"></div>') +
+    '<div class="hint" id="' + id + '">' + (PI_VIVANT_DIT[id] || '') + '</div>';
+}
+
+/* Ce que la dernière vérification directe a répondu, par emplacement : la
+   ligne apparaît sur deux écrans, et un redessin ne doit pas effacer la
+   réponse de l'autre. */
+const PI_VIVANT_DIT = {};
+
+/* La question posée au Pi, et non au canal. Instantanée à l'atelier,
+   impossible ailleurs — et dans ce cas elle le dit, au lieu de laisser
+   croire que le Pi est tombé. */
+function piVerifier(sortie) {
+  const id = sortie || 'pi-vivant-out';
+  const ecrire = html => {
+    PI_VIVANT_DIT[id] = html || '';
+    const o = $('#' + id);
+    if (o) o.innerHTML = PI_VIVANT_DIT[id];
+  };
+  ecrire('<span style="color:var(--txt-3)">On demande au Pi…</span>');
+  Relais.vivant()
+    .then(r => {
+      const v = r && typeof r === 'object' ? r : {};
+      if (v.ok) {
+        ecrire('<span style="color:var(--ok)">Le Pi répond' +
+          (v.ms !== undefined ? ' en ' + (v.ms | 0) + ' ms' : '') +
+          '. Il est allumé, et tu es sur le réseau de l\'atelier.</span>');
+        /* il vient de répondre : le relevé qu'on affiche à côté est
+           peut-être vieux, on va en relire un */
+        etatRelaisAuBesoin(true);
+      } else if (!v.adresse) {
+        ecrire('<span style="color:var(--txt-3)">Aucune adresse de relais réglée : ' +
+          'la vérification directe n\'est pas possible. Seul le relevé peut ' +
+          'répondre, et il a quelques minutes de retard.</span>');
+      } else {
+        ecrire('<span style="color:var(--txt-3)">Pas de réponse directe. ' +
+          'Hors du réseau de l\'atelier c\'est normal : fie-toi au relevé ' +
+          'au-dessus. Sur place, ça veut dire que le Pi est éteint ou que son ' +
+          'service ne tourne plus.</span>');
+      }
+    })
+    .catch(e => ecrire('<span style="color:var(--bad)">Échec — ' +
+      esc(e.message) + '</span>'));
+}
+
 function barreAtelier() {
   if (!Relais.ok() || !Relais.sujet()) return '';
   etatRelaisAuBesoin();
@@ -54,6 +117,11 @@ function barreAtelier() {
   const allumees = connues.filter(p => p.allumee).length;
 
   return '<div class="card" style="margin-bottom:10px">' +
+    ligneStatutPi('pi-vivant-atelier') +
+    '<div class="btn-row" style="margin-bottom:10px">' +
+      '<button class="btn sm ghost" onclick="piVerifier(\'pi-vivant-atelier\')">' +
+        'Le Pi répond-il ?</button>' +
+    '</div>' +
     '<div class="kv" style="margin-bottom:8px"><span>Tout l\'atelier</span>' +
       (!prises.length ? ''
         : connues.length

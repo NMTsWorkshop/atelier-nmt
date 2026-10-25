@@ -2005,6 +2005,31 @@ PEREMPTION_ORDRE = 2 * 3600 * 1000
 PEREMPTION_COURTE = 10 * 60 * 1000
 ORDRES_PERISSABLES = ("prise", "service", "lumiere", "lancer")
 
+# Au démarrage, le relais relit deux heures d'ordres sur le canal. C'est
+# juste pour le travail : un plateau coché, un fichier envoyé, un délai
+# décidé — autant de choses qu'on ne veut pas perdre parce que le Pi
+# redémarrait.
+#
+# Pour les ordres qui agissent sur le matériel, c'est exactement le
+# contraire qu'il faut faire. Ils ont été publiés à un moment où Nathan
+# regardait l'app ; quelques minutes ou quelques heures plus tard, les
+# exécuter ne répond plus à rien, et ça coupe des machines qui impriment.
+# C'est arrivé deux soirs de suite, à chaque mise à jour, et la fenêtre de
+# dix minutes n'a pas suffi : il suffit d'avoir appuyé juste avant la mise
+# à jour pour que l'ordre soit encore « frais » au redémarrage.
+#
+# La règle est donc nette : pendant le rattrapage, aucun ordre physique.
+# On le note comme vu, on le refuse à voix haute pour que l'app le dise, et
+# on passe. Un geste perdu se refait d'un doigt ; une impression coupée ne
+# se refait pas.
+RATTRAPAGE = {"en_cours": True}
+
+
+def fin_du_rattrapage():
+    """Le relais a fini de relire le passé : à partir d'ici, les ordres qui
+    arrivent sont des ordres de maintenant, et le matériel leur obéit."""
+    RATTRAPAGE["en_cours"] = False
+
 
 def _charger_vus(racine):
     """Relit la liste des ordres déjà exécutés. Une seule fois."""
@@ -2166,11 +2191,17 @@ def appliquer_ordre(biblio, ordre, jeton, machines=None, vitrine=None,
     _charger_vus(getattr(biblio, "racine", ""))
     if not ident or ident in ORDRES_VUS:
         return None
+    quoi_ordre = ordre.get("quoi")
+    if RATTRAPAGE["en_cours"] and quoi_ordre in ORDRES_PERISSABLES:
+        _noter_vu(ident)
+        accuser(ident, False,
+                "le relais redémarrait : l'ordre n'a pas été exécuté")
+        return ("ordre écarté (%s) : publié avant le démarrage" % quoi_ordre)
     quand = int(ordre.get("at") or 0)
     age = abs(int(time.time() * 1000) - quand)
     if age > PEREMPTION_ORDRE:
         return None          # trop vieux : sans doute un message rejoué
-    if age > PEREMPTION_COURTE and ordre.get("quoi") in ORDRES_PERISSABLES:
+    if age > PEREMPTION_COURTE and quoi_ordre in ORDRES_PERISSABLES:
         # couper un courant que plus personne n'attend, c'est pire que de
         # ne rien faire : on le note comme vu pour ne pas y revenir
         _noter_vu(ident)

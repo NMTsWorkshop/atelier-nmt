@@ -421,6 +421,10 @@ const Relais = {
      appel : le délai qu'il annonce à la boutique, et l'état du Pi. */
   etat() { return nativeCall('relayEtat', []); },
 
+  /* « Le Pi est-il allumé ? », posée au Pi lui-même. Ne répond qu'à
+     l'atelier : ailleurs il n'y a que le relevé pour en juger. */
+  vivant() { return nativeCall('piVivant', []); },
+
   /* Remettre le Pi d'aplomb. cible : 'partage', 'relais' ou 'pi'. */
   service(cible, quandMeme) {
     return nativeCall('biblioService', [String(cible || ''), !!quandMeme]);
@@ -449,6 +453,11 @@ const Relais = {
 let VITRINE_VUE = null;
 let PI_VU = null;
 let PRISES_VUES = null;
+/* L'heure du dernier relevé, et s'il y en a eu un du tout. C'est là-dessus
+   que repose « le Pi est allumé » vu de loin : le relais ne peut pas dire
+   qu'il est mort, seul son silence le dit. */
+let RELEVE_AT = 0;
+let RELEVE_RECU = null;
 let VITRINE_DEMANDEE = false;
 /* le dernier mot du relais sur un réglage envoyé. Il est gardé ici, et non
    écrit dans la page, parce que relire ce que le relais annonce redessine
@@ -470,7 +479,10 @@ function vitrineDire(html) {
 }
 
 function etatRelaisAuBesoin(forcer) {
-  if (forcer) { VITRINE_DEMANDEE = false; VITRINE_VUE = null; PI_VU = null; }
+  if (forcer) {
+    VITRINE_DEMANDEE = false; VITRINE_VUE = null; PI_VU = null;
+    RELEVE_AT = 0; RELEVE_RECU = null;
+  }
   if (VITRINE_DEMANDEE || !Relais.ok() || !Relais.sujet()) return;
   VITRINE_DEMANDEE = true;
   Relais.etat()
@@ -479,9 +491,14 @@ function etatRelaisAuBesoin(forcer) {
       VITRINE_VUE = r.vitrine || {};
       PI_VU = r.pi || {};
       PRISES_VUES = Array.isArray(r.prises) ? r.prises : [];
+      RELEVE_AT = r.at || 0;
+      RELEVE_RECU = !!r.ok;
       if (typeof TAB !== 'undefined' && (TAB === 'settings' || TAB === 'machines')) render();
     })
-    .catch(() => { VITRINE_VUE = {}; PI_VU = {}; PRISES_VUES = []; });
+    .catch(() => {
+      VITRINE_VUE = {}; PI_VU = {}; PRISES_VUES = [];
+      RELEVE_AT = 0; RELEVE_RECU = null;
+    });
 }
 
 /* La prise qui alimente une machine, d'après le dernier relevé — ou null si
@@ -502,6 +519,69 @@ function dureeRonde(secondes) {
   if (s >= 3600) return Math.floor(s / 3600) + ' h';
   if (s >= 60) return Math.floor(s / 60) + ' min';
   return s + ' s';
+}
+
+
+/* ============================================================
+   « Est-ce que le Pi est allumé ? »
+   ============================================================
+
+   Vu de loin, la seule preuve de vie est le relevé : le Pi parle, donc il
+   est debout. Mais son silence ne prouve rien tout de suite, parce qu'il se
+   tait exprès entre deux relevés de principe — un quart d'heure par défaut,
+   pour ne pas vider le quota de ntfy. Juger ce silence à la minute ferait
+   clignoter l'écran en rouge toute la journée.
+
+   Alors on compare l'âge du relevé au rythme que le relais annonce
+   lui-même, avec une relève de marge. Dedans : allumé. Un peu au-delà :
+   silencieux, dit sans dramatiser. Trois fois au-delà : il ne répond plus.
+
+   piStatut() renvoie null quand il n'y a rien à afficher — pas de relais
+   réglé, donc pas de Pi à surveiller. */
+/* Vrai quand ce que le relevé raconte du Pi n'est plus d'actualité : le Pi
+   se tait, donc ses dernières nouvelles sont périmées. L'écran s'en sert
+   pour griser ces lignes au lieu de les présenter comme vraies. */
+function statutPiFige() {
+  const st = piStatut();
+  return !!(st && st.frais === false);
+}
+
+function piStatut() {
+  if (!Relais.ok() || !Relais.sujet()) return null;
+  if (RELEVE_RECU === null) {
+    return { quoi: 'lecture', dit: 'lecture du relais…', couleur: 'var(--txt-3)' };
+  }
+
+  /* Le rythme vient du relais. S'il ne l'annonce pas — un Pi qui n'a pas
+     encore la mise à jour — on prend le réglage par défaut plutôt que la
+     période de relève, sinon on le déclarerait mort chaque minute. */
+  const repos = Math.max(120, ((PI_VU && PI_VU.repos) || 900) | 0);
+  const large = (repos + 120) * 1000;
+
+  if (!RELEVE_RECU || !RELEVE_AT) {
+    return { quoi: 'muet', depuis: 0, couleur: 'var(--bad)', frais: false,
+             dit: 'éteint, ou coupé du réseau',
+             detail: 'rien sur le canal depuis au moins 3 heures' };
+  }
+
+  /* Si l'horloge du téléphone est en retard sur celle du Pi, l'âge sort
+     négatif : on le ramène à zéro plutôt que d'annoncer un relevé venu du
+     futur. */
+  const age = Math.max(0, Date.now() - RELEVE_AT);
+
+  if (age <= large) {
+    return { quoi: 'debout', depuis: age, couleur: 'var(--ok)', frais: true,
+             dit: 'allumé',
+             detail: 'relevé il y a ' + dureeRonde(age / 1000) };
+  }
+  if (age <= large * 3) {
+    return { quoi: 'douteux', depuis: age, couleur: 'var(--warn)', frais: false,
+             dit: 'silencieux depuis ' + dureeRonde(age / 1000),
+             detail: 'il parle d\'habitude toutes les ' + dureeRonde(repos) };
+  }
+  return { quoi: 'muet', depuis: age, couleur: 'var(--bad)', frais: false,
+           dit: 'plus de nouvelles depuis ' + dureeRonde(age / 1000),
+           detail: 'il parle d\'habitude toutes les ' + dureeRonde(repos) };
 }
 
 /* ============================================================
