@@ -1315,6 +1315,39 @@ def main():
             and sum(1 for p in etat_prises if p["verrouillee"]) == 2,
             json.dumps(etat_prises, ensure_ascii=False)[:220])
 
+    # --- le verrou general du courant -----------------------------------
+    # Quand quelque chose coupe des machines et qu'on ne sait pas encore
+    # quoi, il faut pouvoir remettre le relais en service sans lui laisser
+    # la main sur le courant. Le reste continue : delai, boutique,
+    # bibliotheque, lumieres. Les prises sont lues, et rien ne les commande.
+    ferme = prises_mod.Parc({
+        "cle": "cle-de-test", "courant": False,
+        "barrettes": [
+            {"nom": "machines", "hote": barrette_machines.hote, "sorties": [
+                {"canal": 1, "machine": "K2 Plus 1"}]}]})
+    verifie("le verrou general se lit dans relais.json",
+            ferme.prete() and ferme.courant is False, str(ferme.courant))
+
+    avant = dict(barrette_machines.etats)
+    ok_f, dit_f = ferme.commander(ferme.pour_machine("K2 Plus 1"), False)
+    verifie("verrou ferme : aucune prise n'est commandee",
+            not ok_f and barrette_machines.etats == avant, str(dit_f)[:140])
+    verifie("et le refus dit ou se trouve le verrou",
+            "verrouill" in dit_f and "pi-18-courant" in dit_f, str(dit_f)[:140])
+
+    lu_ferme = ferme.releve()
+    verifie("verrou ferme : le releve lit quand meme l'etat des prises",
+            lu_ferme and lu_ferme[0]["allumee"] is not None,
+            json.dumps(lu_ferme, ensure_ascii=False)[:160])
+    verifie("mais il annonce tout verrouille, pour que les boutons disparaissent",
+            all(p["verrouillee"] for p in lu_ferme),
+            json.dumps(lu_ferme, ensure_ascii=False)[:160])
+
+    # Absent de relais.json, le verrou est ouvert : une installation qui
+    # marche ne change pas de comportement en se mettant a jour.
+    verifie("absent du fichier, le verrou est ouvert",
+            prises_mod.Parc({"cle": "k", "barrettes": []}).courant is True)
+
     # === 10. la lumiere dans la chambre ================================
     # Cote Creality, le nom de la broche d'eclairage change d'une machine a
     # l'autre : on ne le devine pas, on demande sa liste d'objets a Klipper.

@@ -216,6 +216,20 @@ class Parc:
     def __init__(self, reglages):
         reglages = reglages or {}
         self.cle = reglages.get("cle") or ""
+        # Le verrou général, au-dessus de tous les autres.
+        #
+        # Il existe pour une raison précise : quand quelque chose coupe des
+        # machines et qu'on ne sait pas encore quoi, on doit pouvoir remettre
+        # le relais en service sans lui laisser la main sur le courant. Le
+        # délai de fabrication, la boutique, la bibliothèque, les lumières
+        # continuent ; les prises sont lues et affichées, mais rien ne les
+        # commande.
+        #
+        # Absent de relais.json, il vaut « ouvert » : une installation qui
+        # marche ne change pas de comportement en se mettant à jour. C'est
+        # la seule valeur par défaut acceptable, mais elle se renverse d'un
+        # mot, et le relevé dit toujours dans quel sens il est.
+        self.courant = reglages.get("courant") is not False
         self.barrettes = []
         for b in (reglages.get("barrettes") or []):
             if not b.get("hote"):
@@ -277,7 +291,7 @@ class Parc:
                     "barrette": b["nom"], "hote": b["hote"], "canal": canal,
                     "machine": s.get("machine") or "",
                     "role": s.get("role") or "",
-                    "verrouillee": self.verrouillee(s),
+                    "verrouillee": self.verrouillee(s) or not self.courant,
                     "allumee": vus.get(canal),
                 })
         return out
@@ -288,6 +302,10 @@ class Parc:
         if not sortie:
             return False, "prise inconnue"
         quoi = sortie.get("machine") or sortie.get("role") or "cette prise"
+        if not self.courant:
+            return False, ("le courant est verrouillé sur le Pi : le relais "
+                           "lit l'état des prises mais n'en commande aucune. "
+                           "Ça se déverrouille avec pi-18-courant.bat.")
         if self.verrouillee(sortie):
             return False, ("%s n'est pas une machine — le relais ne commande "
                            "que ce qui porte un nom de machine. Couper ce qui "

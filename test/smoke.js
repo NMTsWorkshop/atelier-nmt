@@ -1247,6 +1247,50 @@ const errors = [];
       (document.getElementById('atelier-out') || {}).textContent || ''), null, { timeout: 6000 });
   });
 
+  console.log('\n— le courant verrouille sur le Pi —');
+
+  /* Le relais a coupe des machines en train d'imprimer deux soirs de suite.
+     Le temps de comprendre, Nathan doit pouvoir le remettre en service sans
+     lui laisser la main sur le courant : tout le reste marche, les prises
+     sont lues et affichees, et aucun bouton ne propose de les couper. */
+  await step('verrou fermé : plus un bouton de courant sur l\'accueil', async () => {
+    await page.evaluate(() => {
+      window.NMT.relayEtat = (id) => setTimeout(() => window.NMTcb(id, JSON.stringify({
+        ok: true, at: Date.now(), courant: false,
+        vitrine: {}, pi: { partage: 'actif', debout: 3600, repos: 900 },
+        prises: [
+          { barrette: 'machines', canal: 1, machine: 'K2 Plus', role: '',
+            verrouillee: true, allumee: true },
+          { barrette: 'reseau', canal: 5, machine: '', role: 'pi',
+            verrouillee: true, allumee: true }
+        ]
+      })), 10);
+      etatRelaisAuBesoin(true);
+    });
+    await page.click('#tabbar .tab[data-tab=machines]');
+    await page.waitForFunction(() => /courant est verrouillé sur le Pi/.test(
+      (document.getElementById('view') || {}).textContent || ''), null, { timeout: 5000 });
+    const boutons = await page.evaluate(() =>
+      document.querySelectorAll('[onclick^="courantTout"], [onclick^="courantMachine"]').length);
+    if (boutons !== 0) throw new Error(boutons + ' bouton(s) de courant subsistent');
+  });
+
+  await step('et les lumières marchent toujours', async () => {
+    const lum = await page.evaluate(() =>
+      document.querySelectorAll('[onclick^="lumiereMachine"], [onclick^="lumieresToutes"]').length);
+    if (lum === 0) throw new Error('les lumières ont disparu avec le courant');
+  });
+
+  await step('même appelé de force, l\'ordre de courant ne part pas', async () => {
+    const parti = await page.evaluate(() => {
+      window.__prise = null;
+      window.confirm = () => true;
+      courantTout(false);
+      return window.__prise;
+    });
+    if (parti) throw new Error('un ordre est parti malgré le verrou : ' + JSON.stringify(parti));
+  });
+
   await page.evaluate(() => {
     Biblio.cadence = { premier: 20000, ensuite: 60000, duree: 900000 };
   });

@@ -132,12 +132,17 @@ function barreAtelier() {
       '<button class="btn sm" onclick="lumieresToutes(true)">Lumières allumées</button>' +
       '<button class="btn sm" onclick="lumieresToutes(false)">Lumières éteintes</button>' +
     '</div>' +
-    (prises.length
-      ? '<div class="btn-row">' +
-          '<button class="btn sm" onclick="courantTout(true)">Tout rallumer</button>' +
-          '<button class="btn sm ghost" onclick="courantTout(false)">Tout couper</button>' +
-        '</div>'
-      : '') +
+    (COURANT_OUVERT === false
+      ? '<div class="hint" style="margin-top:4px">Le courant est verrouillé sur ' +
+        'le Pi : les prises sont lues et affichées, mais le relais n\'en commande ' +
+        'aucune. Les lumières, le délai de fabrication et la bibliothèque ' +
+        'marchent normalement.</div>'
+      : prises.length
+        ? '<div class="btn-row">' +
+            '<button class="btn sm" onclick="courantTout(true)">Tout rallumer</button>' +
+            '<button class="btn sm ghost" onclick="courantTout(false)">Tout couper</button>' +
+          '</div>'
+        : '') +
     '<div class="hint" id="atelier-out" style="margin-top:8px">' + ATELIER_DIT + '</div>' +
   '</div>';
 }
@@ -221,6 +226,10 @@ function lumieresToutes(allumer) {
 /* Le courant passe toujours par le relais : c'est lui qui tient le parc de
    prises, et lui qui sait ce qui est en train d'imprimer. */
 function courantMachine(id, allumer, quandMeme) {
+  if (COURANT_OUVERT === false) {
+    toast('Le courant est verrouillé sur le Pi', 'bad');
+    return;
+  }
   const m = machineById(id);
   if (!m) return;
   const faire = () => {
@@ -254,6 +263,10 @@ function proposerForcer(id, allumer, dit) {
 }
 
 function courantTout(allumer) {
+  if (COURANT_OUVERT === false) {
+    toast('Le courant est verrouillé sur le Pi', 'bad');
+    return;
+  }
   const faire = () => {
     atelierDire(allumer ? 'Remise sous tension…' : 'Coupure…');
     Relais.prise('toutes', allumer, false)

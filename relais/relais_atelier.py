@@ -499,6 +499,11 @@ def publier(sujet, etats, envois=None):
         pass
     if PRISES.get("releve"):
         charge["prises"] = PRISES["releve"]
+    # Dans quel sens est le verrou général du courant. L'app en a besoin pour
+    # dire pourquoi les boutons ne répondent pas, au lieu de laisser croire
+    # qu'ils sont cassés.
+    if PRISES.get("courant") is not None:
+        charge["courant"] = bool(PRISES["courant"])
     corps = json.dumps(charge, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(SERVEUR + sujet, data=corps, method="POST")
     req.add_header("Content-Type", "application/json")
@@ -554,7 +559,7 @@ BOUTIQUE = {"at": 0}
 # Ce que les multiprises ont répondu au dernier passage. Les interroger
 # coûte un aller-retour chacune : on le fait au rythme de la publication,
 # pas à chaque relève.
-PRISES = {"at": 0, "releve": []}
+PRISES = {"at": 0, "releve": [], "courant": None}
 
 
 # Le dernier calcul, gardé pour que le relevé l'emporte : l'app montre ce
@@ -632,6 +637,9 @@ def main():
                            % (len(parc.sorties()), len(parc.barrettes))
                            if parc.prete() else (parc.pourquoi_pas() or "aucune")),
           flush=True)
+    print("Courant : %s" % ("commandable depuis l'app" if parc.courant
+                            else "VERROUILLÉ — le relais ne commandera aucune "
+                                 "prise (prises.courant à false)"), flush=True)
     # au démarrage on regarde deux heures en arrière, pour reprendre un ordre
     # publié pendant que le Pi redémarrait ; ensuite une fenêtre glissante
     derniers_ordres = "2h"
@@ -683,6 +691,7 @@ def main():
 
         if parc.prete() and time.time() - PRISES["at"] >= 300:
             PRISES["at"] = time.time()
+            PRISES["courant"] = parc.courant
             try:
                 PRISES["releve"] = parc.releve()
             except Exception as e:

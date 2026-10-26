@@ -458,6 +458,11 @@ let PRISES_VUES = null;
    qu'il est mort, seul son silence le dit. */
 let RELEVE_AT = 0;
 let RELEVE_RECU = null;
+/* Le verrou général du courant, tel que le Pi l'annonce. null : le relais
+   ne le dit pas (version plus ancienne), on ne présume rien et on laisse
+   les boutons. false : il est fermé, et l'écran doit le dire plutôt que de
+   proposer des boutons qui ne feront rien. */
+let COURANT_OUVERT = null;
 let VITRINE_DEMANDEE = false;
 /* le dernier mot du relais sur un réglage envoyé. Il est gardé ici, et non
    écrit dans la page, parce que relire ce que le relais annonce redessine
@@ -481,7 +486,7 @@ function vitrineDire(html) {
 function etatRelaisAuBesoin(forcer) {
   if (forcer) {
     VITRINE_DEMANDEE = false; VITRINE_VUE = null; PI_VU = null;
-    RELEVE_AT = 0; RELEVE_RECU = null;
+    RELEVE_AT = 0; RELEVE_RECU = null; COURANT_OUVERT = null;
   }
   if (VITRINE_DEMANDEE || !Relais.ok() || !Relais.sujet()) return;
   VITRINE_DEMANDEE = true;
@@ -493,11 +498,12 @@ function etatRelaisAuBesoin(forcer) {
       PRISES_VUES = Array.isArray(r.prises) ? r.prises : [];
       RELEVE_AT = r.at || 0;
       RELEVE_RECU = !!r.ok;
+      COURANT_OUVERT = r.courant === undefined ? null : !!r.courant;
       if (typeof TAB !== 'undefined' && (TAB === 'settings' || TAB === 'machines')) render();
     })
     .catch(() => {
       VITRINE_VUE = {}; PI_VU = {}; PRISES_VUES = [];
-      RELEVE_AT = 0; RELEVE_RECU = null;
+      RELEVE_AT = 0; RELEVE_RECU = null; COURANT_OUVERT = null;
     });
 }
 
