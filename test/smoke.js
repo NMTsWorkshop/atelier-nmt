@@ -1247,6 +1247,58 @@ const errors = [];
       (document.getElementById('atelier-out') || {}).textContent || ''), null, { timeout: 6000 });
   });
 
+  console.log('\n— aucune coupure sans feu vert —');
+
+  /* Le relais ne coupe plus une prise de machine sans un oui explicite. La
+     notification est le chemin normal ; cette boite est le meme oui depuis
+     l'ecran, pour quand elle a ete balayee ou que ntfy n'est pas installe. */
+  await step('une coupure en attente s\'affiche en tête de l\'écran', async () => {
+    await page.evaluate(() => {
+      window.NMT.relayEtat = (id) => setTimeout(() => window.NMTcb(id, JSON.stringify({
+        ok: true, at: Date.now(), courant: true,
+        vitrine: {}, pi: { partage: 'actif', debout: 3600, repos: 900 },
+        prises: [{ barrette: 'machines', canal: 1, machine: 'K2 Plus', role: '',
+                   verrouillee: false, allumee: true }],
+        coupures: [{ ref: 'ordre-77', machines: ['K2 Plus'], at: Date.now(),
+                     reste: 480 }]
+      })), 10);
+      window.NMT.biblioValider = (ref, accepter, id) => {
+        window.__valide = [ref, accepter];
+        setTimeout(() => window.NMTcb(id,
+          JSON.stringify({ ok: true, id: 'ordre-77', differe: true })), 10);
+      };
+      etatRelaisAuBesoin(true);
+    });
+    await page.click('#tabbar .tab[data-tab=machines]');
+    await page.waitForFunction(() => /demande à couper le courant/.test(
+      (document.getElementById('view') || {}).textContent || ''), null, { timeout: 5000 });
+    const txt = await page.textContent('#view');
+    if (!/K2 Plus/.test(txt)) throw new Error('la machine n\'est pas nommée');
+    if (!/Rien n'est coupé/.test(txt))
+      throw new Error('l\'écran ne dit pas que rien n\'est coupé : ' + txt.slice(0, 300));
+    if (!/8 min/.test(txt))
+      throw new Error('le temps restant n\'est pas dit : ' + txt.slice(0, 300));
+  });
+
+  await step('le oui part avec la référence de cette coupure', async () => {
+    await page.evaluate(() => { window.__valide = null; });
+    await page.click('[onclick*="validerCoupure(\'ordre-77\',true)"]');
+    await page.waitForFunction(() => !!window.__valide, null, { timeout: 5000 });
+    const vu = await page.evaluate(() => window.__valide);
+    if (vu[0] !== 'ordre-77' || vu[1] !== true)
+      throw new Error('réponse envoyée fausse : ' + JSON.stringify(vu));
+  });
+
+  await step('et le non aussi, sans rien couper', async () => {
+    await page.evaluate(() => { window.__valide = null; window.__prise = null; });
+    await page.click('[onclick*="validerCoupure(\'ordre-77\',false)"]');
+    await page.waitForFunction(() => !!window.__valide, null, { timeout: 5000 });
+    const vu = await page.evaluate(() => window.__valide);
+    if (vu[1] !== false) throw new Error('le non est parti comme un oui : ' + JSON.stringify(vu));
+    const prise = await page.evaluate(() => window.__prise);
+    if (prise) throw new Error('un ordre de prise est parti : ' + JSON.stringify(prise));
+  });
+
   console.log('\n— le courant verrouille sur le Pi —');
 
   /* Le relais a coupe des machines en train d'imprimer deux soirs de suite.

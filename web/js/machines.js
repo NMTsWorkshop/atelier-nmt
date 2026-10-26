@@ -29,7 +29,7 @@ function renderMachines() {
 
   const warn = nativeWarningBanner();
 
-  return warn + barreAtelier() + '<div class="stack">' +
+  return warn + boiteCoupures() + barreAtelier() + '<div class="stack">' +
     DB.machines.map(machineCard).join('') + '</div>';
 }
 
@@ -42,6 +42,71 @@ function renderMachines() {
    sans conséquence : on appuie, ça s'allume. Le courant, lui, coupe une
    machine — le relais refuse de couper celle qui imprime, et il refuse
    toujours celle qui l'alimente lui-même. */
+
+/* Les coupures qui attendent ton feu vert.
+
+   Le relais ne coupe plus aucune prise de machine sans un oui explicite.
+   Il le demande par une notification à deux boutons ; cette boîte est le
+   même oui depuis l'écran, pour quand la notification a été balayée ou
+   quand l'application ntfy n'est pas installée.
+
+   Elle est en tête de l'écran des machines, avant tout le reste, parce
+   qu'une demande qu'on ne voit pas est une demande qui expire — et une
+   demande qui expire ne coupe rien, ce qui est le bon défaut mais pas
+   toujours ce qu'on voulait. */
+function boiteCoupures() {
+  if (!Relais.ok() || !Relais.sujet()) return '';
+  etatRelaisAuBesoin();
+  const liste = Array.isArray(COUPURES_VUES) ? COUPURES_VUES : [];
+  if (!liste.length) return '';
+
+  return liste.map(c => {
+    const noms = (c.machines || []).join(', ') || 'une machine';
+    const reste = c.reste > 0 ? dureeRonde(c.reste) : 'moins d\'une minute';
+    return '<div class="warn-box" style="margin-bottom:10px">' +
+      '<b>Le relais demande à couper le courant : ' + esc(noms) + '</b><br>' +
+      'Rien n\'est coupé pour l\'instant. Sans réponse d\'ici ' + esc(reste) +
+      ', la demande est abandonnée d\'elle-même.' +
+      '<div class="btn-row" style="margin-top:8px">' +
+        '<button class="btn sm ghost" onclick="validerCoupure(\'' +
+          esc(c.ref) + '\',true)">Valider la coupure</button>' +
+        '<button class="btn sm" onclick="validerCoupure(\'' +
+          esc(c.ref) + '\',false)">Annuler</button>' +
+      '</div>' +
+      '<div class="hint" id="coupure-out" style="margin-top:6px">' +
+        COUPURE_DIT + '</div>' +
+    '</div>';
+  }).join('');
+}
+
+let COUPURE_DIT = '';
+
+function coupureDire(html) {
+  COUPURE_DIT = html || '';
+  const o = $('#coupure-out');
+  if (o) o.innerHTML = COUPURE_DIT;
+}
+
+function validerCoupure(ref, accepter) {
+  coupureDire(accepter ? 'Validation envoyée…' : 'Annulation envoyée…');
+  Relais.valider(ref, accepter)
+    .then(r => {
+      if (!r || !r.ok) throw new Error((r && r.error) || 'refusé');
+      if (r.id) {
+        suivreEtDire(r.id, () => etatRelaisAuBesoin(true), null, coupureDire);
+      } else {
+        coupureDire('');
+        etatRelaisAuBesoin(true);
+      }
+      toast(accepter ? 'Coupure validée' : 'Coupure annulée',
+            accepter ? 'warn' : 'ok');
+    })
+    .catch(e => {
+      coupureDire('<span style="color:var(--bad)">Échec — ' + esc(e.message) +
+        '</span>');
+      toast('Échec — ' + e.message, 'bad');
+    });
+}
 
 /* Le Pi, en une ligne.
 
@@ -290,14 +355,19 @@ function courantTout(allumer) {
 
 /* Un ordre parti par le canal n'a pas de réponse immédiate : on attend son
    accusé et on dit ce qu'il raconte, plutôt que d'annoncer un succès. */
-function suivreEtDire(ident, apresSucces, surRefus) {
-  atelierDire('<span style="color:var(--txt-3)">Envoyé. Le relais répond dans la minute…</span>');
+/* `dire` dit où écrire : la barre de l'atelier par défaut, la boîte de
+   validation quand c'est une coupure qu'on attend. Sans ça la réponse du
+   relais s'affichait toujours au même endroit, loin du bouton qu'on venait
+   d'appuyer. */
+function suivreEtDire(ident, apresSucces, surRefus, dire) {
+  const ecrire = dire || atelierDire;
+  ecrire('<span style="color:var(--txt-3)">Envoyé. Le relais répond dans la minute…</span>');
   return Biblio.suivreOrdre(ident).then(a => {
     if (!a) {
-      atelierDire('<span style="color:var(--bad)">Pas de réponse du relais.</span>');
+      ecrire('<span style="color:var(--bad)">Pas de réponse du relais.</span>');
       return;
     }
-    atelierDire('<span style="color:var(--' + (a.ok ? 'ok' : 'bad') + ')">' +
+    ecrire('<span style="color:var(--' + (a.ok ? 'ok' : 'bad') + ')">' +
                 esc(a.dit || (a.ok ? 'fait' : 'refusé')) + '</span>');
     if (a.ok) {
       toast('Le relais a pris en compte', 'ok');

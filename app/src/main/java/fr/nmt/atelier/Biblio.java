@@ -312,6 +312,30 @@ public class Biblio {
     }
 
     /**
+     * Oui ou non à une coupure que le relais a mise en attente.
+     *
+     * Le relais ne coupe plus aucune prise de machine sans un feu vert
+     * explicite. Il le demande par une notification à deux boutons, et
+     * cette méthode est le même oui, depuis l'écran de l'app — pour un
+     * téléphone qui n'a pas l'application ntfy, ou quand la notification
+     * a été balayée.
+     *
+     * Passe par le canal, signée comme tout le reste : c'est la boucle du
+     * relais qui tient les coupures en attente.
+     */
+    static JSONObject valider(Context c, String ref, boolean accepter) {
+        try {
+            JSONObject o = new JSONObject();
+            o.put("quoi", "valider");
+            o.put("oui", accepter);
+            o.put("ref", ref == null ? "" : ref);
+            return parLeCanal(c, o);
+        } catch (Exception e) {
+            return erreur(String.valueOf(e.getMessage()));
+        }
+    }
+
+    /**
      * Le courant d'une machine, par sa multiprise. Toujours par le canal :
      * c'est la boucle du relais qui tient le parc de prises, et c'est elle
      * qui refuse de couper une machine en train d'imprimer.

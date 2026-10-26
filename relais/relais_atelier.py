@@ -472,6 +472,49 @@ def publier_corps(sujet, corps, titre):
         return r.status
 
 
+def prevenir(sujet, avis):
+    """Une vraie notification, avec deux boutons.
+
+    C'est le seul message que le relais publie en priorité haute : tout le
+    reste voyage en « min » pour ne rien faire sonner. Celui-ci doit sonner,
+    parce que rien ne se passera si personne ne répond.
+
+    Les deux boutons republient sur le même canal, donc il n'y a rien à
+    ouvrir sur le Pi depuis l'extérieur : le relais lira la réponse à sa
+    relève suivante, comme n'importe quel ordre de l'app. La clé à usage
+    unique voyage dans le corps du bouton — elle n'autorise que cette
+    coupure, et pour dix minutes.
+
+    On publie ici en JSON à la racine de ntfy, et non par des entêtes :
+    une liste de boutons passée en entête s'échappe à coups de virgules et
+    de guillemets, et le premier accent la casse."""
+    retour = SERVEUR + urllib.parse.quote(sujet)
+
+    def bouton(libelle, oui):
+        corps = json.dumps({"t": "ordre", "quoi": "valider", "oui": oui,
+                            "ref": avis["ref"], "cle": avis["cle"],
+                            "at": int(time.time() * 1000)},
+                           ensure_ascii=False)
+        return {"action": "http", "label": libelle, "url": retour,
+                "method": "POST", "body": corps, "clear": True}
+
+    charge = {
+        "topic": sujet,
+        "title": avis["titre"],
+        "message": avis["texte"],
+        "priority": 5,
+        "tags": ["warning"],
+        "actions": [bouton("Valider la coupure", True),
+                    bouton("Ne pas couper", False)],
+    }
+    req = urllib.request.Request(
+        SERVEUR, data=json.dumps(charge, ensure_ascii=False).encode("utf-8"),
+        method="POST")
+    req.add_header("Content-Type", "application/json")
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return r.status
+
+
 def publier(sujet, etats, envois=None):
     # les champs bruts des machines servent au diagnostic sur place ; ntfy
     # limite un message à quelques kilo-octets, ils n'y vont pas
@@ -504,6 +547,12 @@ def publier(sujet, etats, envois=None):
     # qu'ils sont cassés.
     if PRISES.get("courant") is not None:
         charge["courant"] = bool(PRISES["courant"])
+    # Les coupures qui attendent un oui. L'app les affiche et offre les
+    # deux mêmes boutons que la notification : un téléphone sans
+    # l'application ntfy doit pouvoir répondre quand même.
+    attente = bibliotheque.coupures_en_attente()
+    if attente:
+        charge["coupures"] = attente
     corps = json.dumps(charge, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(SERVEUR + sujet, data=corps, method="POST")
     req.add_header("Content-Type", "application/json")
@@ -676,6 +725,26 @@ def main():
             except Exception as e:
                 print("%s — lecture des ordres impossible : %s"
                       % (time.strftime("%H:%M:%S"), e), file=sys.stderr, flush=True)
+
+            # --- les coupures qui attendent un oui ---------------------
+            # Le message part en priorité haute, avec ses deux boutons.
+            # S'il ne part pas, la coupure reste en attente et s'abandonne
+            # toute seule : on ne coupe jamais faute d'avoir pu demander.
+            while bibliotheque.A_PREVENIR:
+                avis = bibliotheque.A_PREVENIR.pop(0)
+                try:
+                    prevenir(c["sujet"], avis)
+                    print("%s — validation demandée : %s"
+                          % (time.strftime("%H:%M:%S"), avis["texte"][:90]),
+                          flush=True)
+                except Exception as e:
+                    print("%s — notification impossible : %s"
+                          % (time.strftime("%H:%M:%S"), e),
+                          file=sys.stderr, flush=True)
+
+            bibliotheque._oublier_expirees(
+                journal=lambda m: print("%s — %s" % (time.strftime("%H:%M:%S"), m),
+                                        flush=True))
 
         # --- la boutique, une fois par heure -------------------------
         if c.get("sujet") and (time.time() - BOUTIQUE["at"] >= 3600 or unique):

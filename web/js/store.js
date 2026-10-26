@@ -436,6 +436,11 @@ const Relais = {
       [String(machine || ''), String(hote || ''), !!allumer]);
   },
 
+  /* Oui ou non à une coupure que le relais a mise en attente. */
+  valider(ref, accepter) {
+    return nativeCall('biblioValider', [String(ref || ''), !!accepter]);
+  },
+
   /* Le courant d'une machine, ou « toutes ». */
   prise(cible, allumer, quandMeme) {
     return nativeCall('biblioPrise',
@@ -463,6 +468,10 @@ let RELEVE_RECU = null;
    les boutons. false : il est fermé, et l'écran doit le dire plutôt que de
    proposer des boutons qui ne feront rien. */
 let COURANT_OUVERT = null;
+/* Les coupures qui attendent un oui, telles que le relais les annonce.
+   Rien ne sera coupé tant qu'aucune réponse n'arrive — y compris si on
+   n'affiche rien. L'écran est le confort, pas la sécurité. */
+let COUPURES_VUES = [];
 let VITRINE_DEMANDEE = false;
 /* le dernier mot du relais sur un réglage envoyé. Il est gardé ici, et non
    écrit dans la page, parce que relire ce que le relais annonce redessine
@@ -487,6 +496,7 @@ function etatRelaisAuBesoin(forcer) {
   if (forcer) {
     VITRINE_DEMANDEE = false; VITRINE_VUE = null; PI_VU = null;
     RELEVE_AT = 0; RELEVE_RECU = null; COURANT_OUVERT = null;
+    COUPURES_VUES = [];
   }
   if (VITRINE_DEMANDEE || !Relais.ok() || !Relais.sujet()) return;
   VITRINE_DEMANDEE = true;
@@ -499,10 +509,11 @@ function etatRelaisAuBesoin(forcer) {
       RELEVE_AT = r.at || 0;
       RELEVE_RECU = !!r.ok;
       COURANT_OUVERT = r.courant === undefined ? null : !!r.courant;
+      COUPURES_VUES = Array.isArray(r.coupures) ? r.coupures : [];
       if (typeof TAB !== 'undefined' && (TAB === 'settings' || TAB === 'machines')) render();
     })
     .catch(() => {
-      VITRINE_VUE = {}; PI_VU = {}; PRISES_VUES = [];
+      VITRINE_VUE = {}; PI_VU = {}; PRISES_VUES = []; COUPURES_VUES = [];
       RELEVE_AT = 0; RELEVE_RECU = null; COURANT_OUVERT = null;
     });
 }

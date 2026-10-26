@@ -1111,13 +1111,35 @@ def main():
                 return a
         return {}
 
+    def coupure(cible, **extra):
+        """Une coupure du debut a la fin : la demande, la notification, le oui.
+
+        Plus aucune prise de machine ne se coupe sans feu vert. L'ordre de
+        prise ne fait plus que demander ; c'est la reponse qui coupe. Ce
+        helper joue les deux temps et rend l'accuse final."""
+        ident = canal.publier_ordre(sujet, dict(
+            {"quoi": "prise", "cible": cible, "allumer": False}, **extra), jeton)
+        for o in R.lire_ordres(sujet, "2h"):
+            biblio.appliquer_ordre(bib, o, jeton, machines, vit, parc)
+        dossier = biblio.ATTENTE_COUPURE.get(ident)
+        if dossier:
+            oui = {"id": "oui-" + ident, "quoi": "valider", "oui": True,
+                   "ref": ident, "cle": dossier["secret"],
+                   "at": int(time.time() * 1000)}
+            biblio.appliquer_ordre(bib, oui, jeton, machines, vit, parc)
+        un_tour()
+        for a in index_courant(canal, sujet).get("accuses", []):
+            if a["id"] == ident:
+                return a
+        return {}
+
     verifie("le parc se lit depuis relais.json sans rien deviner",
             parc.prete() and len(parc.sorties()) == 4,
             json.dumps(parc.sorties(), ensure_ascii=False)[:200])
 
     # --- couper une machine au repos -----------------------------------
-    a9 = ordre_prise("K2 Plus 1", False)
-    verifie("couper une machine au repos marche",
+    a9 = coupure("K2 Plus 1")
+    verifie("couper une machine au repos marche, une fois validee",
             a9.get("ok") and barrette_machines.etats[1] is False,
             "%s / %s" % (json.dumps(a9, ensure_ascii=False)[:120],
                          barrette_machines.etats))
@@ -1137,7 +1159,7 @@ def main():
             and barrette_machines.etats[2] is True,
             "%s / %s" % (json.dumps(a9c, ensure_ascii=False)[:140],
                          barrette_machines.etats))
-    a9d = ordre_prise("P1S 1", False, quand_meme=True)
+    a9d = coupure("P1S 1", quand_meme=True)
     verifie("sauf si on insiste",
             a9d.get("ok") and barrette_machines.etats[2] is False,
             "%s / %s" % (json.dumps(a9d, ensure_ascii=False)[:120],
@@ -1160,7 +1182,7 @@ def main():
             str(barrette_reseau.etats))
 
     # --- « toutes » ne touche que les machines --------------------------
-    a9e = ordre_prise("toutes", False)
+    a9e = coupure("toutes")
     verifie("« toutes » coupe les machines et rien d'autre",
             a9e.get("ok") and barrette_machines.etats[1] is False
             and barrette_machines.etats[2] is False
@@ -1219,6 +1241,7 @@ def main():
 
     class ParcEspion:
         barrettes = [1]
+        courant = True
 
         def sorties(self):
             return [{"canal": 1, "machine": "K2 Plus 1", "hote": "x"}]
@@ -1230,19 +1253,37 @@ def main():
             coupures.append(allumer)
             return True, "ok"
 
+    def demander_puis_valider(ordre, parc):
+        """Une coupure complete : la demande, puis le oui.
+
+        Depuis que toute coupure attend un feu vert, un ordre de prise ne
+        coupe plus rien a lui seul. Ce qu'on mesure ici, c'est le rejeu :
+        on joue donc les deux temps."""
+        biblio.appliquer_ordre(bib, ordre, jeton, machines, vit, parc)
+        dossier = biblio.ATTENTE_COUPURE.get(ordre["id"])
+        if not dossier:
+            return False
+        oui = {"id": "oui-" + ordre["id"], "quoi": "valider", "oui": True,
+               "ref": ordre["id"], "cle": dossier["secret"],
+               "at": int(time.time() * 1000)}
+        biblio.appliquer_ordre(bib, oui, jeton, machines, vit, parc)
+        return True
+
     o_rejeu = {"id": "rejeu-1", "quoi": "prise", "cible": "K2 Plus 1",
                "allumer": False, "at": int(time.time() * 1000)}
     o_rejeu["sig"] = biblio.signer(jeton, o_rejeu)
-    biblio.appliquer_ordre(bib, o_rejeu, jeton, machines, vit, ParcEspion())
-    verifie("un ordre de coupure s'execute une fois",
-            coupures == [False], str(coupures))
+    verifie("un ordre de coupure s'execute une fois, une fois valide",
+            demander_puis_valider(o_rejeu, ParcEspion()) and coupures == [False],
+            str(coupures))
 
     # le relais redemarre : la memoire repart a zero, le disque non
     biblio.ORDRES_VUS[:] = []
     biblio.FICHIER_VUS["chemin"] = ""
+    biblio.ATTENTE_COUPURE.clear()
     biblio.appliquer_ordre(bib, o_rejeu, jeton, machines, vit, ParcEspion())
     verifie("et pas une seconde fois apres un redemarrage du relais",
-            coupures == [False], str(coupures))
+            coupures == [False] and not biblio.ATTENTE_COUPURE,
+            "%s / %s" % (coupures, list(biblio.ATTENTE_COUPURE)))
 
     # et un ordre qu'on a oublie en route ne se reveille pas une heure apres
     o_vieux = dict(o_rejeu, id="rejeu-2",
@@ -1347,6 +1388,165 @@ def main():
     # marche ne change pas de comportement en se mettant a jour.
     verifie("absent du fichier, le verrou est ouvert",
             prises_mod.Parc({"cle": "k", "barrettes": []}).courant is True)
+
+    # === 9 bis. aucune coupure sans feu vert ===========================
+    # La demande de Nathan, et la seule chose qui le protege d'une coupure
+    # qu'il n'a pas demandee : le relais met la coupure de cote, envoie une
+    # notification a deux boutons, et n'agit que si quelqu'un repond oui.
+    # Le defaut est l'inaction.
+    def remettre_tout():
+        for ca in (1, 2, 3, 4):
+            prises_mod.basculer(barrette_machines.hote, ca, True, "cle-de-test")
+        biblio.ATTENTE_COUPURE.clear()
+        del biblio.A_PREVENIR[:]
+
+    def demander(cible, **extra):
+        """La demande seule, sans reponse. Rend la reference."""
+        ident = canal.publier_ordre(sujet, dict(
+            {"quoi": "prise", "cible": cible, "allumer": False}, **extra), jeton)
+        for o in R.lire_ordres(sujet, "2h"):
+            biblio.appliquer_ordre(bib, o, jeton, machines, vit, parc)
+        return ident
+
+    compteur_rep = [0]
+
+    def repondre(ref, oui, cle=None, signer=False):
+        # un identifiant different a chaque fois : le relais ne rejuge
+        # jamais deux fois le meme ordre, et deux reponses de suite a la
+        # meme demande sont deux ordres distincts
+        compteur_rep[0] += 1
+        o = {"id": "rep-%d-%s" % (compteur_rep[0], ref), "quoi": "valider",
+             "oui": oui, "ref": ref, "at": int(time.time() * 1000)}
+        if cle is not None:
+            o["cle"] = cle
+        if signer:
+            o["sig"] = biblio.signer(jeton, o)
+        return biblio.appliquer_ordre(bib, o, jeton, machines, vit, parc)
+
+    remettre_tout()
+    ref = demander("K2 Plus 1")
+    verifie("une demande de coupure ne coupe rien d'elle-meme",
+            barrette_machines.etats[1] is True, str(barrette_machines.etats))
+    verifie("elle est mise de cote, avec sa cle a usage unique",
+            ref in biblio.ATTENTE_COUPURE
+            and len(biblio.ATTENTE_COUPURE[ref]["secret"]) == 32,
+            str(list(biblio.ATTENTE_COUPURE)))
+
+    avis = biblio.A_PREVENIR[-1] if biblio.A_PREVENIR else {}
+    verifie("une notification est prete, qui nomme la machine",
+            avis.get("ref") == ref and "K2 Plus 1" in avis.get("texte", ""),
+            json.dumps(avis, ensure_ascii=False)[:180])
+    verifie("et elle dit que rien ne sera coupe sans reponse",
+            "sans ta validation" in avis.get("texte", ""),
+            avis.get("texte", "")[:160])
+
+    # --- la notification telle qu'elle part vraiment --------------------
+    # Deux boutons qui republient sur le meme canal : il n'y a rien a ouvrir
+    # sur le Pi depuis l'exterieur, le relais lira la reponse a sa releve
+    # suivante. Et on publie en JSON a la racine, pas par des entetes : une
+    # liste de boutons passee en entete s'echappe a coups de virgules et le
+    # premier accent la casse.
+    avant_n = len(canal.messages)
+    R.prevenir(sujet, avis)
+    poste = [m for m in canal.messages[avant_n:]]
+    corps_n = json.loads(poste[-1]["message"]) if poste else {}
+    verifie("la notification part en priorite haute, sur le bon sujet",
+            corps_n.get("priority") == 5 and corps_n.get("topic") == sujet,
+            json.dumps(corps_n, ensure_ascii=False)[:160])
+    actions = corps_n.get("actions") or []
+    verifie("avec deux boutons, un oui et un non",
+            len(actions) == 2
+            and [json.loads(x["body"]).get("oui") for x in actions] == [True, False],
+            json.dumps(actions, ensure_ascii=False)[:220])
+    verifie("chacun republie sur le canal, avec la cle a usage unique",
+            all(x["url"].rstrip("/").endswith(sujet)
+                and json.loads(x["body"]).get("cle") == avis["cle"]
+                and json.loads(x["body"]).get("quoi") == "valider"
+                and json.loads(x["body"]).get("t") == "ordre"
+                for x in actions),
+            json.dumps(actions, ensure_ascii=False)[:220])
+
+    # --- le releve montre l'attente, et jamais la cle -------------------
+    vues = biblio.coupures_en_attente()
+    verifie("le releve annonce la coupure en attente",
+            len(vues) == 1 and vues[0]["ref"] == ref
+            and vues[0]["machines"] == ["K2 Plus 1"],
+            json.dumps(vues, ensure_ascii=False)[:180])
+    verifie("mais la cle ne voyage jamais par le releve",
+            "secret" not in json.dumps(vues) and "cle" not in json.dumps(vues),
+            json.dumps(vues, ensure_ascii=False)[:180])
+
+    # --- une cle fausse ne vaut rien, et ne consomme pas la demande -----
+    repondre(ref, True, cle="0" * 32)
+    verifie("une cle qui n'est pas la bonne ne coupe rien",
+            barrette_machines.etats[1] is True, str(barrette_machines.etats))
+    verifie("et elle ne consomme pas la demande, sinon elle l'annulerait",
+            ref in biblio.ATTENTE_COUPURE, str(list(biblio.ATTENTE_COUPURE)))
+
+    # --- la bonne cle coupe ---------------------------------------------
+    repondre(ref, True, cle=biblio.ATTENTE_COUPURE[ref]["secret"])
+    verifie("la cle de la notification coupe, elle",
+            barrette_machines.etats[1] is False, str(barrette_machines.etats))
+    verifie("et la demande disparait : la cle ne sert qu'une fois",
+            ref not in biblio.ATTENTE_COUPURE, str(list(biblio.ATTENTE_COUPURE)))
+
+    # --- le non ---------------------------------------------------------
+    remettre_tout()
+    ref2 = demander("K2 Plus 1")
+    repondre(ref2, False, cle=biblio.ATTENTE_COUPURE[ref2]["secret"])
+    verifie("repondre non ne coupe rien et ferme la demande",
+            barrette_machines.etats[1] is True
+            and ref2 not in biblio.ATTENTE_COUPURE,
+            "%s / %s" % (barrette_machines.etats, list(biblio.ATTENTE_COUPURE)))
+
+    # --- l'app, qui signe au lieu de porter la cle ----------------------
+    remettre_tout()
+    ref3 = demander("K2 Plus 1")
+    repondre(ref3, True, signer=True)
+    verifie("l'app valide avec sa signature, sans la cle de la notification",
+            barrette_machines.etats[1] is False, str(barrette_machines.etats))
+
+    # --- personne ne repond ---------------------------------------------
+    remettre_tout()
+    ref4 = demander("K2 Plus 1")
+    biblio.ATTENTE_COUPURE[ref4]["expire"] = time.time() - 1
+    biblio._oublier_expirees()
+    verifie("sans reponse, la demande s'abandonne et rien n'est coupe",
+            barrette_machines.etats[1] is True
+            and not biblio.ATTENTE_COUPURE,
+            "%s / %s" % (barrette_machines.etats, list(biblio.ATTENTE_COUPURE)))
+    verifie("et l'app apprend pourquoi, au lieu d'attendre indefiniment",
+            any(a["id"] == ref4 and "validation non donnée" in a["dit"]
+                for a in index_courant(canal, sujet).get("accuses", [])
+                ) or any(a["id"] == ref4 and "validation non donnée" in a["dit"]
+                         for a in biblio.ACCUSES),
+            json.dumps(biblio.ACCUSES[-2:], ensure_ascii=False)[:200])
+
+    # --- une impression demarree entre la demande et le oui -------------
+    # Dix minutes passent. Valider une coupure n'est pas valider la perte
+    # d'une impression qui n'existait pas encore quand on a demande.
+    remettre_tout()
+    ref5 = demander("K2 Plus 1")
+    vrai_etat2 = biblio._etat_machine
+    biblio._etat_machine = lambda m: ({"state": "printing"}
+                                      if m.get("nom") == "K2 Plus 1"
+                                      else vrai_etat2(m))
+    dit5 = repondre(ref5, True, cle=biblio.ATTENTE_COUPURE[ref5]["secret"])
+    biblio._etat_machine = vrai_etat2
+    verifie("une machine qui s'est mise a imprimer entre-temps n'est pas coupee",
+            barrette_machines.etats[1] is True and "imprime maintenant" in dit5,
+            "%s / %s" % (barrette_machines.etats, str(dit5)[:140])) 
+
+    # --- un redemarrage du relais oublie les demandes -------------------
+    remettre_tout()
+    ref6 = demander("K2 Plus 1")
+    cle6 = biblio.ATTENTE_COUPURE[ref6]["secret"]
+    biblio.ATTENTE_COUPURE.clear()          # le relais redemarre
+    repondre(ref6, True, cle=cle6)
+    verifie("un relais qui redemarre oublie les demandes, il ne les execute pas",
+            barrette_machines.etats[1] is True, str(barrette_machines.etats))
+
+    remettre_tout()
 
     # === 10. la lumiere dans la chambre ================================
     # Cote Creality, le nom de la broche d'eclairage change d'une machine a
