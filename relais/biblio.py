@@ -43,7 +43,6 @@ import zipfile
 import zlib
 
 import entretien
-import prises as prises_mod
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # nombre d'exemplaires écrit dans le nom du fichier
@@ -2000,11 +1999,12 @@ GARDE_VUS = 500
 PEREMPTION_ORDRE = 2 * 3600 * 1000
 
 # Deux heures, c'est la bonne fenêtre pour rattraper un plateau coché
-# pendant une coupure réseau. C'est beaucoup trop pour un ordre qui coupe
-# du courant ou redémarre une machine : passé quelques minutes, personne
-# ne l'attend plus, et l'exécuter devient une surprise.
+# pendant une coupure réseau. C'est beaucoup trop pour un ordre qui agit sur
+# le matériel — une lumière, un lancement d'impression, un redémarrage du
+# Pi : passé quelques minutes, personne ne l'attend plus, et l'exécuter
+# devient une surprise.
 PEREMPTION_COURTE = 10 * 60 * 1000
-ORDRES_PERISSABLES = ("prise", "service", "lumiere", "lancer")
+ORDRES_PERISSABLES = ("service", "lumiere", "lancer")
 
 # Au démarrage, le relais relit deux heures d'ordres sur le canal. C'est
 # juste pour le travail : un plateau coché, un fichier envoyé, un délai
@@ -2024,53 +2024,6 @@ ORDRES_PERISSABLES = ("prise", "service", "lumiere", "lancer")
 # on passe. Un geste perdu se refait d'un doigt ; une impression coupée ne
 # se refait pas.
 RATTRAPAGE = {"en_cours": True}
-
-
-# ----------------------------------------------------------------------
-# Les coupures qui attendent le feu vert
-# ----------------------------------------------------------------------
-#
-# Aucune prise de machine ne se coupe plus sans que Nathan ait dit oui,
-# sur son téléphone, pour cette coupure-là. Le relais met la coupure de
-# côté, envoie une notification avec deux boutons, et attend.
-#
-# Le défaut est l'inaction. Si la notification n'arrive pas, si le
-# téléphone est éteint, si personne ne répond, si le relais redémarre
-# entre-temps : rien ne se passe. C'est l'inverse de ce qui s'est passé
-# ces deux soirs-là, où il suffisait que personne ne regarde pour que
-# quatre impressions soient perdues.
-#
-# Rien n'est écrit sur le disque, et c'est voulu : un redémarrage doit
-# faire oublier les coupures en attente, pas les retrouver.
-ATTENTE_COUPURE = {}
-DELAI_VALIDATION = 10 * 60          # secondes
-
-# Les notifications à envoyer, que la boucle du relais va chercher. Cette
-# bibliothèque ne sait pas parler à ntfy, et n'a pas à l'apprendre.
-A_PREVENIR = []
-
-
-def coupures_en_attente():
-    """Ce que l'app doit afficher. Jamais la clé à usage unique : elle part
-    dans la notification et ne revient pas par le relevé."""
-    maintenant = time.time()
-    return [{"ref": d["ref"], "machines": d["machines"],
-             "at": int(d["at"] * 1000),
-             "reste": max(0, int(d["expire"] - maintenant))}
-            for d in sorted(ATTENTE_COUPURE.values(), key=lambda x: x["at"])
-            if d["expire"] > maintenant]
-
-
-def _oublier_expirees(journal=None):
-    for ref, d in list(ATTENTE_COUPURE.items()):
-        if d["expire"] <= time.time():
-            del ATTENTE_COUPURE[ref]
-            accuser(ref, False, "validation non donnée dans les %d minutes : "
-                                "la coupure est abandonnée"
-                                % (DELAI_VALIDATION // 60))
-            if journal:
-                journal("coupure abandonnée faute de validation : %s"
-                        % ", ".join(d["machines"]))
 
 
 def fin_du_rattrapage():
@@ -2232,109 +2185,7 @@ def _pousser_a_part(biblio, machines, machine, chemin, lancer, plateau=1,
     oublier_publication()
 
 
-def _imprime(machines, nom):
-    """Vrai si cette machine est en train de travailler. Faux si on ne sait
-    pas : le doute n'autorise pas, il est traité par l'appelant."""
-    try:
-        m = trouver_machine(machines or [], nom, "")
-    except Exception:
-        return False
-    if m is None:
-        return False
-    etat = str((_etat_machine(m) or {}).get("state") or "").lower()
-    return etat in ("printing", "running", "preparing", "paused")
-
-
-def _mettre_en_attente(ref, sorties, refus, quand_meme=False):
-    """Range la coupure et réclame le feu vert. Rien n'est coupé ici."""
-    noms = [s.get("machine") or "?" for s in sorties]
-    # Une clé tirée au sort, pour cette coupure et pour dix minutes. Elle
-    # part dans la notification, qui ne sait pas signer comme l'app le fait.
-    # Elle n'ouvre rien d'autre : sans coupure en attente, elle ne vaut
-    # rien, et elle meurt avec la coupure qu'elle autorise.
-    secret = "%032x" % random.getrandbits(128)
-    ATTENTE_COUPURE[ref] = {
-        "ref": ref, "secret": secret,
-        "sorties": [dict(s) for s in sorties],
-        "machines": noms, "quand_meme": bool(quand_meme),
-        "at": time.time(), "expire": time.time() + DELAI_VALIDATION,
-    }
-    A_PREVENIR.append({
-        "ref": ref, "cle": secret,
-        "titre": "Couper le courant : à valider",
-        "texte": ("%s — le relais demande à couper le courant. Rien ne sera "
-                  "coupé sans ta validation. Sans réponse d'ici %d minutes, "
-                  "la demande est abandonnée."
-                  % (", ".join(noms), DELAI_VALIDATION // 60)),
-    })
-    accuser(ref, False, "en attente de ta validation sur le téléphone — "
-                        "rien n'est coupé pour l'instant", fini=False)
-    dit = "coupure en attente de validation : %s" % ", ".join(noms)
-    if refus:
-        dit += " — refusé : " + ", ".join(refus)
-    return dit
-
-
-def _executer_coupure(dossier, parc, machines):
-    """La coupure, une fois validée.
-
-    On revérifie ici que les machines ne travaillent pas. Dix minutes ont
-    pu passer entre la demande et le oui, et une impression a pu démarrer
-    dans cet intervalle — valider une coupure n'est pas valider la perte
-    d'une impression qui n'existait pas encore quand on a demandé."""
-    faits, refus = [], []
-    for sortie in dossier["sorties"]:
-        nom_m = sortie.get("machine") or ""
-        if not dossier.get("quand_meme") and _imprime(machines, nom_m):
-            refus.append("%s imprime maintenant" % nom_m)
-            continue
-        ok, dit_une = parc.commander(sortie, False)
-        (faits if ok else refus).append(dit_une)
-    dit = ("courant coupé : %s" % ", ".join(faits)) if faits else ""
-    if refus:
-        dit = ((dit + " — ") if dit else "") + "refusé : " + ", ".join(refus)
-    accuser(dossier["ref"], bool(faits), dit or "rien à faire")
-    return dit or "rien à faire"
-
-
-def _repondre_attente(ordre, jeton, parc, machines):
-    """« Oui » ou « non » à une coupure en attente.
-
-    Deux autorisations possibles, et une seule suffit : la clé à usage
-    unique qu'a emportée la notification, ou la signature de l'app. La
-    première existe parce qu'un bouton de notification ne sait pas signer ;
-    la seconde parce qu'un téléphone sans l'application ntfy doit pouvoir
-    répondre quand même, depuis l'écran de l'atelier."""
-    ref = str(ordre.get("ref") or "")
-    dossier = ATTENTE_COUPURE.get(ref)
-    if not dossier:
-        return ("réponse sans objet : aucune coupure n'attend sous cette "
-                "référence (%s)" % (ref or "aucune"))
-
-    autorise = (str(ordre.get("cle") or "") == dossier["secret"]
-                or bool(jeton and signature_valide(jeton, ordre)))
-    if not autorise:
-        # on ne retire pas le dossier : une réponse mal autorisée ne doit
-        # pas consommer la demande, sinon elle sert à l'annuler sans droit
-        return ("réponse refusée : ni la clé de la notification ni la "
-                "signature de l'app")
-
-    del ATTENTE_COUPURE[ref]
-
-    if ordre.get("oui") is False:
-        accuser(ref, False, "coupure refusée — rien n'a été coupé")
-        return "coupure refusée : %s" % ", ".join(dossier["machines"])
-    if dossier["expire"] <= time.time():
-        accuser(ref, False, "validation trop tardive — coupure abandonnée")
-        return "validation trop tardive : %s" % ", ".join(dossier["machines"])
-    if parc is None or not parc.barrettes:
-        accuser(ref, False, "aucune multiprise décrite dans relais.json")
-        return "validation sans multiprise décrite"
-    return _executer_coupure(dossier, parc, machines)
-
-
-def appliquer_ordre(biblio, ordre, jeton, machines=None, vitrine=None,
-                    parc=None):
+def appliquer_ordre(biblio, ordre, jeton, machines=None, vitrine=None):
     """Renvoie une phrase pour le journal, ou None si l'ordre est écarté."""
     ident = ordre.get("id")
     _charger_vus(getattr(biblio, "racine", ""))
@@ -2355,15 +2206,6 @@ def appliquer_ordre(biblio, ordre, jeton, machines=None, vitrine=None,
         # ne rien faire : on le note comme vu pour ne pas y revenir
         _noter_vu(ident)
         return None
-    if quoi_ordre == "valider":
-        # Celui-là passe avant la vérification de signature, parce qu'il
-        # peut venir d'un bouton de notification, qui ne sait pas signer.
-        # Son autorisation est ailleurs, et plus étroite : voir
-        # _repondre_attente. Le oui et le non sont le même ordre avec un
-        # champ « oui » différent — « annuler » est déjà pris, c'est
-        # l'arrêt d'un transfert de fichier.
-        _noter_vu(ident)
-        return _repondre_attente(ordre, jeton, parc, machines)
     if jeton and not signature_valide(jeton, ordre):
         # on le note comme vu : sans ça le même ordre serait rejugé à chaque
         # relève et remplirait le journal
@@ -2473,63 +2315,6 @@ def appliquer_ordre(biblio, ordre, jeton, machines=None, vitrine=None,
                 dit += " — sans réponse : " + ", ".join(ratees)
             accuser(ident, bool(faits), dit)
             return dit
-        if quoi == "prise":
-            # Le courant des machines. Deux garde-fous : on ne coupe pas une
-            # machine qui imprime sans insister, et on ne coupe jamais ce qui
-            # alimente le relais — ce dernier-là n'est pas négociable.
-            if parc is None or not parc.barrettes:
-                dit = ("aucune multiprise décrite dans relais.json "
-                       "(prises.barrettes)")
-                accuser(ident, False, dit)
-                return dit
-            allumer = bool(ordre.get("allumer", True))
-            cible = str(ordre.get("cible") or "").strip()
-
-            if cible.lower() in ("toutes", "tout", "machines"):
-                choisies = [s for s in parc.sorties() if s.get("machine")]
-            else:
-                une = parc.pour_machine(cible)
-                choisies = [une] if une else []
-                if not choisies:
-                    dit = ("aucune prise ne porte « %s » — vérifie "
-                           "prises.barrettes dans relais.json" % cible)
-                    accuser(ident, False, dit)
-                    return dit
-
-            # Le verrou général se dit avant tout le reste : inutile de
-            # mettre en attente une coupure qui n'aurait pas lieu de toute
-            # façon. commander() refuse sans rien toucher, et sa phrase est
-            # la bonne.
-            if not allumer and not parc.courant:
-                dit = parc.commander(choisies[0], False)[1]
-                accuser(ident, False, dit)
-                return dit
-
-            faits, refus, retenues = [], [], []
-            for sortie in choisies:
-                nom_m = sortie.get("machine") or ""
-                if not allumer and not ordre.get("quand_meme") \
-                        and _imprime(machines, nom_m):
-                    refus.append("%s imprime" % nom_m)
-                    continue
-                if not allumer:
-                    # Couper demande un oui explicite. Rétablir n'en demande
-                    # pas : remettre du courant n'a jamais perdu personne.
-                    retenues.append(sortie)
-                    continue
-                ok, dit_une = parc.commander(sortie, allumer)
-                (faits if ok else refus).append(dit_une)
-
-            if retenues:
-                return _mettre_en_attente(ident, retenues, refus,
-                                          ordre.get("quand_meme"))
-
-            dit = ("courant %s : %s" % ("rétabli" if allumer else "coupé",
-                                        ", ".join(faits))) if faits else ""
-            if refus:
-                dit = ((dit + " — ") if dit else "") + "refusé : " + ", ".join(refus)
-            accuser(ident, bool(faits), dit or "rien à faire")
-            return dit or "rien à faire"
         if quoi == "service":
             # Remettre d'aplomb le Pi lui-même. Deux de ces gestes coupent
             # le relais, donc l'accusé part d'abord et le geste attend la

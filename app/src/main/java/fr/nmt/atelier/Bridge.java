@@ -550,16 +550,6 @@ public class Bridge {
         }).start();
     }
 
-    @JavascriptInterface
-    public void biblioValider(final String ref, final boolean accepter,
-                              final String cbId) {
-        new Thread(new Runnable() {
-            public void run() {
-                callBack(cbId, Biblio.valider(act, ref, accepter).toString());
-            }
-        }).start();
-    }
-
     /* Le Pi répond-il maintenant ? Question directe, réponse immédiate —
        mais seulement sur le réseau de l'atelier. */
     @JavascriptInterface
@@ -598,16 +588,6 @@ public class Bridge {
         new Thread(new Runnable() {
             public void run() {
                 callBack(cbId, Biblio.lumiere(act, machine, hote, allumer).toString());
-            }
-        }).start();
-    }
-
-    @JavascriptInterface
-    public void biblioPrise(final String cible, final boolean allumer,
-                            final boolean quandMeme, final String cbId) {
-        new Thread(new Runnable() {
-            public void run() {
-                callBack(cbId, Biblio.prise(act, cible, allumer, quandMeme).toString());
             }
         }).start();
     }

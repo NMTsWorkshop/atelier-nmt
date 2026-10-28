@@ -436,17 +436,6 @@ const Relais = {
       [String(machine || ''), String(hote || ''), !!allumer]);
   },
 
-  /* Oui ou non à une coupure que le relais a mise en attente. */
-  valider(ref, accepter) {
-    return nativeCall('biblioValider', [String(ref || ''), !!accepter]);
-  },
-
-  /* Le courant d'une machine, ou « toutes ». */
-  prise(cible, allumer, quandMeme) {
-    return nativeCall('biblioPrise',
-      [String(cible || ''), !!allumer, !!quandMeme]);
-  },
-
   reglerVitrine(peintureOuverte, peintureJours, marge) {
     return nativeCall('biblioVitrine',
       [!!peintureOuverte, Math.max(0, peintureJours | 0), Math.max(0, marge | 0)]);
@@ -457,21 +446,11 @@ const Relais = {
    qu'une fois par visite au lieu d'à chaque redessin. */
 let VITRINE_VUE = null;
 let PI_VU = null;
-let PRISES_VUES = null;
 /* L'heure du dernier relevé, et s'il y en a eu un du tout. C'est là-dessus
    que repose « le Pi est allumé » vu de loin : le relais ne peut pas dire
    qu'il est mort, seul son silence le dit. */
 let RELEVE_AT = 0;
 let RELEVE_RECU = null;
-/* Le verrou général du courant, tel que le Pi l'annonce. null : le relais
-   ne le dit pas (version plus ancienne), on ne présume rien et on laisse
-   les boutons. false : il est fermé, et l'écran doit le dire plutôt que de
-   proposer des boutons qui ne feront rien. */
-let COURANT_OUVERT = null;
-/* Les coupures qui attendent un oui, telles que le relais les annonce.
-   Rien ne sera coupé tant qu'aucune réponse n'arrive — y compris si on
-   n'affiche rien. L'écran est le confort, pas la sécurité. */
-let COUPURES_VUES = [];
 let VITRINE_DEMANDEE = false;
 /* le dernier mot du relais sur un réglage envoyé. Il est gardé ici, et non
    écrit dans la page, parce que relire ce que le relais annonce redessine
@@ -495,8 +474,7 @@ function vitrineDire(html) {
 function etatRelaisAuBesoin(forcer) {
   if (forcer) {
     VITRINE_DEMANDEE = false; VITRINE_VUE = null; PI_VU = null;
-    RELEVE_AT = 0; RELEVE_RECU = null; COURANT_OUVERT = null;
-    COUPURES_VUES = [];
+    RELEVE_AT = 0; RELEVE_RECU = null;
   }
   if (VITRINE_DEMANDEE || !Relais.ok() || !Relais.sujet()) return;
   VITRINE_DEMANDEE = true;
@@ -505,26 +483,14 @@ function etatRelaisAuBesoin(forcer) {
       const r = e && typeof e === 'object' ? e : {};
       VITRINE_VUE = r.vitrine || {};
       PI_VU = r.pi || {};
-      PRISES_VUES = Array.isArray(r.prises) ? r.prises : [];
       RELEVE_AT = r.at || 0;
       RELEVE_RECU = !!r.ok;
-      COURANT_OUVERT = r.courant === undefined ? null : !!r.courant;
-      COUPURES_VUES = Array.isArray(r.coupures) ? r.coupures : [];
       if (typeof TAB !== 'undefined' && (TAB === 'settings' || TAB === 'machines')) render();
     })
     .catch(() => {
-      VITRINE_VUE = {}; PI_VU = {}; PRISES_VUES = []; COUPURES_VUES = [];
-      RELEVE_AT = 0; RELEVE_RECU = null; COURANT_OUVERT = null;
+      VITRINE_VUE = {}; PI_VU = {};
+      RELEVE_AT = 0; RELEVE_RECU = null;
     });
-}
-
-/* La prise qui alimente une machine, d'après le dernier relevé — ou null si
-   le relais n'en connaît pas. On compare sur le nom, c'est ce que relais.json
-   écrit en face du canal. */
-function priseDe(nom) {
-  if (!Array.isArray(PRISES_VUES)) return null;
-  const cible = String(nom || '').trim().toLowerCase();
-  return PRISES_VUES.find(p => String(p.machine || '').trim().toLowerCase() === cible) || null;
 }
 
 /* « 3 j », « 5 h », « 12 min » — depuis combien de temps le Pi est debout.

@@ -44,7 +44,6 @@ journalctl -u relais-atelier@$USER -f                      # le service en direc
 | `machines` | `type` = `moonraker` (Creality) ou `bambu` ; `hote` = adresse IP  |
 | `marge_delai` | jours ajoutés au délai calculé (0 par défaut)                  |
 | `shopify`  | `domaine`, `jeton` d'écriture, `version` de l'API Admin           |
-| `prises`   | les multiprises Meross : `cle`, puis `barrettes`                  |
 
 Une machine Bambu demande en plus `serie` (numéro de série) et `code`
 (code d'accès LAN, visible sur l'écran de la machine).
@@ -210,119 +209,58 @@ chaque changement, donc un seul message récent suffit — mais si le PC reste
 éteint plusieurs jours, il faut retoucher **Envoyer maintenant** dans l'app avant
 de lancer le script.
 
-## Les lumières et le courant des machines
+## La lumière de chambre des machines
 
-L'app commande deux choses qui se ressemblent à l'usage et n'ont rien en
-commun dessous.
-
-**La lumière de chambre.** Sur une Bambu, c'est une commande du firmware
-(`ledctrl`) en MQTT local. Sur une Creality, c'est une broche de sortie
-Klipper — et son nom change d'une machine et d'une configuration à l'autre.
-Le relais ne le devine pas : il demande à Klipper la liste de ses objets et
-prend celui qui ressemble à un éclairage (`output_pin caselight` et
-compagnie). Une machine dont la configuration n'en déclare aucun le dit, au
-lieu d'avoir l'air de marcher.
+Sur une Bambu, c'est une commande du firmware (`ledctrl`) en MQTT local. Sur
+une Creality, c'est une broche de sortie Klipper — et son nom change d'une
+machine et d'une configuration à l'autre. Le relais ne le devine pas : il
+demande à Klipper la liste de ses objets et prend celui qui ressemble à un
+éclairage (`output_pin caselight` et compagnie). Une machine dont la
+configuration n'en déclare aucun le dit, au lieu d'avoir l'air de marcher.
 
 À l'atelier l'ordre passe en direct et la lumière s'allume quand on appuie ;
 ailleurs il passe par le canal et s'applique à la relève suivante.
 
-**Le courant**, lui, passe par les multiprises Meross. Elles acceptent des
-ordres en local — un POST signé sur `http://<ip>/config` — donc rien ne sort
-de la maison et une panne d'Internet ne prive pas l'atelier de ses
-interrupteurs.
+Les ordres partent **une machine après l'autre**, jamais les quatre d'un
+coup. Chaque ordre Bambu ouvre une session MQTT, et une P1S n'en accepte
+qu'un petit nombre à la fois : quatre connexions simultanées et elle
+décroche.
 
-Deux garde-fous, dans cet ordre d'importance :
+## Le courant des machines : abandonné, et pourquoi
 
-1. **Le relais ne commande que ce qui porte un nom de machine.** Tout le
-   reste est verrouillé : une sortie décrite par un `role`, une sortie qu'on
-   a oublié de décrire, une sortie qu'on ne connaît pas.
+Le relais a piloté le courant des machines par multiprises Meross, en local.
+Ça n'existe plus — ni dans le relais, ni dans l'app.
 
-   La règle est volontairement dans ce sens. Une liste de mots interdits se
-   contourne par une faute de frappe — `switsh` n'y figure pas, donc la prise
-   du switch devient commandable, et on s'en aperçoit le jour où tout
-   s'éteint. Avec la règle inverse, une faute de frappe verrouille.
+Ces multiprises lâchent leurs relais sous l'appel de courant d'un plateau
+chauffant qui démarre. Une seule machine suffit : au nivelage, la protection
+déclenche, on entend les relais claquer, le symbole d'alimentation clignote,
+et la machine s'arrête. Parfois c'est toute la multiprise qui tombe, et les
+quatre machines avec. Rien à voir avec le logiciel : la même impression
+passe sans broncher dès que la machine est branchée ailleurs.
 
-   C'est ce qui protège le montage de l'atelier : les deux multiprises sont
-   elles-mêmes branchées sur un troisième bloc qui alimente tout, Pi compris.
-   Ce bloc n'a aucun nom de machine en face, donc il est hors de portée sans
-   avoir eu à le déclarer. Couper ce qui alimente le relais, c'est perdre le
-   moyen de le rallumer : personne ne serait là pour recevoir l'ordre
-   inverse. Ça se fait sur le bouton physique, là où on est devant.
+Les imprimantes sont donc sur une alimentation sans électronique. Les
+multiprises Meross restent en service pour le Pi, le switch et la borne
+Wi-Fi — quelques watts, aucun appel de courant, c'est ce pour quoi elles
+sont faites.
 
-   Pour ouvrir une sortie qui n'est pas une machine, il faut l'écrire :
-   `"commandable": true`.
-2. **Une machine qui imprime n'est pas coupée** sans une confirmation
-   explicite. L'app propose alors de forcer, et dit ce qu'on y perd.
+Le code qui les commandait est dans l'historique git, à `4.9` : le protocole
+local Meross, la récupération de la clé du compte, le verrou par défaut, la
+validation par notification. Si le besoin revient, il faudra le reprendre là
+— mais la bonne réponse sera plutôt un redémarrage **logiciel**, par
+Moonraker pour les Creality et MQTT pour les Bambu, sans toucher au courant.
 
-### Mettre les prises en service
+Ce qu'on en garde, et qui vaut pour tout le reste :
 
-```
-python3 /opt/relais-atelier/meross_cle.py             # la clé du compte
-python3 /opt/relais-atelier/meross_diag.py --chercher # trouver les multiprises
-python3 /opt/relais-atelier/prises_regler.py 10.1.3.5 10.1.3.6   # qui est au bout
-python3 /opt/relais-atelier/meross_diag.py --montrer  # vérifier en le voyant
-```
+- **Un ordre déjà exécuté ne se rejoue pas.** La liste vit sur le disque, pas
+  seulement en mémoire. Un soir de mises à jour, elle ne vivait qu'en
+  mémoire, et chaque redémarrage du relais rejouait les coupures de courant
+  sur des machines en train d'imprimer.
+- **Aucun ordre physique n'est exécuté pendant le rattrapage de démarrage.**
+  Le relais relit deux heures d'ordres en démarrant, pour ne pas perdre un
+  plateau coché ou un fichier envoyé. Les ordres qui agissent sur le
+  matériel — l'éclairage, le lancement d'une impression, les gestes sur le
+  Pi — sont écartés et refusés à voix haute, pour que l'app le dise.
 
-Le premier demande l'adresse et le mot de passe du compte Meross, s'identifie
-une fois, et ne garde que la clé — dans `relais.json`, à côté du reste. Le mot
-de passe n'est écrit nulle part, et ne part même pas en clair : le service
-attend son empreinte.
-
-Il n'y a rien à installer. L'échange tient en trente lignes de bibliothèque
-standard, comme le reste du relais. La première version passait par un paquet
-tiers, qui demandait pip, qui demandait apt, qui demandait un miroir à jour —
-et le Pi s'est arrêté à la troisième marche.
-
-Si le compte est rattaché à une autre région, le service le dit et le script
-suit la redirection tout seul. S'il demande une validation en deux étapes, il
-faut la désactiver le temps de cette seule opération. La clé ne vaut que sur le réseau local : un
-ordre signé avec elle n'est accepté que par une multiprise qu'on peut déjà
-joindre.
-
-Le deuxième **ne balaye pas** : il lit la table des voisins du Pi, celle que le
-système tient tout seul. Ouvrir deux cent cinquante connexions d'affilée est la
-signature d'un scan de ports, et beaucoup de box en ont une détection qui bloque
-la machine fautive pendant plusieurs minutes — on l'a appris à nos dépens. Un
-ping de diffusion fait se manifester les voisins, puis chacun est interrogé une
-fois.
-
-Si les multiprises sont sur un autre Wi-Fi que le Pi, elles ne peuvent pas
-apparaître dans cette table : ajoute le préfixe dans `relais.json`,
-`"prises": { "reseaux": ["10.1.4"], … }`. Et `--balayer` force l'ancien
-balayage, en sachant ce qu'il risque de déclencher.
-
-Sans clé, aucune multiprise ne peut se présenter : elle répond, mais refuse la
-signature. Le balayage le dit explicitement — un appareil qui refuse est un
-appareil trouvé, et c'est déjà la moitié du chemin.
-
-Il imprime un bloc `prises` prêt à recopier,
-avec une ligne par sortie. Reste à écrire en face de chaque canal soit le nom
-exact de la machine (le même que dans `machines`), soit un `role`.
-
-Le troisième demande à chaque multiprise ses sorties réelles, propose pour
-chacune les machines que le relais connaît déjà, et écrit `relais.json`
-lui-même. Personne n'a à compter des accolades. Le défaut de chaque sortie est
-« laisser vide », donc verrouillée : on ouvre en choisissant, jamais par
-omission.
-
-Le quatrième coupe chaque sortie une seconde, l'une après l'autre, pour qu'on
-voie laquelle porte quoi. Il ne touche pas aux sorties verrouillées, et il
-demande confirmation — à ne pas lancer pendant une impression.
-
-**Deux multiprises identiques se distinguent par leur adresse MAC.** Le
-diagnostic l'affiche pour chacune, et l'application Meross l'affiche aussi,
-dans les réglages de l'appareil. C'est la seule méthode sans risque : couper
-une sortie pour voir ce qui s'éteint marche très bien, sauf quand c'est le Pi
-qui est au bout — et à ce stade rien n'est encore verrouillé, puisque c'est
-justement ce qu'on est en train de déclarer.
-
-Le bloc de mesure, lui, se reconnaît tout seul : ce n'est pas le même modèle.
-
-**La découverte automatique ne traverse pas les sous-réseaux.** La table des
-voisins du Pi ne connaît que ce qui est sur son propre segment ; des
-multiprises sur un autre Wi-Fi passent par le routeur et n'y figurent jamais.
-Dans ce cas on donne leurs adresses à la main à `prises_regler.py`, ce qui est
-de toute façon plus rapide quand on les connaît.
 
 ## Remettre le Pi d'aplomb depuis l'app
 

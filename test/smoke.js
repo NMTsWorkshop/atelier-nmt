@@ -1166,57 +1166,38 @@ const errors = [];
       null, { timeout: 6000 });
   });
 
-  console.log('\n— lumières et courant —');
+  console.log('\n— les lumières —');
 
   await page.evaluate(() => {
     window.NMT = Object.assign(window.NMT || {}, {
       relayTopic: () => 'nmt-test',
       relayEtat: (id) => setTimeout(() => window.NMTcb(id, JSON.stringify({
-        ok: true,
-        at: Date.now(),
-        vitrine: {}, pi: { partage: 'actif', debout: 3600, repos: 900 },
-        prises: [
-          { barrette: 'machines', canal: 1, machine: 'K2 Plus', role: '',
-            verrouillee: false, allumee: true },
-          { barrette: 'reseau', canal: 5, machine: '', role: 'pi',
-            verrouillee: true, allumee: true }
-        ]
+        ok: true, at: Date.now(),
+        vitrine: {}, pi: { partage: 'actif', debout: 3600, repos: 900 }
       })), 10),
       biblioLumiere: (machine, hote, allumer, id) => {
         window.__lum = [machine, hote, allumer];
         setTimeout(() => window.NMTcb(id, '{"ok":true,"dit":"lumière allumée"}'), 10);
       },
-      biblioPrise: (cible, allumer, quandMeme, id) => {
-        window.__prise = [cible, allumer, quandMeme];
-        setTimeout(() => window.NMTcb(id,
-          '{"ok":true,"differe":true,"id":"p1"}'), 10);
-      },
       biblioAck: (ident, id) => setTimeout(() => window.NMTcb(id, JSON.stringify({
-        id: ident, ok: true, dit: 'courant coupé : K2 Plus : éteinte' })), 10)
+        id: ident, ok: true, dit: 'lumière allumée' })), 10)
     });
-    PRISES_VUES = null; VITRINE_DEMANDEE = false;
+    VITRINE_DEMANDEE = false;
     Biblio.cadence = { premier: 150, ensuite: 150, duree: 5000 };
     DB.settings.lights = {};
     save();
     etatRelaisAuBesoin(true);
   });
 
-  await step('la barre de l\'atelier dit ce qui est sous tension', async () => {
-    await page.click('#tabbar .tab[data-tab=machines]');
-    await page.waitForFunction(() => /sous tension/.test(
-      (document.getElementById('view') || {}).textContent || ''), null, { timeout: 5000 });
-    const txt = await page.textContent('#view');
-    /* la prise du Pi est verrouillée : elle ne compte pas parmi les machines */
-    if (!/1\/1 sous tension/.test(txt))
-      throw new Error('compte faux : ' + txt.slice(0, 200));
-  });
-
   await step('allumer la lumière d\'une machine', async () => {
+    await page.click('#tabbar .tab[data-tab=machines]');
+    await page.waitForFunction(() => /Allumer la lumière/.test(
+      (document.getElementById('view') || {}).textContent || ''), null, { timeout: 5000 });
     await page.evaluate(() => { window.__lum = null; });
-    await page.click('button[onclick="lumieresToutes(true)"]');
+    await page.click('[onclick^="lumiereMachine"]');
     await page.waitForFunction(() => !!window.__lum, null, { timeout: 5000 });
     const vu = await page.evaluate(() => window.__lum);
-    if (vu[2] !== true) throw new Error('mauvais sens : ' + JSON.stringify(vu));
+    if (vu[2] !== true) throw new Error('la lumière part éteinte : ' + JSON.stringify(vu));
   });
 
   await step('le bouton dit ce que l\'appui va faire, pas l\'inverse', async () => {
@@ -1224,124 +1205,15 @@ const errors = [];
       (document.getElementById('view') || {}).textContent || ''), null, { timeout: 5000 });
   });
 
-  await step('couper le courant demande confirmation', async () => {
-    await page.evaluate(() => {
-      window.__prise = null;
-      DB.machines[0].name = 'K2 Plus';
-      save(); render();
-    });
-    await page.click('button[onclick="courantTout(false)"]');
-    await page.waitForSelector('.sheet', { timeout: 5000 });
-    const txt = await page.textContent('.sheet');
-    if (!/jamais coupés/.test(txt))
-      throw new Error('le refus du relais n\'est pas annoncé : ' + txt.slice(0, 200));
-    await page.click('.sheet [data-x=yes]');
-    await page.waitForFunction(() => !!window.__prise, null, { timeout: 5000 });
-    const vu = await page.evaluate(() => window.__prise);
-    if (vu[0] !== 'toutes' || vu[1] !== false)
-      throw new Error('ordre faux : ' + JSON.stringify(vu));
-  });
-
-  await step('et l\'app attend l\'accusé du relais', async () => {
-    await page.waitForFunction(() => /courant coupé/.test(
-      (document.getElementById('atelier-out') || {}).textContent || ''), null, { timeout: 6000 });
-  });
-
-  console.log('\n— aucune coupure sans feu vert —');
-
-  /* Le relais ne coupe plus une prise de machine sans un oui explicite. La
-     notification est le chemin normal ; cette boite est le meme oui depuis
-     l'ecran, pour quand elle a ete balayee ou que ntfy n'est pas installe. */
-  await step('une coupure en attente s\'affiche en tête de l\'écran', async () => {
-    await page.evaluate(() => {
-      window.NMT.relayEtat = (id) => setTimeout(() => window.NMTcb(id, JSON.stringify({
-        ok: true, at: Date.now(), courant: true,
-        vitrine: {}, pi: { partage: 'actif', debout: 3600, repos: 900 },
-        prises: [{ barrette: 'machines', canal: 1, machine: 'K2 Plus', role: '',
-                   verrouillee: false, allumee: true }],
-        coupures: [{ ref: 'ordre-77', machines: ['K2 Plus'], at: Date.now(),
-                     reste: 480 }]
-      })), 10);
-      window.NMT.biblioValider = (ref, accepter, id) => {
-        window.__valide = [ref, accepter];
-        setTimeout(() => window.NMTcb(id,
-          JSON.stringify({ ok: true, id: 'ordre-77', differe: true })), 10);
-      };
-      etatRelaisAuBesoin(true);
-    });
-    await page.click('#tabbar .tab[data-tab=machines]');
-    await page.waitForFunction(() => /demande à couper le courant/.test(
-      (document.getElementById('view') || {}).textContent || ''), null, { timeout: 5000 });
+  await step('plus un seul bouton de courant nulle part', async () => {
     const txt = await page.textContent('#view');
-    if (!/K2 Plus/.test(txt)) throw new Error('la machine n\'est pas nommée');
-    if (!/Rien n'est coupé/.test(txt))
-      throw new Error('l\'écran ne dit pas que rien n\'est coupé : ' + txt.slice(0, 300));
-    if (!/8 min/.test(txt))
-      throw new Error('le temps restant n\'est pas dit : ' + txt.slice(0, 300));
+    if (/Couper le courant|Tout couper|Tout rallumer|sous tension/.test(txt))
+      throw new Error('un reste de pilotage du courant : ' + txt.slice(0, 300));
+    const n = await page.evaluate(() => document.querySelectorAll(
+      '[onclick*="courant"], [onclick*="validerCoupure"]').length);
+    if (n !== 0) throw new Error(n + ' bouton(s) de courant subsistent');
   });
 
-  await step('le oui part avec la référence de cette coupure', async () => {
-    await page.evaluate(() => { window.__valide = null; });
-    await page.click('[onclick*="validerCoupure(\'ordre-77\',true)"]');
-    await page.waitForFunction(() => !!window.__valide, null, { timeout: 5000 });
-    const vu = await page.evaluate(() => window.__valide);
-    if (vu[0] !== 'ordre-77' || vu[1] !== true)
-      throw new Error('réponse envoyée fausse : ' + JSON.stringify(vu));
-  });
-
-  await step('et le non aussi, sans rien couper', async () => {
-    await page.evaluate(() => { window.__valide = null; window.__prise = null; });
-    await page.click('[onclick*="validerCoupure(\'ordre-77\',false)"]');
-    await page.waitForFunction(() => !!window.__valide, null, { timeout: 5000 });
-    const vu = await page.evaluate(() => window.__valide);
-    if (vu[1] !== false) throw new Error('le non est parti comme un oui : ' + JSON.stringify(vu));
-    const prise = await page.evaluate(() => window.__prise);
-    if (prise) throw new Error('un ordre de prise est parti : ' + JSON.stringify(prise));
-  });
-
-  console.log('\n— le courant verrouille sur le Pi —');
-
-  /* Le relais a coupe des machines en train d'imprimer deux soirs de suite.
-     Le temps de comprendre, Nathan doit pouvoir le remettre en service sans
-     lui laisser la main sur le courant : tout le reste marche, les prises
-     sont lues et affichees, et aucun bouton ne propose de les couper. */
-  await step('verrou fermé : plus un bouton de courant sur l\'accueil', async () => {
-    await page.evaluate(() => {
-      window.NMT.relayEtat = (id) => setTimeout(() => window.NMTcb(id, JSON.stringify({
-        ok: true, at: Date.now(), courant: false,
-        vitrine: {}, pi: { partage: 'actif', debout: 3600, repos: 900 },
-        prises: [
-          { barrette: 'machines', canal: 1, machine: 'K2 Plus', role: '',
-            verrouillee: true, allumee: true },
-          { barrette: 'reseau', canal: 5, machine: '', role: 'pi',
-            verrouillee: true, allumee: true }
-        ]
-      })), 10);
-      etatRelaisAuBesoin(true);
-    });
-    await page.click('#tabbar .tab[data-tab=machines]');
-    await page.waitForFunction(() => /courant est verrouillé sur le Pi/.test(
-      (document.getElementById('view') || {}).textContent || ''), null, { timeout: 5000 });
-    const boutons = await page.evaluate(() =>
-      document.querySelectorAll('[onclick^="courantTout"], [onclick^="courantMachine"]').length);
-    if (boutons !== 0) throw new Error(boutons + ' bouton(s) de courant subsistent');
-  });
-
-  await step('et les lumières marchent toujours', async () => {
-    const lum = await page.evaluate(() =>
-      document.querySelectorAll('[onclick^="lumiereMachine"], [onclick^="lumieresToutes"]').length);
-    if (lum === 0) throw new Error('les lumières ont disparu avec le courant');
-  });
-
-  await step('même appelé de force, l\'ordre de courant ne part pas', async () => {
-    const parti = await page.evaluate(() => {
-      window.__prise = null;
-      window.confirm = () => true;
-      courantTout(false);
-      return window.__prise;
-    });
-    if (parti) throw new Error('un ordre est parti malgré le verrou : ' + JSON.stringify(parti));
-  });
 
   await page.evaluate(() => {
     Biblio.cadence = { premier: 20000, ensuite: 60000, duree: 900000 };

@@ -41,7 +41,6 @@ import urllib.request
 import biblio as bibliotheque
 import commerce
 import entretien
-import prises as prises_mod
 
 ICI = os.path.dirname(os.path.abspath(__file__))
 SERVEUR = "https://ntfy.sh/"
@@ -472,49 +471,6 @@ def publier_corps(sujet, corps, titre):
         return r.status
 
 
-def prevenir(sujet, avis):
-    """Une vraie notification, avec deux boutons.
-
-    C'est le seul message que le relais publie en priorité haute : tout le
-    reste voyage en « min » pour ne rien faire sonner. Celui-ci doit sonner,
-    parce que rien ne se passera si personne ne répond.
-
-    Les deux boutons republient sur le même canal, donc il n'y a rien à
-    ouvrir sur le Pi depuis l'extérieur : le relais lira la réponse à sa
-    relève suivante, comme n'importe quel ordre de l'app. La clé à usage
-    unique voyage dans le corps du bouton — elle n'autorise que cette
-    coupure, et pour dix minutes.
-
-    On publie ici en JSON à la racine de ntfy, et non par des entêtes :
-    une liste de boutons passée en entête s'échappe à coups de virgules et
-    de guillemets, et le premier accent la casse."""
-    retour = SERVEUR + urllib.parse.quote(sujet)
-
-    def bouton(libelle, oui):
-        corps = json.dumps({"t": "ordre", "quoi": "valider", "oui": oui,
-                            "ref": avis["ref"], "cle": avis["cle"],
-                            "at": int(time.time() * 1000)},
-                           ensure_ascii=False)
-        return {"action": "http", "label": libelle, "url": retour,
-                "method": "POST", "body": corps, "clear": True}
-
-    charge = {
-        "topic": sujet,
-        "title": avis["titre"],
-        "message": avis["texte"],
-        "priority": 5,
-        "tags": ["warning"],
-        "actions": [bouton("Valider la coupure", True),
-                    bouton("Ne pas couper", False)],
-    }
-    req = urllib.request.Request(
-        SERVEUR, data=json.dumps(charge, ensure_ascii=False).encode("utf-8"),
-        method="POST")
-    req.add_header("Content-Type", "application/json")
-    with urllib.request.urlopen(req, timeout=20) as r:
-        return r.status
-
-
 def publier(sujet, etats, envois=None):
     # les champs bruts des machines servent au diagnostic sur place ; ntfy
     # limite un message à quelques kilo-octets, ils n'y vont pas
@@ -540,19 +496,6 @@ def publier(sujet, etats, envois=None):
         charge["pi"] = pi
     except Exception:
         pass
-    if PRISES.get("releve"):
-        charge["prises"] = PRISES["releve"]
-    # Dans quel sens est le verrou général du courant. L'app en a besoin pour
-    # dire pourquoi les boutons ne répondent pas, au lieu de laisser croire
-    # qu'ils sont cassés.
-    if PRISES.get("courant") is not None:
-        charge["courant"] = bool(PRISES["courant"])
-    # Les coupures qui attendent un oui. L'app les affiche et offre les
-    # deux mêmes boutons que la notification : un téléphone sans
-    # l'application ntfy doit pouvoir répondre quand même.
-    attente = bibliotheque.coupures_en_attente()
-    if attente:
-        charge["coupures"] = attente
     corps = json.dumps(charge, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(SERVEUR + sujet, data=corps, method="POST")
     req.add_header("Content-Type", "application/json")
@@ -604,11 +547,6 @@ def demarrer_api(c, machines):
 # La boutique n'est prévenue qu'une fois par heure : un délai de
 # fabrication ne change pas à la minute, et chaque écriture coûte du quota.
 BOUTIQUE = {"at": 0}
-
-# Ce que les multiprises ont répondu au dernier passage. Les interroger
-# coûte un aller-retour chacune : on le fait au rythme de la publication,
-# pas à chaque relève.
-PRISES = {"at": 0, "releve": [], "courant": None}
 
 
 # Le dernier calcul, gardé pour que le relevé l'emporte : l'app montre ce
@@ -674,7 +612,6 @@ def main():
     biblio, contexte = demarrer_api(c, machines)
     commandes = commerce.Commandes(os.path.join(biblio.racine, "commandes.json"))
     vitrine = commerce.Vitrine(os.path.join(biblio.racine, "vitrine.json"))
-    parc = prises_mod.Parc(c.get("prises"))
     sh = c.get("shopify") or {}
     boutique = commerce.Boutique(sh.get("domaine"), sh.get("jeton"),
                                  sh.get("version") or "2026-04")
@@ -682,13 +619,6 @@ def main():
         vitrine.regler(marge=c.get("marge_delai"))
     print("Boutique : %s" % ("%s, délai publié chaque heure" % boutique.domaine
                              if boutique.prete() else "non configurée"), flush=True)
-    print("Prises : %s" % ("%d sortie(s) sur %d multiprise(s)"
-                           % (len(parc.sorties()), len(parc.barrettes))
-                           if parc.prete() else (parc.pourquoi_pas() or "aucune")),
-          flush=True)
-    print("Courant : %s" % ("commandable depuis l'app" if parc.courant
-                            else "VERROUILLÉ — le relais ne commandera aucune "
-                                 "prise (prises.courant à false)"), flush=True)
     # au démarrage on regarde deux heures en arrière, pour reprendre un ordre
     # publié pendant que le Pi redémarrait ; ensuite une fenêtre glissante
     derniers_ordres = "2h"
@@ -709,7 +639,7 @@ def main():
                 for ordre in lire_ordres(c["sujet"], derniers_ordres):
                     dit = bibliotheque.appliquer_ordre(biblio, ordre,
                                                        c.get("jeton"), machines,
-                                                       vitrine, parc)
+                                                       vitrine)
                     if dit:
                         print("%s — %s" % (time.strftime("%H:%M:%S"), dit), flush=True)
                         bibliotheque.oublier_publication()
@@ -726,26 +656,6 @@ def main():
                 print("%s — lecture des ordres impossible : %s"
                       % (time.strftime("%H:%M:%S"), e), file=sys.stderr, flush=True)
 
-            # --- les coupures qui attendent un oui ---------------------
-            # Le message part en priorité haute, avec ses deux boutons.
-            # S'il ne part pas, la coupure reste en attente et s'abandonne
-            # toute seule : on ne coupe jamais faute d'avoir pu demander.
-            while bibliotheque.A_PREVENIR:
-                avis = bibliotheque.A_PREVENIR.pop(0)
-                try:
-                    prevenir(c["sujet"], avis)
-                    print("%s — validation demandée : %s"
-                          % (time.strftime("%H:%M:%S"), avis["texte"][:90]),
-                          flush=True)
-                except Exception as e:
-                    print("%s — notification impossible : %s"
-                          % (time.strftime("%H:%M:%S"), e),
-                          file=sys.stderr, flush=True)
-
-            bibliotheque._oublier_expirees(
-                journal=lambda m: print("%s — %s" % (time.strftime("%H:%M:%S"), m),
-                                        flush=True))
-
         # --- la boutique, une fois par heure -------------------------
         if c.get("sujet") and (time.time() - BOUTIQUE["at"] >= 3600 or unique):
             BOUTIQUE["at"] = time.time()
@@ -756,15 +666,6 @@ def main():
                     print("%s — %s" % (time.strftime("%H:%M:%S"), dit), flush=True)
             except Exception as e:
                 print("%s — boutique non prévenue : %s"
-                      % (time.strftime("%H:%M:%S"), e), file=sys.stderr, flush=True)
-
-        if parc.prete() and time.time() - PRISES["at"] >= 300:
-            PRISES["at"] = time.time()
-            PRISES["courant"] = parc.courant
-            try:
-                PRISES["releve"] = parc.releve()
-            except Exception as e:
-                print("%s — prises non relevées : %s"
                       % (time.strftime("%H:%M:%S"), e), file=sys.stderr, flush=True)
 
         oui, pourquoi = faut_publier(etats, repos)

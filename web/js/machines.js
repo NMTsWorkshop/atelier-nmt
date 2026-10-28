@@ -29,84 +29,21 @@ function renderMachines() {
 
   const warn = nativeWarningBanner();
 
-  return warn + boiteCoupures() + barreAtelier() + '<div class="stack">' +
+  return warn + barreAtelier() + '<div class="stack">' +
     DB.machines.map(machineCard).join('') + '</div>';
 }
 
 
 /* ============================================================
-   L'atelier en grand : lumières et courant, pour tout le parc
+   L'atelier en grand : les lumières de tout le parc
    ============================================================
 
-   Deux choses différentes qui se ressemblent à l'usage. La lumière est
-   sans conséquence : on appuie, ça s'allume. Le courant, lui, coupe une
-   machine — le relais refuse de couper celle qui imprime, et il refuse
-   toujours celle qui l'alimente lui-même. */
-
-/* Les coupures qui attendent ton feu vert.
-
-   Le relais ne coupe plus aucune prise de machine sans un oui explicite.
-   Il le demande par une notification à deux boutons ; cette boîte est le
-   même oui depuis l'écran, pour quand la notification a été balayée ou
-   quand l'application ntfy n'est pas installée.
-
-   Elle est en tête de l'écran des machines, avant tout le reste, parce
-   qu'une demande qu'on ne voit pas est une demande qui expire — et une
-   demande qui expire ne coupe rien, ce qui est le bon défaut mais pas
-   toujours ce qu'on voulait. */
-function boiteCoupures() {
-  if (!Relais.ok() || !Relais.sujet()) return '';
-  etatRelaisAuBesoin();
-  const liste = Array.isArray(COUPURES_VUES) ? COUPURES_VUES : [];
-  if (!liste.length) return '';
-
-  return liste.map(c => {
-    const noms = (c.machines || []).join(', ') || 'une machine';
-    const reste = c.reste > 0 ? dureeRonde(c.reste) : 'moins d\'une minute';
-    return '<div class="warn-box" style="margin-bottom:10px">' +
-      '<b>Le relais demande à couper le courant : ' + esc(noms) + '</b><br>' +
-      'Rien n\'est coupé pour l\'instant. Sans réponse d\'ici ' + esc(reste) +
-      ', la demande est abandonnée d\'elle-même.' +
-      '<div class="btn-row" style="margin-top:8px">' +
-        '<button class="btn sm ghost" onclick="validerCoupure(\'' +
-          esc(c.ref) + '\',true)">Valider la coupure</button>' +
-        '<button class="btn sm" onclick="validerCoupure(\'' +
-          esc(c.ref) + '\',false)">Annuler</button>' +
-      '</div>' +
-      '<div class="hint" id="coupure-out" style="margin-top:6px">' +
-        COUPURE_DIT + '</div>' +
-    '</div>';
-  }).join('');
-}
-
-let COUPURE_DIT = '';
-
-function coupureDire(html) {
-  COUPURE_DIT = html || '';
-  const o = $('#coupure-out');
-  if (o) o.innerHTML = COUPURE_DIT;
-}
-
-function validerCoupure(ref, accepter) {
-  coupureDire(accepter ? 'Validation envoyée…' : 'Annulation envoyée…');
-  Relais.valider(ref, accepter)
-    .then(r => {
-      if (!r || !r.ok) throw new Error((r && r.error) || 'refusé');
-      if (r.id) {
-        suivreEtDire(r.id, () => etatRelaisAuBesoin(true), null, coupureDire);
-      } else {
-        coupureDire('');
-        etatRelaisAuBesoin(true);
-      }
-      toast(accepter ? 'Coupure validée' : 'Coupure annulée',
-            accepter ? 'warn' : 'ok');
-    })
-    .catch(e => {
-      coupureDire('<span style="color:var(--bad)">Échec — ' + esc(e.message) +
-        '</span>');
-      toast('Échec — ' + e.message, 'bad');
-    });
-}
+   Le relais a aussi piloté le courant des machines, par multiprises
+   connectées. Ça n'existe plus : ces multiprises lâchaient leurs relais
+   sous l'appel de courant d'un plateau chauffant, et les machines sont
+   maintenant sur une alimentation sans électronique. Le redémarrage à
+   distance, si on y revient un jour, se fera par Moonraker et MQTT —
+   logiciel, sans toucher au courant. */
 
 /* Le Pi, en une ligne.
 
@@ -174,12 +111,6 @@ function piVerifier(sortie) {
 function barreAtelier() {
   if (!Relais.ok() || !Relais.sujet()) return '';
   etatRelaisAuBesoin();
-  const prises = Array.isArray(PRISES_VUES) ? PRISES_VUES.filter(p => p.machine) : [];
-  /* « je ne sais pas » n'est pas « éteint ». Quand le relais n'a pas pu
-     lire les multiprises, l'écran annonçait quatre prises coupées alors
-     qu'elles étaient allumées. */
-  const connues = prises.filter(p => typeof p.allumee === 'boolean');
-  const allumees = connues.filter(p => p.allumee).length;
 
   return '<div class="card" style="margin-bottom:10px">' +
     ligneStatutPi('pi-vivant-atelier') +
@@ -187,30 +118,15 @@ function barreAtelier() {
       '<button class="btn sm ghost" onclick="piVerifier(\'pi-vivant-atelier\')">' +
         'Le Pi répond-il ?</button>' +
     '</div>' +
-    '<div class="kv" style="margin-bottom:8px"><span>Tout l\'atelier</span>' +
-      (!prises.length ? ''
-        : connues.length
-          ? '<b class="mono">' + allumees + '/' + connues.length + ' sous tension</b>'
-          : '<b class="mono" style="color:var(--txt-3)">état des prises inconnu</b>') +
-    '</div>' +
+    '<div class="sec-title" style="margin:0 0 6px">Les lumières</div>' +
     '<div class="btn-row">' +
       '<button class="btn sm" onclick="lumieresToutes(true)">Lumières allumées</button>' +
       '<button class="btn sm" onclick="lumieresToutes(false)">Lumières éteintes</button>' +
     '</div>' +
-    (COURANT_OUVERT === false
-      ? '<div class="hint" style="margin-top:4px">Le courant est verrouillé sur ' +
-        'le Pi : les prises sont lues et affichées, mais le relais n\'en commande ' +
-        'aucune. Les lumières, le délai de fabrication et la bibliothèque ' +
-        'marchent normalement.</div>'
-      : prises.length
-        ? '<div class="btn-row">' +
-            '<button class="btn sm" onclick="courantTout(true)">Tout rallumer</button>' +
-            '<button class="btn sm ghost" onclick="courantTout(false)">Tout couper</button>' +
-          '</div>'
-        : '') +
     '<div class="hint" id="atelier-out" style="margin-top:8px">' + ATELIER_DIT + '</div>' +
   '</div>';
 }
+
 
 let ATELIER_DIT = '';
 
@@ -288,77 +204,9 @@ function lumieresToutes(allumer) {
   suivante(0);
 }
 
-/* Le courant passe toujours par le relais : c'est lui qui tient le parc de
-   prises, et lui qui sait ce qui est en train d'imprimer. */
-function courantMachine(id, allumer, quandMeme) {
-  if (COURANT_OUVERT === false) {
-    toast('Le courant est verrouillé sur le Pi', 'bad');
-    return;
-  }
-  const m = machineById(id);
-  if (!m) return;
-  const faire = () => {
-    atelierDire(allumer ? 'Remise sous tension…' : 'Coupure…');
-    Relais.prise(m.name, allumer, !!quandMeme)
-      .then(r => {
-        if (!r || !r.ok) throw new Error((r && r.error) || 'refusé');
-        if (r.id) suivreEtDire(r.id, () => etatRelaisAuBesoin(true),
-                               d => /imprime/.test(d) &&
-                                    proposerForcer(id, allumer, d));
-      })
-      .catch(e => {
-        toast('Échec — ' + e.message, 'bad');
-        atelierDire('<span style="color:var(--bad)">' + esc(e.message) + '</span>');
-      });
-  };
-  if (!allumer && !quandMeme) {
-    confirmSheet('Couper le courant de ' + m.name + ' ?',
-      'La machine s\'éteint net. À ne pas faire pendant une impression.',
-      'Couper', faire, true);
-  } else {
-    faire();
-  }
-}
-
-function proposerForcer(id, allumer, dit) {
-  const m = machineById(id);
-  confirmSheet('Couper quand même ?',
-    dit + ' Couper maintenant perd l\'impression en cours.',
-    'Couper quand même', () => courantMachine(id, allumer, true), true);
-}
-
-function courantTout(allumer) {
-  if (COURANT_OUVERT === false) {
-    toast('Le courant est verrouillé sur le Pi', 'bad');
-    return;
-  }
-  const faire = () => {
-    atelierDire(allumer ? 'Remise sous tension…' : 'Coupure…');
-    Relais.prise('toutes', allumer, false)
-      .then(r => {
-        if (!r || !r.ok) throw new Error((r && r.error) || 'refusé');
-        if (r.id) suivreEtDire(r.id, () => etatRelaisAuBesoin(true));
-      })
-      .catch(e => {
-        toast('Échec — ' + e.message, 'bad');
-        atelierDire('<span style="color:var(--bad)">' + esc(e.message) + '</span>');
-      });
-  };
-  if (!allumer) {
-    confirmSheet('Couper le courant de toutes les machines ?',
-      'Celles qui impriment seront refusées. Le relais et le réseau ne sont ' +
-      'jamais coupés d\'ici.', 'Tout couper', faire, true);
-  } else {
-    faire();
-  }
-}
-
-/* Un ordre parti par le canal n'a pas de réponse immédiate : on attend son
-   accusé et on dit ce qu'il raconte, plutôt que d'annoncer un succès. */
-/* `dire` dit où écrire : la barre de l'atelier par défaut, la boîte de
-   validation quand c'est une coupure qu'on attend. Sans ça la réponse du
-   relais s'affichait toujours au même endroit, loin du bouton qu'on venait
-   d'appuyer. */
+/* `dire` dit où écrire : la barre de l'atelier par défaut, ailleurs quand
+   l'appel vient d'un autre écran. Sans ça la réponse du relais s'affichait
+   toujours au même endroit, loin du bouton qu'on venait d'appuyer. */
 function suivreEtDire(ident, apresSucces, surRefus, dire) {
   const ecrire = dire || atelierDire;
   ecrire('<span style="color:var(--txt-3)">Envoyé. Le relais répond dans la minute…</span>');
@@ -506,21 +354,16 @@ function pilotage(m, etat) {
 }
 
 
-/* Lumière et courant d'une machine. Le libellé dit ce que l'appui va faire,
-   pas l'état supposé : c'est la seule chose dont on soit sûr. */
+/* La lumière d'une machine. Le libellé dit ce que l'appui va faire, pas
+   l'état supposé : c'est la seule chose dont on soit sûr, le relais ne
+   sachant pas lire l'état d'une lampe. */
 function boutonsAtelier(m) {
   if (!Relais.ok() || !Relais.sujet()) return '';
-  let out = '<button class="btn sm" onclick="lumiereMachine(\'' + m.id + '\')">' +
-            (lumiereRetenue(m.id) ? 'Éteindre la lumière' : 'Allumer la lumière') +
-            '</button>';
-  const p = priseDe(m.name);
-  if (p && !p.verrouillee) {
-    out += p.allumee === false
-      ? '<button class="btn sm" onclick="courantMachine(\'' + m.id + '\',true)">Remettre le courant</button>'
-      : '<button class="btn sm ghost" onclick="courantMachine(\'' + m.id + '\',false)">Couper le courant</button>';
-  }
-  return out;
+  return '<button class="btn sm" onclick="lumiereMachine(\'' + m.id + '\')">' +
+         (lumiereRetenue(m.id) ? 'Éteindre la lumière' : 'Allumer la lumière') +
+         '</button>';
 }
+
 
 const PILOTAGE_MOTS = {
   pause:  { verbe: 'Mettre en pause', fait: 'Mise en pause demandée' },
