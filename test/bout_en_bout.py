@@ -22,6 +22,7 @@ import tempfile
 import threading
 import urllib.parse
 import time
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1169,6 +1170,159 @@ def main():
             all(k in sysp for k in ("led_on_time", "led_off_time",
                                     "loop_times", "interval_time")),
             json.dumps(sysp, ensure_ascii=False)[:160])
+
+    # === 12. reconnaitre un plateau lance sur la machine ================
+    # Nathan lance souvent une impression depuis l'ecran de la machine, sur
+    # un fichier qu'il a copie dessus. Personne n'a dit au relais de quoi il
+    # s'agit : il ne dispose que du nom annonce, de la duree prevue et du
+    # poids. Sans cette reconnaissance, tout ce qui est lance en local
+    # echappe au decompte et la commande parait inachevee.
+    def fabriquer_3mf(chemin, voulus):
+        """Un .gcode.3mf credible : un gcode par plateau, et le slice_info
+        qui donne pour chacun sa duree et son poids."""
+        blocs = "".join(
+            '<plate><metadata key="index" value="%d"/>'
+            '<metadata key="prediction" value="%d"/>'
+            '<metadata key="weight" value="%d"/></plate>'
+            % (idx, minutes * 60, grammes) for idx, minutes, grammes in voulus)
+        with zipfile.ZipFile(chemin, "w") as z:
+            for idx, _m, _g in voulus:
+                z.writestr("Metadata/plate_%d.gcode" % idx, ";plateau %d\n" % idx)
+            z.writestr("Metadata/slice_info.config", "<config>%s</config>" % blocs)
+
+    # deux plateaux bien distincts : 40 min / 25 g, et 95 min / 61 g
+    fabriquer_3mf(os.path.join(dossier, "p1s", "pauldrons.gcode.3mf"),
+                  [(1, 40, 25), (2, 95, 61)])
+
+
+    def etat_vu(fichier, phase, pourcent, prevu=None, brut=None, quand=None):
+        return {"ok": True, "nom": "P1S 1", "file": fichier, "state": phase,
+                "percent": pourcent, "prevu": prevu or {}, "brut": brut or {},
+                "at": quand or int(time.time() * 1000)}
+
+    def repartir():
+        biblio.EN_COURS.clear()
+        biblio.ATTENDU.clear()
+        biblio._CACHE_PLATEAUX.clear()
+
+    def plateau_de(chemin_rel, idx):
+        for f in bib.index()["fichiers"]:
+            if f["chemin"] == chemin_rel:
+                for p in f.get("plateaux") or []:
+                    if int(p["idx"]) == idx:
+                        return p
+        return {}
+
+    rel3mf = "p1s/pauldrons.gcode.3mf"
+
+    # --- la duree et le poids designent le bon plateau -------------------
+    repartir()
+    biblio.suivre(bib, {"p": etat_vu("pauldrons.gcode.3mf", "printing", 2,
+                                     prevu={"minutes": 95, "grammes": 61})})
+    suivi = biblio.EN_COURS.get("p") or {}
+    verifie("un plateau lance sur la machine est reconnu a sa duree et son poids",
+            suivi.get("chemin") == rel3mf and suivi.get("plateau") == 2,
+            json.dumps({k: suivi.get(k) for k in ("chemin", "plateau")},
+                       ensure_ascii=False))
+
+    biblio.suivre(bib, {"p": etat_vu("pauldrons.gcode.3mf", "finished", 100)})
+    verifie("et il est compte comme sorti quand l'impression finit",
+            plateau_de(rel3mf, 2).get("faits") == 1
+            and not plateau_de(rel3mf, 1).get("faits"),
+            json.dumps([plateau_de(rel3mf, 1), plateau_de(rel3mf, 2)],
+                       ensure_ascii=False)[:200])
+
+    # --- l'autre plateau du meme fichier --------------------------------
+    repartir()
+    biblio.suivre(bib, {"p": etat_vu("pauldrons.gcode.3mf", "printing", 0,
+                                     prevu={"minutes": 41, "grammes": 24})})
+    verifie("le premier plateau se reconnait aussi, et ne prend pas la place du second",
+            (biblio.EN_COURS.get("p") or {}).get("plateau") == 1,
+            str((biblio.EN_COURS.get("p") or {}).get("plateau")))
+
+    # --- un ecart raisonnable passe, un ecart grossier non --------------
+    repartir()
+    biblio.suivre(bib, {"p": etat_vu("pauldrons.gcode.3mf", "printing", 10,
+                                     prevu={"minutes": 88, "grammes": 57})})
+    verifie("un trancheur qui arrondit ne fait pas rater la reconnaissance",
+            (biblio.EN_COURS.get("p") or {}).get("plateau") == 2,
+            str((biblio.EN_COURS.get("p") or {}).get("plateau")))
+
+    repartir()
+    biblio.suivre(bib, {"p": etat_vu("pauldrons.gcode.3mf", "printing", 10,
+                                     prevu={"minutes": 300, "grammes": 400})})
+    verifie("mais un plateau qui ne ressemble a rien n'est pas devine",
+            not (biblio.EN_COURS.get("p") or {}).get("chemin"),
+            str((biblio.EN_COURS.get("p") or {}).get("chemin")))
+
+    # --- la machine ne dit rien : on ne coche pas au hasard -------------
+    repartir()
+    biblio.suivre(bib, {"p": etat_vu("pauldrons.gcode.3mf", "printing", 5)})
+    verifie("sans duree ni poids annonces, aucun plateau n'est coche",
+            not (biblio.EN_COURS.get("p") or {}).get("chemin"),
+            str((biblio.EN_COURS.get("p") or {}).get("chemin")))
+    biblio.suivre(bib, {"p": etat_vu("pauldrons.gcode.3mf", "finished", 100)})
+    verifie("et la fin d'impression ne marque rien non plus",
+            plateau_de(rel3mf, 1).get("faits") in (None, 0),
+            json.dumps(plateau_de(rel3mf, 1), ensure_ascii=False))
+
+    # --- la machine en dit plus apres coup ------------------------------
+    # Une Bambu n'annonce que le temps restant : a la premiere lecture le
+    # pourcentage peut manquer et la duree totale etre inconnue. Renoncer
+    # sur cette seule lecture perdrait l'impression.
+    repartir()
+    biblio.suivre(bib, {"p": etat_vu("pauldrons.gcode.3mf", "printing", 1)})
+    verifie("une premiere lecture muette ne condamne pas l'impression",
+            not (biblio.EN_COURS.get("p") or {}).get("chemin"))
+    biblio.suivre(bib, {"p": etat_vu("pauldrons.gcode.3mf", "printing", 6,
+                                     prevu={"minutes": 95, "grammes": 61})})
+    verifie("la lecture suivante, mieux renseignee, la rattrape",
+            (biblio.EN_COURS.get("p") or {}).get("plateau") == 2,
+            str((biblio.EN_COURS.get("p") or {}).get("plateau")))
+
+    # --- deux fichiers de meme nom --------------------------------------
+    # Le nom seul ne suffisait pas : le relais renoncait des qu'il y avait
+    # un homonyme. Le poids et la duree les departagent.
+    fabriquer_3mf(os.path.join(dossier, "k2", "pauldrons.gcode.3mf"),
+                  [(1, 210, 180)])
+
+    biblio._CACHE_PLATEAUX.clear()
+    repartir()
+    biblio.suivre(bib, {"p": etat_vu("pauldrons.gcode.3mf", "printing", 0,
+                                     prevu={"minutes": 208, "grammes": 178})})
+    verifie("entre deux fichiers de meme nom, c'est le poids qui tranche",
+            (biblio.EN_COURS.get("p") or {}).get("chemin") == "k2/pauldrons.gcode.3mf",
+            str((biblio.EN_COURS.get("p") or {}).get("chemin")))
+
+    repartir()
+    biblio.suivre(bib, {"p": etat_vu("pauldrons.gcode.3mf", "printing", 0,
+                                     prevu={"minutes": 95, "grammes": 61})})
+    verifie("et l'autre reste reconnaissable malgre l'homonyme",
+            (biblio.EN_COURS.get("p") or {}).get("chemin") == rel3mf
+            and (biblio.EN_COURS.get("p") or {}).get("plateau") == 2,
+            str((biblio.EN_COURS.get("p") or {}).get("chemin")))
+
+    repartir()
+    biblio.suivre(bib, {"p": etat_vu("pauldrons.gcode.3mf", "printing", 0)})
+    verifie("deux homonymes et rien pour les departager : on ne tranche pas",
+            not (biblio.EN_COURS.get("p") or {}).get("chemin"),
+            str((biblio.EN_COURS.get("p") or {}).get("chemin")))
+
+    # --- un ordre parti du Pi garde la priorite -------------------------
+    # L'intention est toujours plus sure qu'une ressemblance.
+    repartir()
+    biblio.noter_lancement("P1S 1", rel3mf, 1, "pauldrons.gcode.3mf")
+    biblio.suivre(bib, {"p": etat_vu("pauldrons.gcode.3mf", "printing", 0,
+                                     prevu={"minutes": 95, "grammes": 61})})
+    verifie("un plateau lance depuis le Pi reste celui qu'on a demande",
+            (biblio.EN_COURS.get("p") or {}).get("plateau") == 1,
+            str((biblio.EN_COURS.get("p") or {}).get("plateau")))
+
+    repartir()
+    os.remove(os.path.join(dossier, "k2", "pauldrons.gcode.3mf"))
+    os.remove(os.path.join(dossier, "p1s", "pauldrons.gcode.3mf"))
+
+    biblio._CACHE_PLATEAUX.clear()
 
     # === 6. la boucle survit à tout ce qui précède ======================
     verifie("la boucle principale n'est jamais tombée", True)

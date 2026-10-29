@@ -1685,9 +1685,11 @@ def suivre(biblio, etats):
         if phase in ("printing", "paused") and fichier:
             if suivi is None or suivi.get("fichier") != fichier:
                 chemin, plateau = resoudre_plateau(biblio, nom, fichier,
-                                                   etat.get("brut") or {})
+                                                   etat.get("brut") or {},
+                                                   etat.get("prevu") or {})
                 EN_COURS[cle] = {"fichier": fichier, "debut": etat.get("at"),
                                  "pourcent": pourcent, "brut": etat.get("brut") or {},
+                                 "prevu": etat.get("prevu") or {},
                                  "machine": nom, "chemin": chemin, "plateau": plateau}
                 if chemin:
                     oublier_publication()      # l'app doit voir « en cours »
@@ -1695,6 +1697,21 @@ def suivre(biblio, etats):
                 suivi["pourcent"] = max(suivi.get("pourcent", -1), pourcent)
                 if etat.get("brut"):
                     suivi["brut"] = etat["brut"]
+                if etat.get("prevu"):
+                    suivi["prevu"] = etat["prevu"]
+                if not suivi.get("chemin"):
+                    # On n'avait pas su reconnaître le plateau au premier
+                    # coup d'œil. Une machine en dit souvent plus une fois
+                    # lancée : le numéro de plateau apparaît, la durée
+                    # prévue se précise. On réessaie tant qu'elle tourne,
+                    # plutôt que de renoncer sur une première lecture.
+                    chemin, plateau = resoudre_plateau(biblio, nom, fichier,
+                                                       suivi.get("brut") or {},
+                                                       suivi.get("prevu") or {})
+                    if chemin:
+                        suivi["chemin"] = chemin
+                        suivi["plateau"] = plateau
+                        oublier_publication()
             continue
 
         if suivi is None:
@@ -2395,7 +2412,87 @@ def _plateau_annonce(brut):
     return None
 
 
-def resoudre_plateau(biblio, nom_machine, fichier, brut):
+# Reconnaître un plateau à ce que la machine annonce
+# ----------------------------------------------------------------------
+#
+# Quand une impression est lancée depuis l'écran de la machine, personne
+# n'a dit au relais de quoi il s'agit. Il ne dispose que de ce que la
+# machine raconte : un nom de fichier, et ce que le trancheur avait prévu
+# comme durée et comme poids. Ça suffit à retrouver le plateau dans la
+# bibliothèque, et donc à le compter comme sorti quand il finit — sans
+# quoi tout ce qui est lancé en local échappe au décompte.
+#
+# Les tolérances sont larges exprès. Une Bambu n'annonce que le temps
+# restant, d'où une durée totale extrapolée ; un trancheur arrondit ; le
+# poids réel dépend de la bobine. Ce qu'on cherche, c'est distinguer deux
+# plateaux d'un même fichier, pas vérifier une horloge.
+ECART_MINUTES = 0.15
+ECART_MINUTES_PLANCHER = 8
+ECART_GRAMMES = 0.15
+ECART_GRAMMES_PLANCHER = 4
+
+
+def _concordance(prevu, plateau):
+    """À quel point ce plateau colle à ce que la machine annonce.
+
+    Un écart moyen, entre 0 et 1 — plus petit, mieux c'est. None quand ça
+    ne colle pas, et None aussi quand la machine n'annonce rien
+    d'exploitable : dans ce cas on ne tranche pas sur cette base plutôt
+    que de cocher au hasard."""
+    prevu = prevu or {}
+    plateau = plateau or {}
+    ecarts = []
+    for cle, part, plancher in (("minutes", ECART_MINUTES, ECART_MINUTES_PLANCHER),
+                                ("grammes", ECART_GRAMMES, ECART_GRAMMES_PLANCHER)):
+        annonce = prevu.get(cle) or 0
+        attendu = plateau.get(cle) or 0
+        if annonce <= 0 or attendu <= 0:
+            continue          # l'un des deux ne le dit pas : on n'en tire rien
+        diff = abs(annonce - attendu)
+        if diff > max(plancher, attendu * part):
+            return None
+        ecarts.append(diff / float(attendu))
+    if not ecarts:
+        return None
+    return sum(ecarts) / len(ecarts)
+
+
+def _plateau_concordant(biblio, chemin, prevu):
+    """Le numéro du plateau de ce fichier qui colle le mieux, ou None.
+
+    À égalité c'est le plus petit numéro qui gagne : deux plateaux de même
+    poids et de même durée sont interchangeables pour le décompte."""
+    try:
+        liste = plateaux(biblio.verifier(chemin))
+    except ValueError:
+        return None
+    notes = []
+    for plateau in liste:
+        note = _concordance(prevu, plateau)
+        if note is not None:
+            notes.append((note, int(plateau["idx"])))
+    if not notes:
+        return None
+    notes.sort()
+    return notes[0][1]
+
+
+def _fichier_concordant(biblio, chemins, prevu):
+    """Parmi des fichiers qui portent le même nom, celui dont un plateau
+    colle — à condition qu'il n'y en ait qu'un.
+
+    Ici on refuse de choisir au mieux. Deux fichiers différents de même
+    nom, de même poids et de même durée, ça n'est pas une ambiguïté qu'on
+    tranche : cocher le mauvais ferait expédier une commande incomplète."""
+    trouves = []
+    for chemin in chemins:
+        idx = _plateau_concordant(biblio, chemin, prevu)
+        if idx:
+            trouves.append((chemin, idx))
+    return trouves[0] if len(trouves) == 1 else (None, None)
+
+
+def resoudre_plateau(biblio, nom_machine, fichier, brut, prevu=None):
     """(chemin, plateau) du plateau qui tourne, (None, None) si on ne sait pas."""
     attendu = ATTENDU.get(nom_machine)
     if attendu and (time.time() - attendu["at"]) < PEREMPTION_ATTENTE:
@@ -2406,8 +2503,12 @@ def resoudre_plateau(biblio, nom_machine, fichier, brut):
             return attendu["chemin"], attendu["plateau"]
 
     chemins = biblio.chemins_par_nom().get(base_nom(fichier)) or []
-    if len(chemins) != 1:
+    if not chemins:
         return None, None
+    if len(chemins) > 1:
+        # plusieurs fichiers portent ce nom : ce que la machine annonce est
+        # le seul moyen de savoir lequel tourne
+        return _fichier_concordant(biblio, chemins, prevu)
     chemin = chemins[0]
 
     annonce = _plateau_annonce(brut)
@@ -2420,7 +2521,11 @@ def resoudre_plateau(biblio, nom_machine, fichier, brut):
         return None, None
     if len(liste) <= 1:
         return chemin, (liste[0]["idx"] if liste else 1)
-    return None, None
+
+    # plusieurs plateaux, et la machine ne dit pas lequel : on le reconnaît
+    # à sa durée et à son poids
+    idx = _plateau_concordant(biblio, chemin, prevu)
+    return (chemin, idx) if idx else (None, None)
 
 
 def conclure_plateau(biblio, chemin, plateau, issue, machine):

@@ -226,6 +226,51 @@ coup. Chaque ordre Bambu ouvre une session MQTT, et une P1S n'en accepte
 qu'un petit nombre à la fois : quatre connexions simultanées et elle
 décroche.
 
+## Reconnaître une impression lancée sur la machine
+
+Une impression lancée depuis l'écran de la machine, sur un fichier copié
+dessus, n'a été demandée par personne : le relais ne dispose que de ce que
+la machine raconte. Il s'en sert pour retrouver le plateau dans la
+bibliothèque, et le compter comme sorti quand il finit — sans quoi tout ce
+qui est lancé en local échappe au décompte et la commande paraît inachevée.
+
+Trois indices, du plus sûr au moins sûr :
+
+1. **Une intention.** Si l'ordre vient du Pi, on sait déjà de quoi il
+   s'agit. Elle vaut pour l'impression qu'elle a lancée, pas pour la
+   suivante.
+2. **Le nom.** Réduit à ce qui l'identifie d'une machine à l'autre : sans
+   dossier, sans extension, sans la casse. Une K2 annonce
+   `casque_x3.gcode`, une Bambu `casque_x3`.
+3. **La durée prévue et le poids.** C'est ce qui départage, quand le nom ne
+   suffit pas : plusieurs plateaux dans le même `.3mf` et la machine qui ne
+   dit pas lequel, ou deux fichiers homonymes dans deux familles.
+
+Côté bibliothèque, la durée et le poids de chaque plateau viennent du
+`slice_info.config` du `.3mf`, ou des commentaires d'en-tête du gcode.
+Côté machine, Moonraker donne les deux dans ses métadonnées ; une Bambu
+n'annonce que le temps restant, d'où une durée totale extrapolée sur
+l'avancement.
+
+Les tolérances sont larges — 15 %, avec un plancher de 8 minutes et de 4
+grammes. Ce qu'on cherche est de distinguer deux plateaux d'un même
+fichier, pas de vérifier une horloge.
+
+Deux refus délibérés, parce que cocher le mauvais plateau ferait expédier
+une commande incomplète :
+
+- **Rien d'annoncé, rien de coché.** Si la machine ne donne ni durée ni
+  poids exploitables, le relais ne conclut pas.
+- **Deux fichiers homonymes qui concordent tous les deux : aucun choix.**
+  À l'intérieur d'un même fichier, en revanche, deux plateaux de même
+  poids et de même durée sont interchangeables pour le décompte, et c'est
+  le plus petit numéro qui est compté.
+
+La reconnaissance est réessayée à chaque relève tant que la machine
+imprime. Une première lecture est souvent muette — le pourcentage manque,
+donc la durée totale est inconnue — et renoncer là-dessus perdrait
+l'impression.
+
 ## Le courant des machines : abandonné, et pourquoi
 
 Le relais a piloté le courant des machines par multiprises Meross, en local.

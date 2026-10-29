@@ -139,11 +139,21 @@ def lire_moonraker(m):
     avance = float(vs.get("progress") or 0)
 
     reste = -1
+    # Ce que le trancheur a prévu pour ce fichier : c'est à ça qu'on
+    # reconnaîtra, côté Pi, quel plateau de la bibliothèque est en train de
+    # sortir — quand l'impression a été lancée sur l'écran de la machine et
+    # que personne n'a dit au relais de quoi il s'agissait.
+    prevu = {}
     if fichier:
         try:
             meta = http_json(base + "/server/files/metadata?filename="
                              + urllib.parse.quote(fichier))["result"]
             estime = float(meta.get("estimated_time") or 0)
+            if estime > 0:
+                prevu["minutes"] = int(round(estime / 60.0))
+            poids = meta.get("filament_weight_total")
+            if poids:
+                prevu["grammes"] = int(round(float(poids)))
             if estime > 0 and ecoule > 0:
                 reste = round((estime - ecoule) / 60.0)
         except Exception:
@@ -153,7 +163,7 @@ def lire_moonraker(m):
 
     out = {"ok": True, "kind": "moonraker", "state": normalise(ps.get("state")),
            "file": fichier, "percent": int(round(avance * 100)),
-           "remaining": max(0, reste), "ams": []}
+           "remaining": max(0, reste), "prevu": prevu, "ams": []}
     try:
         box = http_json(base + "/printer/objects/query?box")["result"]["status"].get("box")
         if box:
@@ -295,8 +305,18 @@ def lire_bambu(m, duree=15):
         if "plate" in champ.lower() and p.get(champ) not in (None, ""):
             brut[champ] = p.get(champ)
 
+    # Une Bambu n'annonce pas ce que le trancheur avait prévu, seulement ce
+    # qui reste. Au début de l'impression c'est la même chose ; plus loin on
+    # extrapole sur l'avancement. Ça suffit à distinguer deux plateaux d'un
+    # même fichier, ce n'est pas fait pour vérifier une horloge.
+    prevu = {}
+    reste_min = int(p.get("mc_remaining_time", -1))
+    avance = int(p.get("mc_percent", -1))
+    if reste_min > 0 and 0 <= avance <= 90:
+        prevu["minutes"] = int(round(reste_min * 100.0 / (100 - avance)))
+
     return {"ok": True, "kind": "bambu", "state": normalise(p.get("gcode_state")),
-            "brut": brut,
+            "brut": brut, "prevu": prevu,
             "file": fichier, "percent": int(p.get("mc_percent", -1)),
             "remaining": int(p.get("mc_remaining_time", -1)),
             "nozzle": p.get("nozzle_temper", 0), "bed": p.get("bed_temper", 0),
@@ -473,8 +493,10 @@ def publier_corps(sujet, corps, titre):
 
 def publier(sujet, etats, envois=None):
     # les champs bruts des machines servent au diagnostic sur place ; ntfy
-    # limite un message à quelques kilo-octets, ils n'y vont pas
-    legers = dict((k, dict((c, v) for c, v in e.items() if c != "brut"))
+    # limite un message à quelques kilo-octets, ils n'y vont pas. « prevu »
+    # non plus : il ne sert qu'ici, à reconnaître le plateau qui tourne.
+    legers = dict((k, dict((c, v) for c, v in e.items()
+                           if c not in ("brut", "prevu")))
                   for k, e in etats.items())
     # les envois en cours voyagent avec le relevé : c'est le seul message
     # que le relais publie de toute façon chaque minute, et une barre de
