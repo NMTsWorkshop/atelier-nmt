@@ -181,8 +181,11 @@ app/                coque Android (Java, aucune dépendance)
   …/BambuClient.java    MQTT local, lecture seule
   …/Sync.java           relève périodique et recalage des alarmes
   …/Notifier.java       construction des notifications
+  …/AlarmReceiver.java  l'alarme de fin : relit la machine avant de sonner
+  …/Fins.java           la décision « notifier ou repousser », sans Android
   …/Updater.java        mise à jour depuis la page Releases
 test/smoke.js       test de bout en bout de l'interface
+test/java/          la décision des alarmes, vérifiable sans téléphone
 ```
 
 Le dossier `web/` **est** le dossier `assets` de l'APK (voir `app/build.gradle`) :
@@ -194,6 +197,16 @@ synchro Shopify (bloquée par CORS hors de l'app). Le test de bout en bout :
 
 ```bash
 npm i playwright && node test/smoke.js
+```
+
+La décision qu'une alarme de fin d'impression prend quand elle sonne —
+notifier, ou redemander plus tard — est isolée dans `Fins.java`, sans rien
+d'Android autour, pour être vérifiable sans téléphone :
+
+```bash
+javac -d /tmp/fins app/src/main/java/fr/nmt/atelier/Fins.java \
+      test/java/fr/nmt/atelier/TestFins.java
+java -cp /tmp/fins fr.nmt.atelier.TestFins
 ```
 
 ---

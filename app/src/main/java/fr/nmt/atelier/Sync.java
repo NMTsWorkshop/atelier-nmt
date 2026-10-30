@@ -133,6 +133,59 @@ public class Sync {
         }
     }
 
+    /**
+     * Une lecture fraîche d'une seule machine, ou null si personne ne répond.
+     *
+     * Sert juste avant de pousser « impression terminée » : l'alarme a été
+     * posée sur une estimation, et une estimation se trompe. Mieux vaut
+     * demander à la machine où elle en est que sonner sur un calcul.
+     *
+     * On essaie d'abord le réseau local, qui dit la vérité à la seconde.
+     * Hors de l'atelier il ne répond pas, et c'est le relevé publié par le
+     * Pi qui sert — à condition qu'il soit récent : un relevé d'un quart
+     * d'heure annoncerait « ça imprime encore » bien après la fin.
+     */
+    static JSONObject relire(Context c, String machineId) {
+        if (machineId == null || machineId.length() == 0) return null;
+        JSONArray conf = Printers.config(c);
+        JSONObject une = null;
+        for (int i = 0; i < conf.length(); i++) {
+            JSONObject o = conf.optJSONObject(i);
+            if (o != null && machineId.equals(o.optString("machineId", ""))) {
+                une = o;
+                break;
+            }
+        }
+        if (une == null) return null;
+
+        JSONObject st = null;
+        try {
+            st = Printers.poll(une);
+        } catch (Throwable ignored) {
+        }
+
+        if (st == null || !st.optBoolean("ok", false)) {
+            try {
+                JSONObject relais = Relay.actif(c) ? Relay.dernier(c) : null;
+                JSONObject r = relais == null ? null
+                        : relais.optJSONObject(une.optString("host", ""));
+                long quand = r == null ? 0 : r.optLong("at", 0);
+                if (r != null && r.optBoolean("ok", false)
+                        && System.currentTimeMillis() - quand < FRAICHEUR_RELAIS) {
+                    st = r;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+
+        if (st == null || !st.optBoolean("ok", false)) return null;
+        Printers.record(c, machineId, st);
+        return st;
+    }
+
+    /** Au-delà, un relevé du Pi ne prouve plus rien sur l'instant. */
+    private static final long FRAICHEUR_RELAIS = 20 * 60 * 1000L;
+
     /** Compare l'état d'avant et celui d'après, et agit en conséquence. */
     private static void react(Context c, String id, String name,
                               JSONObject prev, JSONObject now) {
@@ -160,8 +213,10 @@ public class Sync {
                 /* on ne replanifie que si l'estimation a bougé d'au moins
                    deux minutes : inutile de harceler AlarmManager */
                 if (Math.abs(endAt - known) > 120000L) {
+                    /* le dernier argument : avant de sonner, l'alarme
+                       redemandera à cette machine où elle en est */
                     Timers.schedule(c, alarmId, name + " — impression terminée",
-                            file.length() > 0 ? file : "La machine a fini.", endAt);
+                            file.length() > 0 ? file : "La machine a fini.", endAt, id);
                 }
                 try {
                     now.put("endAt", Math.abs(endAt - known) > 120000L ? endAt : known);

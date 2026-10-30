@@ -52,12 +52,14 @@ public class Timers {
 
     /* ---------- planification ---------- */
 
-    private static PendingIntent alarmIntent(Context c, String id, String title, String text) {
+    private static PendingIntent alarmIntent(Context c, String id, String title,
+                                             String text, String verifier) {
         Intent i = new Intent(c, AlarmReceiver.class);
         i.setAction("fr.nmt.atelier.FIRE." + id);
         i.putExtra("id", id);
         i.putExtra("title", title);
         i.putExtra("text", text);
+        if (verifier != null && verifier.length() > 0) i.putExtra("verifier", verifier);
         int flags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE;
         return PendingIntent.getBroadcast(c, id.hashCode(), i, flags);
     }
@@ -70,11 +72,27 @@ public class Timers {
     }
 
     static void schedule(Context c, String id, String title, String text, long at) {
+        schedule(c, id, title, text, at, null);
+    }
+
+    /**
+     * `verifier` est l'identifiant de la machine à relire avant de sonner.
+     *
+     * Une alarme de fin d'impression est posée sur une estimation, et une
+     * estimation se trompe : une machine qui ralentit sur les dernières
+     * couches, une pause, un changement de filament, et l'heure prévue
+     * arrive alors qu'il reste des minutes. Quand l'alarme porte un nom de
+     * machine, elle lui demande d'abord où elle en est — voir
+     * AlarmReceiver. Sans ce nom, elle sonne comme avant : c'est le cas des
+     * minuteurs réglés à la main, qui ne décrivent aucune machine.
+     */
+    static void schedule(Context c, String id, String title, String text, long at,
+                         String verifier) {
         ensureChannel(c);
         AlarmManager am = (AlarmManager) c.getSystemService(Context.ALARM_SERVICE);
         if (am == null) return;
 
-        PendingIntent fire = alarmIntent(c, id, title, text);
+        PendingIntent fire = alarmIntent(c, id, title, text, verifier);
 
         boolean exact = true;
         if (Build.VERSION.SDK_INT >= 31) {
@@ -86,12 +104,12 @@ public class Timers {
         } else {
             am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, fire);
         }
-        remember(c, id, title, text, at);
+        remember(c, id, title, text, at, verifier);
     }
 
     static void cancel(Context c, String id) {
         AlarmManager am = (AlarmManager) c.getSystemService(Context.ALARM_SERVICE);
-        if (am != null) am.cancel(alarmIntent(c, id, "", ""));
+        if (am != null) am.cancel(alarmIntent(c, id, "", "", null));
         forget(c, id);
         NotificationManager nm =
                 (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
@@ -112,13 +130,15 @@ public class Timers {
         }
     }
 
-    private static void remember(Context c, String id, String title, String text, long at) {
+    private static void remember(Context c, String id, String title, String text, long at,
+                                String verifier) {
         try {
             JSONObject map = all(c);
             JSONObject one = new JSONObject();
             one.put("title", title);
             one.put("text", text);
             one.put("at", at);
+            if (verifier != null && verifier.length() > 0) one.put("verifier", verifier);
             map.put(id, one);
             prefs(c).edit().putString(KEY, map.toString()).apply();
         } catch (Exception ignored) {
@@ -146,7 +166,7 @@ public class Timers {
             long at = one.optLong("at", 0);
             if (at > now) {
                 schedule(c, id, one.optString("title", "Impression terminée"),
-                        one.optString("text", ""), at);
+                        one.optString("text", ""), at, one.optString("verifier", ""));
             }
         }
     }
