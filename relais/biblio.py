@@ -1697,6 +1697,7 @@ def noter_conso(ligne):
         return
     CONSOS.append({"at": int(ligne.get("fin") or time.time() * 1000),
                    "machine": ligne.get("machine") or "",
+                   "slot": ligne.get("slot") or "",
                    "fichier": ligne.get("fichier") or "",
                    "plateau": ligne.get("plateau") or 1,
                    "grammes": int(ligne["grammes"]),
@@ -1730,6 +1731,11 @@ def suivre(biblio, etats):
                 EN_COURS[cle] = {"fichier": fichier, "debut": etat.get("at"),
                                  "pourcent": pourcent, "brut": etat.get("brut") or {},
                                  "prevu": etat.get("prevu") or {},
+                                 # l'emplacement tire au debut de l'impression :
+                                 # c'est de celui-la qu'il faudra retirer les
+                                 # grammes, et la machine peut avoir change
+                                 # d'avis avant la fin
+                                 "slot": etat.get("slot") or "",
                                  "machine": nom, "chemin": chemin, "plateau": plateau}
                 if chemin:
                     oublier_publication()      # l'app doit voir « en cours »
@@ -1739,6 +1745,8 @@ def suivre(biblio, etats):
                     suivi["brut"] = etat["brut"]
                 if etat.get("prevu"):
                     suivi["prevu"] = etat["prevu"]
+                if not suivi.get("slot") and etat.get("slot"):
+                    suivi["slot"] = etat["slot"]
                 if not suivi.get("chemin"):
                     # On n'avait pas su reconnaître le plateau au premier
                     # coup d'œil. Une machine en dit souvent plus une fois
@@ -1769,6 +1777,7 @@ def suivre(biblio, etats):
 
         debut = suivi.get("debut") or etat.get("at")
         ligne = {"machine": nom, "fichier": suivi["fichier"], "etat": issue,
+                 "slot": suivi.get("slot") or "",
                  "debut": debut, "fin": etat.get("at"),
                  "minutes": max(0, int(((etat.get("at") or 0) - (debut or 0)) / 60000)),
                  "pourcent": suivi.get("pourcent", -1)}

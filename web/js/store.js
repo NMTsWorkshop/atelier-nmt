@@ -31,6 +31,8 @@ const DEFAULT_DB = {
   v: 1,
   machines: [],
   spools: [],
+  /* niveaux des bobines detectees, par « machine:emplacement » */
+  ams: {},
   orders: [],
   weights: {},
   settings: {
@@ -45,6 +47,9 @@ const DEFAULT_DB = {
     /* machines nommées par le relais que l'app ne reconnaît pas : leur
        stock ne peut pas se mettre à jour, et il faut le dire */
     consoOrphelines: [],
+    /* impressions dont on ne sait pas quel emplacement a servi : l'app
+       demande plutôt que de retirer les grammes au hasard */
+    consoAAttribuer: [],
     lastSync: 0,
     lastUpdateCheck: 0,
     parcSeeded: 0
@@ -541,6 +546,7 @@ function appliquerConsos(consos) {
   let dernier = repere;
   let touche = false;
   const orphelines = new Set();
+  const aAttribuer = [];
 
   consos.slice().sort((a, b) => (a.at || 0) - (b.at || 0)).forEach(c => {
     const quand = c.at || 0;
@@ -561,20 +567,37 @@ function appliquerConsos(consos) {
       if (nom) orphelines.add(nom);
       return;
     }
-    if (!m.filamentId) return;
 
-    /* une bobine dont on ne connaît pas le niveau ne se devine pas : on
-       ne va pas inventer un kilo pour pouvoir soustraire */
-    if (typeof m.restant !== 'number') return;
+    /* Quel emplacement a servi ? Trois réponses, de la plus sûre à la plus
+       faible, et un aveu quand aucune ne tient. */
+    const slot = choisirSlot(m, c);
+    if (slot === null) {
+      /* Ni la machine ni nous ne savons laquelle des bobines a imprimé. On
+         ne tire pas au sort : on garde l'impression de côté et l'écran
+         demandera. Soixante grammes retirés du mauvais emplacement, c'est
+         une commande qu'on croit pouvoir sortir et qu'on ne peut pas. */
+       aAttribuer.push({ at: quand, machine: m.name, machineId: m.id,
+                        fichier: c.fichier || '', grammes: grammes });
+      return;
+    }
 
-    m.restant = Math.max(0, m.restant - grammes);
-    touche = true;
+    const r = retirerAms(m.id, slot, grammes);
+    if (r) touche = true;
   });
 
   if (dernier > repere) {
     DB.settings.consoJusqua = dernier;
     touche = true;
   }
+  if (aAttribuer.length) {
+    const file = (DB.settings.consoAAttribuer || []).slice();
+    aAttribuer.forEach(x => {
+      if (!file.some(y => y.at === x.at && y.machineId === x.machineId)) file.push(x);
+    });
+    DB.settings.consoAAttribuer = file.slice(-20);
+    touche = true;
+  }
+
   const avant = (DB.settings.consoOrphelines || []).join('|');
   const apres = Array.from(orphelines).sort();
   if (apres.join('|') !== avant) {
@@ -582,6 +605,47 @@ function appliquerConsos(consos) {
     touche = true;
   }
   if (touche) save();
+}
+
+/* Quel emplacement a imprimé.
+
+   1. Le relais l'a dit. Une Bambu annonce l'emplacement qu'elle est en
+      train de tirer ; quand le relais a pu le lire, il voyage avec
+      l'impression et il n'y a rien à deviner.
+   2. Un seul emplacement de cette machine a un niveau connu. Alors c'est
+      lui : les autres, on ne sait pas ce qu'il y a dessus, donc on
+      n'allait pas y toucher de toute façon.
+   3. Sinon, null — et l'écran demandera.
+
+   Pas de quatrième cas. Retirer soixante grammes du mauvais emplacement,
+   c'est croire qu'on peut sortir une commande qu'on ne peut pas. */
+function choisirSlot(m, c) {
+  const dit = c && c.slot !== undefined && c.slot !== null && String(c.slot) !== ''
+    ? String(c.slot) : '';
+  if (dit && niveauAms(m.id, dit) !== null) return dit;
+
+  const connus = amsConnusDe(m.id);
+  if (connus.length === 1) return connus[0].slot;
+  return null;
+}
+
+/* La réponse à « quel emplacement ? », quand l'écran l'a demandée. */
+function attribuerConso(at, machineId, slot) {
+  const file = DB.settings.consoAAttribuer || [];
+  const i = file.findIndex(x => x.at === at && x.machineId === machineId);
+  if (i < 0) return null;
+  const x = file[i];
+  const r = retirerAms(machineId, slot, x.grammes);
+  file.splice(i, 1);
+  DB.settings.consoAAttribuer = file;
+  save();
+  return r;
+}
+
+function oublierConso(at, machineId) {
+  const file = DB.settings.consoAAttribuer || [];
+  DB.settings.consoAAttribuer = file.filter(x => !(x.at === at && x.machineId === machineId));
+  save();
 }
 
 /* Ce qu'une impression a réellement consommé, d'après ce que le relais en
@@ -881,7 +945,7 @@ function seedParc() {
     } else {
       DB.machines.push({
         id: uid(), name: def.name, model: def.model,
-        filamentId: '', status: 'idle',
+        status: 'idle',
         timer: null, job: null,
         printer: Object.assign({}, def.printer)
       });
@@ -905,57 +969,131 @@ function activeSpools() { return DB.spools.filter(s => !s.archived); }
    C'est ce qui permet d'enregistrer « 10 kg de noir » d'un coup. */
 
 /* ============================================================
-   La bobine qui est dans la machine
+   Les bobines que les machines détectent
    ============================================================
 
-   Avant, une machine pointait vers une référence du stock et la
-   consommation se retirait de l'« entamée » de cette référence. Ça ne
-   décrivait pas l'atelier : il y a quatre machines, chacune avec sa
-   bobine, et ces quatre bobines ne sont pas interchangeables.
+   Une machine dit ce qu'elle a dans son AMS : type, couleur, emplacement.
+   Ce qu'elle ne dit pas, c'est combien il en reste — aucune ne pèse ses
+   bobines. C'est donc nous qui le tenons, emplacement par emplacement.
 
-   Maintenant la machine porte ses propres grammes restants. Une bobine
-   neuve part à son poids nominal — un kilo sauf indication contraire — et
-   chaque impression terminée les lui retire. La réserve, elle, ne compte
-   plus que ce qui dort dans le placard.
+   La clé est « machine:emplacement ». Pas la machine seule : il y a quatre
+   bobines par AMS et elles se vident chacune à son rythme. Pas la
+   référence du stock non plus : deux emplacements peuvent porter le même
+   noir et n'avoir rien à voir.
+
+   Une machine qui ne rapporte aucun AMS a un seul emplacement, noté « — ».
 
    `restant` absent veut dire « on ne sait pas » : ni zéro, ni un kilo. La
    nuance compte, parce qu'afficher « 0 g » sur une bobine pleine ferait
-   racheter pour rien. */
+   racheter pour rien, et retirer des grammes d'un niveau inventé ferait
+   dériver le stock pour de bon. */
 
-function tailleBobine(s) {
-  return (s && s.spoolSize) || 1000;
+const SLOT_SEUL = '—';
+
+function cleAms(machineId, slot) {
+  return String(machineId || '') + ':' + String(slot === undefined || slot === null || slot === ''
+                                                ? SLOT_SEUL : slot);
 }
 
-/* Les grammes restants sur la bobine de cette machine, ou null si elle ne
-   l'a jamais dit. */
-function restantMachine(m) {
-  if (!m || !m.filamentId) return null;
-  return typeof m.restant === 'number' ? Math.max(0, m.restant) : null;
+function amsFiche(machineId, slot) {
+  return (DB.ams || {})[cleAms(machineId, slot)] || null;
 }
 
-/* « Cette bobine est neuve » : la machine repart au poids nominal, et la
-   bobine sort de la réserve puisqu'elle est allée dans la machine. */
-function bobineNeuve(m) {
-  const sp = spoolById(m && m.filamentId);
-  if (!sp) return null;
-  m.restant = tailleBobine(sp);
-  const prise = (sp.sealed || 0) > 0;
-  if (prise) sp.sealed = Math.max(0, (sp.sealed || 0) - 1);
+/* Les grammes restants sur cet emplacement, ou null s'il ne l'a jamais dit. */
+function niveauAms(machineId, slot) {
+  const f = amsFiche(machineId, slot);
+  return f && typeof f.restant === 'number' ? Math.max(0, f.restant) : null;
+}
+
+function tailleAms(machineId, slot) {
+  const f = amsFiche(machineId, slot);
+  if (f && f.taille) return f.taille;
+  const sp = spoolById(f && f.refId);
+  return (sp && sp.spoolSize) || 1000;
+}
+
+/* Poser un niveau, ou l'effacer avec null. */
+function poserAms(machineId, slot, grammes, refId) {
+  DB.ams = DB.ams || {};
+  const cle = cleAms(machineId, slot);
+  const f = DB.ams[cle] || {};
+  if (grammes === null) delete f.restant;
+  else f.restant = Math.max(0, Math.round(grammes));
+  if (refId !== undefined) {
+    if (refId) f.refId = refId;
+    else delete f.refId;
+  }
+  f.at = Date.now();
+  DB.ams[cle] = f;
   save();
-  return { grammes: m.restant, prise: prise };
+  return f;
 }
 
-/* Ce que les machines portent, par référence : le stock doit le montrer,
-   sinon il annonce un placard vide alors qu'il y a quatre kilos sur les
-   plateaux. */
-function chargeesDe(refId) {
-  return DB.machines.filter(m => m.filamentId === refId
-                                 && restantMachine(m) !== null);
+/* « Celle-là est neuve. » Elle repart à son poids nominal, et si on sait de
+   quelle référence il s'agit, une bobine neuve sort de la réserve puisqu'elle
+   est allée dans la machine. */
+function amsNeuve(machineId, slot, refId) {
+  const sp = spoolById(refId || (amsFiche(machineId, slot) || {}).refId);
+  const taille = (sp && sp.spoolSize) || 1000;
+  const prise = sp && (sp.sealed || 0) > 0;
+  if (prise) sp.sealed = Math.max(0, (sp.sealed || 0) - 1);
+  poserAms(machineId, slot, taille, sp ? sp.id : undefined);
+  return { grammes: taille, prise: !!prise, ref: sp };
 }
 
+/* Retirer des grammes d'un emplacement. Renvoie ce qui manquait, s'il a
+   fallu s'arrêter à zéro. */
+function retirerAms(machineId, slot, grammes) {
+  const avant = niveauAms(machineId, slot);
+  if (avant === null) return null;        // niveau inconnu : on n'invente pas
+  const pris = Math.min(avant, Math.max(0, grammes));
+  poserAms(machineId, slot, avant - pris);
+  return { pris: pris, manque: Math.max(0, grammes - pris) };
+}
+
+/* Une référence qu'on supprime ne doit pas rester accrochée à des
+   emplacements : le niveau reste, la référence s'efface. */
+function oublierRefAms(refId) {
+  Object.keys(DB.ams || {}).forEach(cle => {
+    if (DB.ams[cle].refId === refId) delete DB.ams[cle].refId;
+  });
+}
+
+/* La référence du stock qu'une machine porte, d'après ses emplacements.
+   Pour l'affichage et les libellés : s'il y en a plusieurs, la première
+   suffit, l'écran détaille emplacement par emplacement juste en dessous. */
+function refMachine(m) {
+  if (!m) return null;
+  const e = amsConnusDe(m.id).find(x => x.fiche.refId);
+  if (e) return spoolById(e.fiche.refId);
+  const seul = amsFiche(m.id, SLOT_SEUL);
+  return spoolById(seul && seul.refId);
+}
+
+/* Tous les emplacements d'une machine dont on connaît le niveau. */
+function amsConnusDe(machineId) {
+  const out = [];
+  Object.keys(DB.ams || {}).forEach(cle => {
+    const i = cle.lastIndexOf(':');
+    if (i < 0 || cle.slice(0, i) !== String(machineId)) return;
+    if (typeof DB.ams[cle].restant !== 'number') return;
+    out.push({ slot: cle.slice(i + 1), fiche: DB.ams[cle] });
+  });
+  return out;
+}
+
+/* Ce que les machines portent d'une référence donnée : le stock doit le
+   montrer, sinon il annonce un placard vide alors qu'il y a quatre kilos
+   dans les AMS. */
 function totalChargeDe(refId) {
-  return chargeesDe(refId).reduce((t, m) => t + restantMachine(m), 0);
+  if (!refId) return 0;
+  return Object.keys(DB.ams || {}).reduce((t, cle) => {
+    const f = DB.ams[cle];
+    return t + (f.refId === refId && typeof f.restant === 'number'
+                ? Math.max(0, f.restant) : 0);
+  }, 0);
 }
+
 
 /* La réserve seule : ce qui dort dans le placard. */
 function spoolTotal(s) {

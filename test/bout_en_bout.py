@@ -1195,10 +1195,11 @@ def main():
                   [(1, 40, 25), (2, 95, 61)])
 
 
-    def etat_vu(fichier, phase, pourcent, prevu=None, brut=None, quand=None):
+    def etat_vu(fichier, phase, pourcent, prevu=None, brut=None, quand=None,
+                slot=""):
         return {"ok": True, "nom": "P1S 1", "file": fichier, "state": phase,
                 "percent": pourcent, "prevu": prevu or {}, "brut": brut or {},
-                "at": quand or int(time.time() * 1000)}
+                "slot": slot, "at": quand or int(time.time() * 1000)}
 
     def repartir():
         biblio.EN_COURS.clear()
@@ -1243,9 +1244,27 @@ def main():
             conso and conso[-1].get("grammes") == 61
             and conso[-1].get("etat") == "fini",
             json.dumps(conso[-1:], ensure_ascii=False)[:200])
+    verifie("et l'emplacement que la machine tirait, quand elle le dit",
+            conso and "slot" in conso[-1],
+            json.dumps(conso[-1:], ensure_ascii=False)[:200])
     verifie("avec de quoi retrouver la machine et l'avancement",
             conso and conso[-1].get("at") and conso[-1].get("pourcent") is not None,
             json.dumps(conso[-1:], ensure_ascii=False)[:200])
+
+    # --- l'emplacement suit l'impression du debut a la fin --------------
+    # Une machine peut changer d'avis en route ; c'est l'emplacement qu'elle
+    # tirait au depart qui a imprime, et c'est celui-la qu'on retient.
+    repartir()
+    biblio.CONSOS[:] = []
+    biblio.suivre(bib, {"p": etat_vu("pauldrons.gcode.3mf", "printing", 2,
+                                     prevu={"minutes": 95, "grammes": 61},
+                                     slot="2")})
+    biblio.suivre(bib, {"p": etat_vu("pauldrons.gcode.3mf", "finished", 100,
+                                     slot="3")})
+    garde = biblio.consos_publiques()
+    verifie("l'emplacement retenu est celui du debut, pas celui de la fin",
+            garde and garde[-1].get("slot") == "2",
+            json.dumps(garde[-1:], ensure_ascii=False)[:200])
 
     # --- une impression arretee en route --------------------------------
     repartir()

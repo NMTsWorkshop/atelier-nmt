@@ -154,19 +154,34 @@ le partage — ce qui règle presque tous les cas sans rien interrompre
 d'autre —, relancer le relais, redémarrer le serveur. Rien de tout ça ne
 demande d'être à la maison.
 
-**Le stock se tient à jour tout seul.** Chaque machine porte les grammes
-restants de sa bobine. Le bouton « Neuve » la remet à son poids nominal et
-retire une bobine neuve de la réserve, puisqu'elle est allée dans la machine.
-Ensuite chaque impression terminée retire son poids toute seule : le relais
-annonce ce que le trancheur avait prévu pour le plateau, et l'app le déduit —
-y compris pour une impression lancée depuis le serveur ou depuis l'écran de
-la machine. Une impression arrêtée en route compte au prorata de son
-avancement. L'onglet Stock montre les deux : ce qui dort dans le placard, et
-ce qui est sur les machines.
+**Le stock se tient à jour tout seul.** Sous chaque machine, les bobines
+qu'elle détecte dans son AMS : type, couleur, emplacement. Ce qu'elle ne dit
+pas, c'est combien il en reste — aucune ne pèse ses bobines. Tape dessus
+pour le renseigner une fois, ou dis qu'elle est neuve : elle repart à son
+poids nominal et une bobine sort de la réserve, puisqu'elle est allée dans
+la machine.
 
-Une bobine dont le niveau n'a jamais été renseigné reste « inconnu » plutôt
-que de valoir un kilo inventé : rien ne s'en déduit tant que tu ne l'as pas
-dit.
+Ensuite chaque impression terminée retire son poids de l'emplacement qui a
+servi : le relais annonce ce que le trancheur avait prévu pour le plateau, et
+l'app le déduit — y compris pour une impression lancée depuis le serveur ou
+depuis l'écran de la machine. Une impression arrêtée en route compte au
+prorata de son avancement. L'onglet Stock montre les deux côtés : ce qui dort
+dans le placard, et ce qui est dans les machines.
+
+Trois refus délibérés, parce qu'un stock faux est pire qu'un stock vide :
+
+- Une bobine dont le niveau n'a jamais été renseigné reste « inconnu »
+  plutôt que de valoir un kilo inventé. Rien ne s'en déduit.
+- Quand la machine n'annonce pas quel emplacement elle tire et que plusieurs
+  ont un niveau connu, l'impression attend dans « À attribuer » sur l'écran
+  Stock. Un appui la range. Soixante grammes retirés du mauvais emplacement,
+  c'est une commande qu'on croit pouvoir sortir et qu'on ne peut pas.
+- Si le relais nomme une machine que l'app ne connaît pas, l'écran Stock le
+  dit : c'est exactement ce qui ressemblerait à un stock qui ne se met pas à
+  jour.
+
+Une machine qui ne rapporte aucun AMS a un seul emplacement, et le même
+mécanisme.
 
 Tout est stocké sur le téléphone. Réglages → **Exporter** écrit une sauvegarde
 JSON dans les Téléchargements ; **Importer** la relit.

@@ -32,6 +32,7 @@ function renderStock() {
 
   /* ---- ce qui est chargé sur les machines ---- */
   out += blocOrphelines();
+  out += blocAAttribuer();
   out += blocChargees();
 
   /* ---- ce que réclament les commandes en cours ---- */
@@ -97,51 +98,108 @@ function blocOrphelines() {
    nulle part. Le total en haut les compte désormais, et les alertes
    « à racheter » aussi.
 
-   Chaque impression terminée les diminue toute seule, d'après le poids que
-   le trancheur avait prévu pour le plateau. */
+   On ne liste que les emplacements dont le niveau est connu : les autres
+   n'ont rien à dire, et les afficher à zéro serait un mensonge. Ils se
+   renseignent en tapant dessus, sur la fiche de la machine. */
 function blocChargees() {
-  const dessus = DB.machines.filter(m => m.filamentId && spoolById(m.filamentId));
-  if (!dessus.length) return '';
+  const lignes = [];
+  DB.machines.forEach(m => {
+    amsConnusDe(m.id).forEach(e => {
+      lignes.push({ m: m, slot: e.slot, fiche: e.fiche });
+    });
+  });
+  if (!lignes.length) return '';
 
-  const connues = dessus.filter(m => restantMachine(m) !== null);
-  const total = connues.reduce((t, m) => t + restantMachine(m), 0);
+  const total = lignes.reduce((t, l) => t + Math.max(0, l.fiche.restant), 0);
+  let out = '<div class="sec-title">Dans les machines ' +
+    '<span class="norm">— ' + fmtG(total) + '</span></div><div class="card tight">';
 
-  let out = '<div class="sec-title">Sur les machines' +
-    (connues.length ? ' <span class="norm">— ' + fmtG(total) + '</span>' : '') +
-    '</div><div class="card tight">';
+  lignes.sort((a, b) => (a.m.name || '').localeCompare(b.m.name || '')
+                        || String(a.slot).localeCompare(String(b.slot)));
 
-  dessus.forEach((m, i) => {
-    const sp = spoolById(m.filamentId);
-    const reste = restantMachine(m);
-    const taille = tailleBobine(sp);
-    const pct = reste === null ? 0 : Math.min(100, (reste / taille) * 100);
-    const cls = reste === null ? ''
-      : pct < DB.settings.lowThreshold ? 'bad' : pct < 40 ? 'warn' : '';
+  lignes.forEach((l, i) => {
+    const sp = spoolById(l.fiche.refId);
+    const reste = Math.max(0, l.fiche.restant);
+    const taille = tailleAms(l.m.id, l.slot);
+    const pct = Math.min(100, (reste / taille) * 100);
+    const cls = pct < DB.settings.lowThreshold ? 'bad' : pct < 40 ? 'warn' : '';
 
     out += '<div class="rowitem"' + (i ? '' : ' style="padding-top:0"') + '>' +
-      dot(sp.colorHex) +
+      dot(sp ? sp.colorHex : '') +
       '<div class="grow">' +
-        '<div class="t">' + esc(m.name) + '</div>' +
-        '<div class="s">' + esc(spoolLabel(sp)) + '</div>' +
-        (reste === null ? ''
-          : '<div class="gauge" style="margin-top:7px"><i class="' + cls +
-            '" style="width:' + Math.max(2, pct).toFixed(0) + '%"></i></div>') +
+        '<div class="t">' + esc(l.m.name) +
+          (l.slot === SLOT_SEUL ? '' : ' · ' + esc(String(l.slot))) + '</div>' +
+        '<div class="s">' + esc(sp ? spoolLabel(sp) : 'Référence non renseignée') + '</div>' +
+        '<div class="gauge" style="margin-top:7px"><i class="' + cls +
+          '" style="width:' + Math.max(2, pct).toFixed(0) + '%"></i></div>' +
       '</div>' +
-      (reste === null
-        ? badge('', 'inconnu')
-        : '<b class="mono" style="font-size:13px' +
-          (cls === 'bad' ? ';color:var(--bad)' : cls === 'warn' ? ';color:var(--warn)' : '') +
-          '">' + fmtG(reste) + '</b>') +
+      '<b class="mono" style="font-size:13px' +
+        (cls === 'bad' ? ';color:var(--bad)' : cls === 'warn' ? ';color:var(--warn)' : '') +
+        '">' + fmtG(reste) + '</b>' +
     '</div>';
   });
 
   return out + '</div>';
 }
 
+/* Les impressions dont personne ne sait quel emplacement a servi.
+
+   Ça arrive quand la machine ne dit pas laquelle de ses quatre bobines
+   elle tire, et que plusieurs ont un niveau connu. Plutôt que d'en choisir
+   une au hasard — soixante grammes retirés du mauvais emplacement, c'est
+   une commande qu'on croit pouvoir sortir —, l'impression attend ici et un
+   appui suffit à la ranger. */
+function blocAAttribuer() {
+  const file = DB.settings.consoAAttribuer || [];
+  if (!file.length) return '';
+
+  let out = '<div class="sec-title">À attribuer</div>';
+  file.slice().reverse().forEach(x => {
+    const m = machineById(x.machineId);
+    const choix = m ? amsConnusDe(m.id) : [];
+    out += '<div class="card tight" style="margin-bottom:8px">' +
+      '<div class="t">' + fmtG(x.grammes) + ' sur ' + esc(x.machine) + '</div>' +
+      '<div class="s">' + esc(x.fichier || 'impression terminée') + ' · ' +
+        fmtDayClock(x.at) + '</div>' +
+      '<div class="hint" style="margin:7px 0">Quelle bobine a imprimé ?</div>' +
+      '<div class="row wrap" style="gap:6px">' +
+        choix.map(e => {
+          const sp = spoolById(e.fiche.refId);
+          return '<button class="chip" onclick="rangerConso(' + x.at + ',\'' +
+            esc(x.machineId) + '\',\'' + esc(String(e.slot)) + '\')">' +
+            (sp ? '<span class="dot" style="background:' + esc(sp.colorHex) + '"></span>' : '') +
+            esc(e.slot === SLOT_SEUL ? (sp ? spoolLabel(sp) : 'la bobine') : String(e.slot)) +
+            ' <b class="mono" style="font-size:11px">' + fmtG(e.fiche.restant) + '</b>' +
+            '</button>';
+        }).join('') +
+        '<button class="chip" onclick="jeterConso(' + x.at + ',\'' +
+          esc(x.machineId) + '\')">Laisser tomber</button>' +
+      '</div>' +
+    '</div>';
+  });
+  return out;
+}
+
+function rangerConso(at, machineId, slot) {
+  const r = attribuerConso(at, machineId, slot);
+  render();
+  if (r && r.manque > 0) toast('Il manquait ' + fmtG(r.manque), 'bad');
+  else toast('Retiré', 'ok');
+}
+
+function jeterConso(at, machineId) {
+  oublierConso(at, machineId);
+  render();
+}
+
+
 function spoolCard(s) {
   const lvl = spoolLevel(s);
-  const used = DB.machines.filter(m => m.filamentId === s.id).map(m => m.name);
   const surMachines = totalChargeDe(s.id);
+  /* où cette référence se trouve en ce moment, d'après les niveaux
+     renseignés sur les emplacements */
+  const used = DB.machines.filter(m =>
+    amsConnusDe(m.id).some(e => e.fiche.refId === s.id)).map(m => m.name);
   const sealed = s.sealed || 0;
   const open = s.open || 0;
 
@@ -263,7 +321,7 @@ function afterLevel(s) {
   if (spoolAvecMachines(s) <= 0) {
     confirmSheet('Référence épuisée', spoolLabel(s) + ' — la ranger dans les archives ?', 'Archiver', () => {
       s.archived = true;
-      DB.machines.forEach(m => { if (m.filamentId === s.id) m.filamentId = ''; });
+      oublierRefAms(s.id);
       save(); render(); toast('Référence archivée');
     });
   } else if (needsRestock(s)) {
@@ -318,7 +376,7 @@ function editSpool(id) {
         closeSheet();
         confirmSheet('Supprimer cette référence ?', spoolLabel(s), 'Supprimer', () => {
           DB.spools = DB.spools.filter(x => x.id !== s.id);
-          DB.machines.forEach(m => { if (m.filamentId === s.id) m.filamentId = ''; });
+          oublierRefAms(s.id);
           save(); render(); toast('Référence supprimée');
         }, true);
       };

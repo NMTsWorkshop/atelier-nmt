@@ -196,7 +196,7 @@ function suivreEtDire(ident, apresSucces, surRefus, dire) {
 }
 
 function machineCard(m) {
-  const sp = spoolById(m.filamentId);
+  const sp = refMachine(m);
   const now = Date.now();
   let cls = 'card mach', clock = '', sub = '', actions = '';
 
@@ -369,60 +369,6 @@ function piloter(id, action) {
   }
 }
 
-/* La bobine chargée sur cette machine, et ce qu'il en reste.
-
-   Les grammes restants vivent sur la machine, pas sur la référence : il y
-   a quatre machines, chacune avec sa bobine, et elles ne sont pas
-   interchangeables. Chaque impression terminée les diminue toute seule.
-
-   « Neuve » est le geste qu'on fait en changeant physiquement la bobine :
-   la machine repart à son poids nominal et une bobine sort de la réserve.
-   Tant qu'on ne l'a jamais dit, le niveau reste inconnu — et c'est écrit,
-   plutôt que d'afficher un kilo qu'on aurait inventé. */
-function ligneFilament(m, sp) {
-  const reste = restantMachine(m);
-  const taille = tailleBobine(sp);
-  const pct = reste === null ? 0 : Math.min(100, (reste / taille) * 100);
-  const cls = reste === null ? ''
-    : pct < DB.settings.lowThreshold ? 'bad' : pct < 40 ? 'warn' : '';
-
-  return '<div class="fil-line">' +
-      (sp
-        ? dot(sp.colorHex) + '<span class="grow nowrap">' + esc(spoolLabel(sp)) + '</span>' +
-          (reste === null
-            ? '<span class="badge">niveau inconnu</span>'
-            : '<b class="mono" style="font-size:13px' +
-              (cls === 'bad' ? ';color:var(--bad)' : cls === 'warn' ? ';color:var(--warn)' : '') +
-              '">' + fmtG(reste) + '</b>')
-        : '<span class="grow muted">Aucun filament renseigné</span>') +
-      (sp ? '<button class="btn sm ghost" onclick="bobineNeuveSur(\'' + m.id +
-            '\')">Neuve</button>' : '') +
-      '<button class="btn sm ghost" onclick="loadFilament(\'' + m.id + '\')">Changer</button>' +
-    '</div>' +
-    (sp && reste !== null
-      ? '<div class="gauge"><i class="' + cls + '" style="width:' +
-        Math.max(2, pct).toFixed(0) + '%"></i></div>'
-      : '');
-}
-
-/* « Je viens de poser une bobine neuve. » */
-function bobineNeuveSur(id) {
-  const m = machineById(id);
-  const sp = spoolById(m && m.filamentId);
-  if (!m || !sp) return;
-  confirmSheet('Bobine neuve sur ' + m.name + ' ?',
-    'Elle repart à ' + fmtG(tailleBobine(sp)) + ' de ' + spoolLabel(sp) +
-    ((sp.sealed || 0) > 0
-      ? ', et une bobine neuve sort de la réserve — il en restera ' +
-        ((sp.sealed || 0) - 1) + '.'
-      : '. Ta réserve de cette référence est déjà à zéro, elle ne bougera pas.'),
-    'C\'est une neuve', () => {
-      const r = bobineNeuve(m);
-      render();
-      toast(r && r.prise ? 'Neuve posée, −1 en réserve' : 'Remise à ' + fmtG(r.grammes), 'ok');
-    });
-}
-
 /* enveloppe commune : en-tête, ligne filament, rangée d'actions */
 function machineShell(m, cls, clock, sub, actions, sp, live) {
   const err = (m.printer && m.printer.host) ? Printers.error(m.id) : '';
@@ -455,23 +401,115 @@ function machineShell(m, cls, clock, sub, actions, sp, live) {
           esc(err) + '</div>'
       : '') +
     panneLigne(m) +
-    amsLine(live) +
-    ligneFilament(m, sp) +
+    blocBobines(m, live, sp) +
     '<div class="row wrap" style="margin-top:12px">' + actions + boutonsAtelier(m) + '</div>' +
   '</div>';
 }
 
-/* ce que l'AMS rapporte, tel quel — la couleur vient de la machine */
-function amsLine(live) {
-  if (!live || !live.ams || !live.ams.length) return '';
+/* Les bobines que la machine détecte, avec ce qu'il reste sur chacune.
+
+   La machine dit ce qu'elle a dans son AMS : type, couleur, emplacement.
+   Elle ne dit pas combien il en reste — aucune ne pèse ses bobines. Donc
+   on tape dessus et on le renseigne, emplacement par emplacement. Ensuite
+   chaque impression retire son poids de l'emplacement qui a servi.
+
+   Une machine sans AMS a un seul emplacement, le même mécanisme. */
+function blocBobines(m, live, sp) {
+  const trays = (live && Array.isArray(live.ams) && live.ams.length)
+    ? live.ams.filter(t => !t.inconnue)
+    : [];
+
+  /* rien de détecté : un seul emplacement, celui de la bobine posée à la
+     main sur la machine */
+  if (!trays.length) {
+    return '<div style="margin-top:10px">' +
+      pastilleBobine(m, SLOT_SEUL, sp ? spoolLabel(sp) : 'Bobine', sp && sp.colorHex) +
+      (sp ? '' : '<div class="card-meta" style="margin-top:6px">Aucune bobine ' +
+                 'détectée ni renseignée.</div>') +
+    '</div>';
+  }
+
+  const inconnues = (live.ams || []).filter(t => t.inconnue).length;
   return '<div class="row wrap" style="gap:6px;margin-top:10px">' +
-    live.ams.map(t =>
-      t.inconnue
-        ? '<span class="badge" title="Bobine présente mais non renseignée sur la machine">? non renseignée</span>'
-        : '<span class="badge">' +
-            (t.color ? '<span class="dot" style="background:' + esc(t.color) + '"></span>' : '') +
-            esc(t.type) + (t.color ? ' ' + esc(colorNameOf(t.color).toLowerCase()) : '') + '</span>'
-    ).join('') + '</div>';
+      trays.map(t => pastilleBobine(m, t.slot,
+        esc(t.type) + (t.color ? ' ' + colorNameOf(t.color).toLowerCase() : ''),
+        t.color)).join('') +
+      (inconnues
+        ? '<span class="badge" title="Bobine présente mais non renseignée sur la machine">' +
+          '? ' + inconnues + ' non renseignée' + (inconnues > 1 ? 's' : '') + '</span>'
+        : '') +
+    '</div>';
+}
+
+/* Une bobine : ce qu'elle est, ce qu'il en reste, et on peut taper dessus. */
+function pastilleBobine(m, slot, libelle, couleur) {
+  const reste = niveauAms(m.id, slot);
+  const taille = tailleAms(m.id, slot);
+  const pct = reste === null ? 0 : Math.min(100, (reste / taille) * 100);
+  const teinte = reste === null ? 'var(--txt-3)'
+    : pct < DB.settings.lowThreshold ? 'var(--bad)'
+    : pct < 40 ? 'var(--warn)' : 'var(--ok)';
+
+  return '<button class="chip" style="gap:6px;align-items:center" ' +
+      'onclick="reglerBobine(\'' + m.id + '\',\'' + esc(String(slot)) + '\')">' +
+      (couleur ? '<span class="dot" style="background:' + esc(couleur) + '"></span>' : '') +
+      '<span>' + libelle + '</span>' +
+      '<b class="mono" style="font-size:12px;color:' + teinte + '">' +
+        (reste === null ? 'niveau ?' : fmtG(reste)) + '</b>' +
+    '</button>';
+}
+
+/* Le réglage d'une bobine : son niveau, sa référence, et « elle est neuve ». */
+function reglerBobine(machineId, slot) {
+  const m = machineById(machineId);
+  if (!m) return;
+  const f = amsFiche(machineId, slot) || {};
+  const reste = niveauAms(machineId, slot);
+  const ou = slot === SLOT_SEUL ? 'Bobine de ' + m.name
+                                : 'Emplacement ' + slot + ' de ' + m.name;
+
+  sheet(
+    '<h2>' + esc(ou) + '</h2>' +
+    '<div class="sub">La machine dit ce qu\'elle a, pas ce qu\'il en reste. ' +
+      'Renseigne-le une fois : ensuite chaque impression le diminue toute seule.</div>' +
+
+    '<label class="field"><span>Grammes restants</span>' +
+      '<input type="number" name="restant" inputmode="numeric" min="0" placeholder="1000" value="' +
+        (reste === null ? '' : reste) + '">' +
+      '<div class="hint">Laisse vide pour revenir à « inconnu » — rien ne s\'en ' +
+        'déduira plutôt que de partir d\'un chiffre inventé.</div>' +
+    '</label>' +
+
+    '<label class="field"><span>Référence en stock</span>' +
+      spoolSelect('refId', f.refId || '') +
+      '<div class="hint">Facultatif. Renseignée, « Neuve » retire une bobine de ' +
+        'ta réserve, et le stock compte ces grammes dans le total de la référence.</div>' +
+    '</label>' +
+
+    '<div class="btn-row">' +
+      '<button class="btn" data-x="neuve">Elle est neuve</button>' +
+    '</div>' +
+
+    '<div class="sheet-actions">' +
+      '<button class="btn ghost" data-x="no">Annuler</button>' +
+      '<button class="btn primary" data-x="ok">Valider</button>' +
+    '</div>',
+
+    root => {
+      $('[data-x=no]', root).onclick = closeSheet;
+      $('[data-x=neuve]', root).onclick = () => {
+        const r = amsNeuve(machineId, slot, formValues(root).refId);
+        closeSheet(); render();
+        toast(r.prise ? 'Neuve, −1 en réserve' : 'Remise à ' + fmtG(r.grammes), 'ok');
+      };
+      $('[data-x=ok]', root).onclick = () => {
+        const v = formValues(root);
+        const saisi = String(v.restant || '').trim();
+        poserAms(machineId, slot, saisi === '' ? null : num(saisi), v.refId || '');
+        closeSheet(); render(); toast('Niveau enregistré', 'ok');
+      };
+    }
+  );
 }
 
 /* nom de la teinte la plus proche dans la palette de l'appli :
@@ -590,49 +628,11 @@ function editMachine(id) {
         } else {
           DB.machines.push({
             id: uid(), name: v.name.trim(), model: v.model.trim(),
-            filamentId: '', status: 'idle', timer: null,
+            status: 'idle', timer: null,
             job: null, printer: printer
           });
         }
         save(); Printers.push(); closeSheet(); render(); toast('Enregistré', 'ok');
-      };
-    }
-  );
-}
-
-function loadFilament(id) {
-  const m = machineById(id);
-  if (!m) return;
-  const list = activeSpools().filter(s => spoolAvecMachines(s) > 0);
-  if (!list.length) {
-    confirmSheet('Aucun filament en stock', 'Ajoute d\'abord une référence dans l\'onglet Stock.', 'Ajouter du filament', () => {
-      go('stock'); editSpool();
-    });
-    return;
-  }
-  sheet(
-    '<h2>Filament sur ' + esc(m.name) + '</h2>' +
-    '<div class="sub">Les grammes restants sont retirés tout seuls à chaque impression terminée. Ils vivent sur la machine, pas sur la référence.</div>' +
-    '<label class="field"><span>Bobine chargée</span>' + spoolSelect('filamentId', m.filamentId) + '</label>' +
-    '<label class="field"><span>Grammes restants</span>' +
-      '<input type="number" name="restant" inputmode="numeric" min="0" placeholder="1000" value="' +
-        (restantMachine(m) === null ? '' : restantMachine(m)) + '">' +
-      '<div class="hint">Laisse vide si tu ne sais pas — le niveau restera inconnu plutôt qu\'inventé. Pour une bobine qui sort de son sachet, le bouton « Neuve » fait le compte et la retire de la réserve.</div>' +
-    '</label>' +
-    '<div class="sheet-actions">' +
-      '<button class="btn ghost" data-x="no">Annuler</button>' +
-      '<button class="btn primary" data-x="ok">Valider</button>' +
-    '</div>',
-    root => {
-      $('[data-x=no]', root).onclick = closeSheet;
-      $('[data-x=ok]', root).onclick = () => {
-        const v = formValues(root);
-        const change = v.filamentId !== m.filamentId;
-        m.filamentId = v.filamentId;
-        const saisi = String(v.restant || '').trim();
-        if (saisi !== '') m.restant = Math.max(0, num(saisi));
-        else if (change) delete m.restant;   /* autre bobine, autre niveau */
-        save(); closeSheet(); render(); toast('Filament mis à jour', 'ok');
       };
     }
   );
@@ -643,7 +643,7 @@ function loadFilament(id) {
 function startTimer(id) {
   const m = machineById(id);
   if (!m) return;
-  const sp = spoolById(m.filamentId);
+  const sp = refMachine(m);
   const openLines = pendingLines();
 
   sheet(
@@ -763,22 +763,20 @@ function stopTimer(id) {
 function finishJob(id) {
   const m = machineById(id);
   if (!m) return;
-  const sp = spoolById(m.filamentId);
+  const sp = refMachine(m);
   const guess = (m.job && m.job.grams) ? m.job.grams : '';
 
   sheet(
     '<h2>Impression terminée</h2>' +
     '<div class="sub">' + esc(m.name) + (m.job && m.job.label ? ' · ' + esc(m.job.label) : '') + '</div>' +
 
-    (sp
-      ? '<label class="field"><span>Filament consommé</span>' +
-          '<input type="number" name="grams" inputmode="numeric" placeholder="0" value="' + esc(guess) + '">' +
-          '<div class="hint">Retiré de la bobine qui est sur ' + esc(m.name) + ' — ' +
-            (restantMachine(m) === null ? 'son niveau est inconnu' : 'il y reste ' + fmtG(restantMachine(m))) +
-            '. Normalement le relais s\'en charge tout seul : ce champ ne sert que pour une impression qu\'il n\'a pas vue.</div>' +
-        '</label>'
-      : '<div class="warn-box">Aucun filament n\'est associé à cette machine, rien ne sera déduit du stock.</div><div class="sp"></div>'
-    ) +
+    '<label class="field"><span>Filament consommé</span>' +
+      '<input type="number" name="grams" inputmode="numeric" placeholder="0" value="' + esc(guess) + '">' +
+      '<div class="hint">Normalement le relais s\'en charge tout seul. Ce champ ne sert ' +
+        'que pour une impression qu\'il n\'a pas vue — et il faut alors qu\'un seul ' +
+        'emplacement de ' + esc(m.name) + ' ait un niveau connu, sinon personne ne sait ' +
+        'lequel a imprimé.</div>' +
+    '</label>' +
 
     (m.job && m.job.lineId
       ? '<label class="field row" style="gap:9px;align-items:center">' +
@@ -797,18 +795,25 @@ function finishJob(id) {
       $('[data-x=ok]', root).onclick = () => {
         const v = formValues(root);
         const g = num(v.grams);
-        if (sp && g > 0) {
-          /* on retire de la bobine qui est dans la machine, pas de la
-             réserve : c'est elle qui a imprimé */
-          if (typeof m.restant === 'number') {
-            if (g > m.restant) {
-              toast('Il manquait ' + fmtG(g - m.restant) + ' sur la bobine de ' +
-                    m.name + ' — elle a dû être changée en route', 'bad');
+        if (g > 0) {
+          /* un seul emplacement renseigné : c'est lui. Plusieurs, et on ne
+             sait pas lequel a imprimé — on le dit plutôt que de tirer au
+             sort sur la bobine de quelqu'un d'autre. */
+          const connus = amsConnusDe(m.id);
+          if (connus.length === 1) {
+            const r = retirerAms(m.id, connus[0].slot, g);
+            if (r && r.manque > 0) {
+              toast('Il manquait ' + fmtG(r.manque) + ' — la bobine a dû être ' +
+                    'changée en route', 'bad');
             }
-            m.restant = Math.max(0, m.restant - g);
+            const ref = spoolById(connus[0].fiche.refId);
+            if (ref && needsRestock(ref)) toast(spoolLabel(ref) + ' : à racheter', 'bad');
+          } else if (connus.length === 0) {
+            toast('Aucun niveau renseigné sur ' + m.name + ' — rien n\'a été retiré', 'bad');
+          } else {
+            toast(connus.length + ' bobines renseignées sur ' + m.name + ' — indique ' +
+                  'laquelle en tapant dessus', 'bad');
           }
-          if (spoolAvecMachines(sp) <= 0) toast(spoolLabel(sp) + ' est épuisé', 'bad');
-          else if (needsRestock(sp)) toast(spoolLabel(sp) + ' : à racheter', 'bad');
         }
         if (m.job && m.job.orderId && g > 0) {
           const oc = orderById(m.job.orderId);

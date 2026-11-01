@@ -53,7 +53,7 @@ const errors = [];
          que le test vient d'écrire quand il recharge la page */
       if (!localStorage.getItem('nmt_atelier_v1')) {
         localStorage.setItem('nmt_atelier_v1', JSON.stringify({
-          machines: [], spools: [], orders: [], weights: {},
+          machines: [], spools: [], orders: [], weights: {}, ams: {},
           settings: { parcSeeded: 1 }
         }));
       }
@@ -176,15 +176,19 @@ const errors = [];
   });
 
   console.log('\n— timer —');
-  await step('charger un filament sur la machine', async () => {
+  await step('renseigner la bobine en tapant dessus', async () => {
     await page.click('#tabbar .tab[data-tab=machines]');
     await page.waitForTimeout(100);
-    await page.click('#view .btn:has-text("Changer")');
-    await page.waitForSelector('.sheet [name=filamentId]');
-    await page.selectOption('.sheet [name=filamentId]', { index: 1 });
+    await page.click('#view .chip:has-text("niveau ?")');
+    await page.waitForSelector('.sheet [name=refId]');
+    await page.selectOption('.sheet [name=refId]', { index: 1 });
+    await page.fill('.sheet [name=restant]', '700');
     await page.click('.sheet [data-x=ok]');
-    await page.waitForTimeout(200);
-    if (!(await page.textContent('#view')).includes('Sunlu')) throw new Error('filament non affiché sur la machine');
+    await page.waitForTimeout(250);
+    const txt = await page.textContent('#view');
+    if (!/700 g/.test(txt)) throw new Error('niveau non affiché : ' + txt.slice(0, 300));
+    const vu = await page.evaluate(() => niveauAms(DB.machines[0].id, SLOT_SEUL));
+    if (vu !== 700) throw new Error('niveau non enregistré : ' + vu);
   });
   await step('lancer un timer', async () => {
     await page.click('#view .btn:has-text("Lancer une impression")');
@@ -211,29 +215,30 @@ const errors = [];
   });
 
   console.log('\n— fin d\'impression —');
-  await step('poser une bobine neuve retire une bobine de la réserve', async () => {
+  await step('taper sur la bobine détectée pour dire qu\'elle est neuve', async () => {
     const avant = await page.evaluate(() => DB.spools[0].sealed);
-    await page.click('#view .btn:has-text("Neuve")');
-    await page.waitForSelector('.sheet [data-x=yes]');
-    await page.click('.sheet [data-x=yes]');
+    await page.click('#view .chip:has-text("g")');
+    await page.waitForSelector('.sheet [data-x=neuve]');
+    await page.click('.sheet [data-x=neuve]');
     await page.waitForTimeout(250);
     const vu = await page.evaluate(() => ({
-      restant: DB.machines[0].restant, sealed: DB.spools[0].sealed
+      niveau: niveauAms(DB.machines[0].id, SLOT_SEUL),
+      sealed: DB.spools[0].sealed
     }));
-    if (vu.restant !== 1000) throw new Error('la machine ne repart pas à 1 kg : ' + vu.restant);
+    if (vu.niveau !== 1000) throw new Error('l\'emplacement ne repart pas à 1 kg : ' + vu.niveau);
     if (vu.sealed !== avant - 1)
       throw new Error('la réserve n\'a pas bougé : ' + avant + ' → ' + vu.sealed);
   });
 
-  await step('terminer retire les grammes de la bobine de la machine', async () => {
-    const avant = await page.evaluate(() => DB.machines[0].restant);
+  await step('terminer retire les grammes de l\'emplacement renseigné', async () => {
+    const avant = await page.evaluate(() => niveauAms(DB.machines[0].id, SLOT_SEUL));
     await page.click('#view .btn:has-text("Terminer")');
     await page.waitForSelector('.sheet');
     const val = await page.inputValue('.sheet [name=grams]');
     if (val !== '480') throw new Error('poids non pré-rempli (reçu "' + val + '")');
     await page.click('.sheet [data-x=ok]');
     await page.waitForTimeout(250);
-    const reste = await page.evaluate(() => DB.machines[0].restant);
+    const reste = await page.evaluate(() => niveauAms(DB.machines[0].id, SLOT_SEUL));
     if (reste !== avant - 480)
       throw new Error('déduction incorrecte : ' + avant + ' → ' + reste);
     const done = await page.evaluate(() => DB.orders[0].lines[0].done);
@@ -242,9 +247,9 @@ const errors = [];
     if (st !== 'done') throw new Error('commande non clôturée : ' + st);
   });
 
-  await step('et le stock compte ce qui est sur les machines', async () => {
+  await step('et le stock compte ce qui est dans les machines', async () => {
     await page.click('#tabbar .tab[data-tab=stock]');
-    await page.waitForFunction(() => /Sur les machines/.test(
+    await page.waitForFunction(() => /Dans les machines/.test(
       (document.getElementById('view') || {}).textContent || ''), null, { timeout: 5000 });
     const txt = await page.textContent('#view');
     if (!/520 g/.test(txt))
@@ -283,7 +288,8 @@ const errors = [];
     const n = await page.evaluate(() => DB.machines.length + '/' + DB.spools.length + '/' + DB.orders.length);
     if (n !== '1/2/1') throw new Error('données perdues : ' + n);
     const vu = await page.evaluate(() => ({
-      reserve: spoolTotal(DB.spools[0]), machine: DB.machines[0].restant
+      reserve: spoolTotal(DB.spools[0]),
+      machine: niveauAms(DB.machines[0].id, SLOT_SEUL)
     }));
     if (vu.reserve !== 8640 || vu.machine !== 520)
       throw new Error('stock mal relu : ' + JSON.stringify(vu));
@@ -292,12 +298,11 @@ const errors = [];
   console.log('\n— captures —');
   await page.evaluate(() => {
     DB.machines[0].status = 'running';
-    DB.machines[0].filamentId = DB.spools[1].id;
     DB.machines[0].job = { label: 'Casque Bo-Katan — coque', grams: 420 };
     DB.machines[0].timer = { startedAt: Date.now(), endAt: Date.now() + 7400000, dur: 7400000 };
-    DB.machines.push({ id: 'm2', name: 'P1S', model: 'Bambu Lab P1S', filamentId: DB.spools[0].id,
+    DB.machines.push({ id: 'm2', name: 'P1S', model: 'Bambu Lab P1S',
       profileId: '', status: 'done', timer: { endAt: Date.now() - 600000 }, job: { label: 'Pauldrons ×2' } });
-    DB.machines.push({ id: 'm3', name: 'Ender 3', model: 'Creality Ender 3 V3', filamentId: '',
+    DB.machines.push({ id: 'm3', name: 'Ender 3', model: 'Creality Ender 3 V3',
       profileId: '', status: 'idle', timer: null, job: null });
     DB.orders[0].status = 'todo'; DB.orders[0].lines[0].done = false;
     save(); render();
@@ -394,10 +399,10 @@ const errors = [];
     /* des machines branchees : sans elles, aucune n'est proposee comme
        destination et les boutons d'envoi n'ont rien a afficher */
     DB.machines.push({ id: 'mk2', name: 'K2 Plus 1', model: 'Creality K2 Plus',
-      filamentId: '', profileId: '', status: 'idle', timer: null, job: null,
+      status: 'idle', timer: null, job: null,
       printer: { kind: 'moonraker', host: '10.1.2.57' } });
     DB.machines.push({ id: 'mp1s', name: 'P1S 1', model: 'Bambu Lab P1S',
-      filamentId: '', profileId: '', status: 'idle', timer: null, job: null,
+      status: 'idle', timer: null, job: null,
       printer: { kind: 'bambu', host: '10.1.3.10', serial: 'X', code: '' } });
     save();
     BIB = null; BIB_ERREUR = '';
@@ -1255,14 +1260,15 @@ const errors = [];
 
   await step('une impression terminée se retire toute seule', async () => {
     await page.evaluate(() => {
-      DB.machines[0].restant = 800;
+      poserAms(DB.machines[0].id, SLOT_SEUL, 800);
       DB.settings.consoJusqua = 0;
+      DB.settings.consoAAttribuer = [];
       save();
     });
     const nom = await page.evaluate(() => DB.machines[0].name);
     await direConsos([{ at: 1000, machine: nom, fichier: 'casque.3mf',
                         plateau: 1, grammes: 120, etat: 'fini', pourcent: 100 }]);
-    await page.waitForFunction(() => DB.machines[0].restant === 680,
+    await page.waitForFunction(() => niveauAms(DB.machines[0].id, SLOT_SEUL) === 680,
       null, { timeout: 5000 });
   });
 
@@ -1271,7 +1277,7 @@ const errors = [];
     await direConsos([{ at: 1000, machine: nom, fichier: 'casque.3mf',
                         plateau: 1, grammes: 120, etat: 'fini', pourcent: 100 }]);
     await page.waitForTimeout(400);
-    const reste = await page.evaluate(() => DB.machines[0].restant);
+    const reste = await page.evaluate(() => niveauAms(DB.machines[0].id, SLOT_SEUL));
     if (reste !== 680) throw new Error('comptée deux fois : ' + reste);
   });
 
@@ -1279,26 +1285,26 @@ const errors = [];
     const nom = await page.evaluate(() => DB.machines[0].name);
     await direConsos([{ at: 2000, machine: nom, fichier: 'casque.3mf',
                         plateau: 1, grammes: 200, etat: 'échec', pourcent: 40 }]);
-    await page.waitForFunction(() => DB.machines[0].restant === 600,
+    await page.waitForFunction(() => niveauAms(DB.machines[0].id, SLOT_SEUL) === 600,
       null, { timeout: 5000 });
   });
 
   await step('une bobine dont on ignore le niveau n\'est pas devinée', async () => {
-    await page.evaluate(() => { delete DB.machines[0].restant; save(); });
+    await page.evaluate(() => { poserAms(DB.machines[0].id, SLOT_SEUL, null); save(); });
     const nom = await page.evaluate(() => DB.machines[0].name);
     await direConsos([{ at: 3000, machine: nom, fichier: 'casque.3mf',
                         plateau: 1, grammes: 150, etat: 'fini', pourcent: 100 }]);
     await page.waitForTimeout(400);
-    const vu = await page.evaluate(() => DB.machines[0].restant);
-    if (vu !== undefined) throw new Error('un niveau a été inventé : ' + vu);
+    const vu = await page.evaluate(() => niveauAms(DB.machines[0].id, SLOT_SEUL));
+    if (vu !== null) throw new Error('un niveau a été inventé : ' + vu);
   });
 
   await step('une machine que le relais ne connaît pas ne casse rien', async () => {
-    await page.evaluate(() => { DB.machines[0].restant = 500; save(); });
+    await page.evaluate(() => { poserAms(DB.machines[0].id, SLOT_SEUL, 500); save(); });
     await direConsos([{ at: 4000, machine: 'Machine fantôme', fichier: 'x.3mf',
                         plateau: 1, grammes: 90, etat: 'fini', pourcent: 100 }]);
     await page.waitForTimeout(400);
-    const reste = await page.evaluate(() => DB.machines[0].restant);
+    const reste = await page.evaluate(() => niveauAms(DB.machines[0].id, SLOT_SEUL));
     if (reste !== 500) throw new Error('une autre bobine a été entamée : ' + reste);
   });
 
@@ -1309,6 +1315,40 @@ const errors = [];
     const txt = await page.textContent('#view');
     if (!/relais\.json/.test(txt))
       throw new Error('l\'écran ne dit pas quoi faire : ' + txt.slice(0, 400));
+    await page.click('#tabbar .tab[data-tab=machines]');
+  });
+
+  await step('deux bobines renseignées et pas de slot : l\'app demande', async () => {
+    await page.evaluate(() => {
+      DB.ams = {};
+      poserAms(DB.machines[0].id, '0', 900);
+      poserAms(DB.machines[0].id, '1', 900);
+      DB.settings.consoJusqua = 0;
+      DB.settings.consoAAttribuer = [];
+      save();
+    });
+    const nom = await page.evaluate(() => DB.machines[0].name);
+    await direConsos([{ at: 9000, machine: nom, fichier: 'casque.3mf',
+                        plateau: 1, grammes: 70, etat: 'fini', pourcent: 100 }]);
+    await page.waitForFunction(() => (DB.settings.consoAAttribuer || []).length === 1,
+      null, { timeout: 5000 });
+    const vu = await page.evaluate(() => [niveauAms(DB.machines[0].id, '0'),
+                                          niveauAms(DB.machines[0].id, '1')]);
+    if (vu[0] !== 900 || vu[1] !== 900)
+      throw new Error('une bobine a été entamée au hasard : ' + JSON.stringify(vu));
+  });
+
+  await step('et un appui la range sur le bon emplacement', async () => {
+    await page.click('#tabbar .tab[data-tab=stock]');
+    await page.waitForFunction(() => /À attribuer/.test(
+      (document.getElementById('view') || {}).textContent || ''), null, { timeout: 5000 });
+    await page.click('#view .chip:has-text("1")');
+    await page.waitForFunction(() => (DB.settings.consoAAttribuer || []).length === 0,
+      null, { timeout: 5000 });
+    const vu = await page.evaluate(() => [niveauAms(DB.machines[0].id, '0'),
+                                          niveauAms(DB.machines[0].id, '1')]);
+    if (vu[0] + vu[1] !== 1730)
+      throw new Error('les 70 g n\'ont pas été retirés une seule fois : ' + JSON.stringify(vu));
     await page.click('#tabbar .tab[data-tab=machines]');
   });
 

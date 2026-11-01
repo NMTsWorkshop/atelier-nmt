@@ -267,6 +267,23 @@ def lire_bambu(m, duree=15):
 
     bobines = []
     ams = p.get("ams") or {}
+    # L'emplacement que la machine tire en ce moment. C'est lui qui permet
+    # a l'app de retirer les grammes de la bonne bobine : sans ca, avec
+    # quatre bobines dans l'AMS, personne ne sait laquelle a imprime.
+    #
+    # Lu defensivement : le champ n'est pas documente publiquement et son
+    # absence ne doit rien casser. Quand il manque, l'app demande.
+    slot_actif = ""
+    brut_slot = ams.get("tray_now")
+    if brut_slot is None:
+        brut_slot = (p.get("vt_tray") or {}).get("id")
+    try:
+        n = int(str(brut_slot).strip())
+        # 254 et 255 designent la bobine exterieure chez Bambu
+        slot_actif = "ext" if n >= 254 else str(n)
+    except (TypeError, ValueError):
+        slot_actif = ""
+
     try:
         presentes = int(str(ams.get("tray_exist_bits", "0")), 16)
     except Exception:
@@ -316,7 +333,7 @@ def lire_bambu(m, duree=15):
         prevu["minutes"] = int(round(reste_min * 100.0 / (100 - avance)))
 
     return {"ok": True, "kind": "bambu", "state": normalise(p.get("gcode_state")),
-            "brut": brut, "prevu": prevu,
+            "brut": brut, "prevu": prevu, "slot": slot_actif,
             "file": fichier, "percent": int(p.get("mc_percent", -1)),
             "remaining": int(p.get("mc_remaining_time", -1)),
             "nozzle": p.get("nozzle_temper", 0), "bed": p.get("bed_temper", 0),
@@ -496,7 +513,7 @@ def publier(sujet, etats, envois=None):
     # limite un message à quelques kilo-octets, ils n'y vont pas. « prevu »
     # non plus : il ne sert qu'ici, à reconnaître le plateau qui tourne.
     legers = dict((k, dict((c, v) for c, v in e.items()
-                           if c not in ("brut", "prevu")))
+                           if c not in ("brut", "prevu", "slot")))
                   for k, e in etats.items())
     # les envois en cours voyagent avec le relevé : c'est le seul message
     # que le relais publie de toute façon chaque minute, et une barre de
