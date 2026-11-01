@@ -36,7 +36,7 @@ function renderSettings() {
         'Hors du wifi de l\'atelier, l\'application lit ce relevé — en 4G comme sur n\'importe quel wifi.</div>' +
       '<label class="field"><span>Sujet publié par le relais</span>' +
         '<input type="text" name="relayTopic" value="' + esc(sujet) + '" placeholder="nmt-atelier-…" autocapitalize="off" autocorrect="off">' +
-        '<div class="hint">Le même que dans le fichier relais.json du Pi. Laisse vide pour ne pas utiliser de relais.</div>' +
+        '<div class="hint">Le même que dans le fichier relais.json du serveur. Laisse vide pour ne pas utiliser de relais.</div>' +
       '</label>' +
       '<div class="btn-row">' +
         '<button class="btn" onclick="saveRelais()">Enregistrer</button>' +
@@ -56,12 +56,12 @@ function renderSettings() {
         'ça, ça ne peut pas passer par Internet.</div>' +
       '<label class="field"><span>Adresse du relais</span>' +
         '<input type="text" name="biblioHost" value="' + esc(Biblio.hote()) + '" placeholder="10.1.2.60" autocapitalize="off" autocorrect="off">' +
-        '<div class="hint">L\'adresse du Pi sur le réseau. Le port 8765 est ajouté tout seul. ' +
+        '<div class="hint">L\'adresse du serveur sur le réseau. Le port 8765 est ajouté tout seul. ' +
           'Facultatif : sans elle, la bibliothèque passe par le canal.</div>' +
       '</label>' +
       '<label class="field"><span>Jeton</span>' +
         '<input type="password" name="biblioToken" value="' + esc(Biblio.jeton()) + '" placeholder="…" autocapitalize="off" autocorrect="off">' +
-        '<div class="hint">Le même que dans relais.json du Pi. Il empêche un appareil de passage ' +
+        '<div class="hint">Le même que dans relais.json du serveur. Il empêche un appareil de passage ' +
           'de lancer une impression, et signe ce que tu coches à distance.</div>' +
       '</label>' +
       '<div class="btn-row">' +
@@ -89,50 +89,63 @@ function renderSettings() {
       '</div>';
   }
 
-  /* ---- remettre le Pi d'aplomb ---- */
+  /* ---- le serveur ---- */
   if (sujet) {
     etatRelaisAuBesoin();
     const pi = PI_VU;
     const partage = pi && pi.partage;
-    out += '<div class="sec-title">Le Pi</div>' +
+    const st = piStatut();
+    const frais = !statutPiFige();
+    const gris = frais ? '' : ' style="color:var(--txt-3)"';
+
+    out += '<div class="sec-title">Serveur</div>' +
       '<div class="card">' +
-        '<div class="hint" style="margin-bottom:10px">Quand le partage ne répond plus ' +
-          'alors que le Pi est allumé, inutile d\'aller débrancher : relancer le partage ' +
-          'suffit presque toujours, et ça n\'interrompt rien d\'autre.</div>' +
-        ligneStatutPi('pi-vivant-reglages') +
-        '<div class="btn-row" style="margin-bottom:10px">' +
-          '<button class="btn sm ghost" onclick="piVerifier(\'pi-vivant-reglages\')">' +
-            'Le Pi répond-il ?</button>' +
+
+        /* l'état d'abord, en grand : c'est la question qu'on se pose en
+           ouvrant cet écran */
+        '<div class="row" style="gap:10px;margin-bottom:12px">' +
+          (st ? dot(st.couleur, true) : '') +
+          '<div class="grow">' +
+            '<div class="card-name">' +
+              (st ? esc(st.dit.charAt(0).toUpperCase() + st.dit.slice(1)) : 'État inconnu') +
+            '</div>' +
+            (st && st.detail
+              ? '<div class="card-meta">' + esc(st.detail) + '</div>' : '') +
+          '</div>' +
         '</div>' +
+
         (pi === null
           ? '<div class="hint">Lecture du relais…</div>'
-          : /* Ces deux lignes viennent du relevé, pas du Pi : quand il se
-               tait, elles décrivent le monde tel qu'il était la dernière
+          : /* Ces deux lignes viennent du relevé, pas du serveur : quand il
+               se tait, elles décrivent le monde tel qu'il était la dernière
                fois qu'il a parlé. L'écran les donnait sans le dire, et un
-               partage « actif » affiché pendant que le Pi était éteint
+               partage « actif » affiché pendant que le serveur était éteint
                faisait chercher la panne ailleurs. */
-            (() => {
-              const frais = !statutPiFige();
-              const gris = frais ? '' : ' style="color:var(--txt-3)"';
-              return (frais ? '' :
-                '<div class="hint" style="margin-bottom:6px">Ce qui suit date du ' +
-                'dernier relevé, pas de maintenant.</div>') +
-              '<div class="kv"><span>Partage de fichiers</span><b class="mono"' +
-                (partage === 'arrêté' && frais ? ' style="color:var(--bad)"' : gris) + '>' +
-                esc(partage || 'inconnu') + '</b></div>' +
-              '<div class="kv"><span>Debout depuis</span><b class="mono"' + gris + '>' +
-                (pi.debout ? dureeRonde(pi.debout) : '—') + '</b></div>';
-            })()) +
+            (frais ? '' :
+              '<div class="hint" style="margin-bottom:6px">Ce qui suit date du ' +
+              'dernier relevé, pas de maintenant.</div>') +
+            '<div class="kv"><span>Partage de fichiers</span><b class="mono"' +
+              (partage === 'arrêté' && frais ? ' style="color:var(--bad)"' : gris) + '>' +
+              esc(partage || 'inconnu') + '</b></div>' +
+            '<div class="kv"><span>Debout depuis</span><b class="mono"' + gris + '>' +
+              (pi.debout ? dureeRonde(pi.debout) : '—') + '</b></div>') +
+
+        '<div class="sp"></div>' +
+        '<div class="hint" style="margin-bottom:8px">Quand le partage ne répond ' +
+          'plus alors que le serveur est allumé, inutile d\'aller débrancher : ' +
+          'relancer le partage suffit presque toujours, et ça n\'interrompt rien ' +
+          'd\'autre.</div>' +
         '<div class="btn-row">' +
           '<button class="btn primary" onclick="piGeste(\'partage\')">Relancer le partage</button>' +
           '<button class="btn" onclick="piGeste(\'relais\')">Relancer le relais</button>' +
         '</div>' +
-        '<div class="btn-row">' +
-          '<button class="btn" onclick="piGeste(\'pi\')">Redémarrer le Pi</button>' +
+        '<div class="btn-row" style="margin-top:8px">' +
+          '<button class="btn ghost" onclick="piGeste(\'pi\')">Redémarrer le serveur</button>' +
         '</div>' +
         '<div class="hint" id="pi-out" style="margin-top:9px">' + PI_DIT + '</div>' +
       '</div>';
   }
+
 
   /* ---- délai annoncé dans la boutique ---- */
   if (sujet) {
@@ -152,7 +165,7 @@ function renderSettings() {
           'à imprimer, le répartit sur les machines de chaque famille, et écrit le délai ' +
           'sur la boutique. Les machines tournent jour et nuit, et les deux familles ' +
           'travaillent en parallèle : c\'est la plus chargée qui donne le délai.<br><br>' +
-          'Le jeton qui écrit dans la boutique reste sur le Pi : le téléphone envoie une ' +
+          'Le jeton qui écrit dans la boutique reste sur le serveur : le téléphone envoie une ' +
           'décision, jamais une écriture.</div>' +
         (v === null
           ? '<div class="hint">Lecture du relais…</div>'
@@ -227,7 +240,7 @@ function renderSettings() {
 
   /* ---- données ---- */
   const counts = DB.machines.length + ' machines · ' + activeSpools().length + ' bobines · ' +
-                 DB.orders.length + ' commandes · ' + DB.profiles.length + ' profils';
+                 DB.orders.length + ' commandes';
   out += '<div class="sec-title">Sauvegarde</div>' +
     '<div class="card">' +
       '<div class="small muted" style="margin-bottom:12px">' + esc(counts) + '</div>' +
@@ -393,7 +406,7 @@ function testBiblio() {
       } else if (r.adresse) {
         lignes.push('<span style="color:var(--txt-3)">Pas de réponse directe de ' +
           esc(r.adresse) + '. Normal hors du réseau de l\'atelier, ou si le ' +
-          'pare-feu sépare ton wifi du Pi.</span>');
+          'pare-feu sépare ton wifi du serveur.</span>');
       } else {
         lignes.push('<span style="color:var(--txt-3)">Aucune adresse : tout passe par le canal.</span>');
       }
@@ -466,8 +479,8 @@ const PI_GESTES = {
   relais: { titre: 'Relancer le relais',
             confirme: 'Relancer le relais ? Il revient tout seul dans la demi-minute.',
             attente: 'Relais en train de repartir…' },
-  pi: { titre: 'Redémarrer le Pi',
-        confirme: 'Redémarrer le Pi ? Compte une minute sans relevé ni bibliothèque.',
+  pi: { titre: 'Redémarrer le serveur',
+        confirme: 'Redémarrer le serveur ? Compte une minute sans relevé ni bibliothèque.',
         attente: 'Redémarrage demandé…' }
 };
 
@@ -660,7 +673,7 @@ function importData() {
 }
 
 function resetData() {
-  confirmSheet('Tout effacer ?', 'Machines, bobines, commandes et profils seront perdus. Pense à exporter avant.', 'Effacer', () => {
+  confirmSheet('Tout effacer ?', 'Machines, bobines et commandes seront perdues. Pense à exporter avant.', 'Effacer', () => {
     DB.machines.forEach(m => Native.cancelTimer(m.id));
     DB = JSON.parse(JSON.stringify(DEFAULT_DB));
     save(); render(); toast('Données effacées');

@@ -31,7 +31,6 @@ const DEFAULT_DB = {
   v: 1,
   machines: [],
   spools: [],
-  profiles: [],
   orders: [],
   weights: {},
   settings: {
@@ -40,6 +39,12 @@ const DEFAULT_DB = {
     apiVersion: '2026-04',
     notifyBefore: 0,
     lowThreshold: 15,
+    /* jusqu'où les impressions annoncées par le relais ont déjà été
+       retirées des bobines — le repère qui empêche de compter deux fois */
+    consoJusqua: 0,
+    /* machines nommées par le relais que l'app ne reconnaît pas : leur
+       stock ne peut pas se mettre à jour, et il faut le dire */
+    consoOrphelines: [],
     lastSync: 0,
     lastUpdateCheck: 0,
     parcSeeded: 0
@@ -78,17 +83,6 @@ function migrate() {
     o.material = o.material || ref.material || 'PLA';
     o.color = o.color || ref.color || '';
   });
-  /* adresses des Creality, changées en octobre 2026 */
-  if (!DB.settings.adresses202610) {
-    DB.settings.adresses202610 = Date.now();
-    (DB.machines || []).forEach(m => {
-      const p = m.printer;
-      if (!p || p.kind !== 'moonraker') return;
-      const neuve = DEMENAGEMENTS[p.host];
-      if (neuve) p.host = neuve;
-    });
-  }
-
   (DB.spools || []).forEach(s => {
     if (s.spoolSize === undefined) {
       s.spoolSize = s.initial || 1000;
@@ -421,10 +415,6 @@ const Relais = {
      appel : le délai qu'il annonce à la boutique, et l'état du Pi. */
   etat() { return nativeCall('relayEtat', []); },
 
-  /* « Le Pi est-il allumé ? », posée au Pi lui-même. Ne répond qu'à
-     l'atelier : ailleurs il n'y a que le relevé pour en juger. */
-  vivant() { return nativeCall('piVivant', []); },
-
   /* Remettre le Pi d'aplomb. cible : 'partage', 'relais' ou 'pi'. */
   service(cible, quandMeme) {
     return nativeCall('biblioService', [String(cible || ''), !!quandMeme]);
@@ -485,6 +475,7 @@ function etatRelaisAuBesoin(forcer) {
       PI_VU = r.pi || {};
       RELEVE_AT = r.at || 0;
       RELEVE_RECU = !!r.ok;
+      appliquerConsos(Array.isArray(r.consos) ? r.consos : []);
       if (typeof TAB !== 'undefined' && (TAB === 'settings' || TAB === 'machines')) render();
     })
     .catch(() => {
@@ -521,6 +512,89 @@ function dureeRonde(secondes) {
 
    piStatut() renvoie null quand il n'y a rien à afficher — pas de relais
    réglé, donc pas de Pi à surveiller. */
+/* ============================================================
+   Le stock se tient à jour tout seul
+   ============================================================
+
+   Le relais annonce dans son relevé les dernières impressions conclues,
+   avec le poids que le trancheur avait prévu pour le plateau. On retire
+   ces grammes de la bobine chargée dans la machine qui l'a sortie.
+
+   Avant, il fallait ouvrir « Impression terminée » et taper les grammes à
+   la main. Personne ne le faisait, et c'était impossible pour une
+   impression lancée depuis le serveur ou depuis l'écran de la machine.
+   D'où un stock qui n'a jamais été juste.
+
+   Deux choses à ne pas rater :
+
+   - Ne compter chaque impression qu'une fois. Le relevé republie les dix
+     dernières à chaque fois ; on retient jusqu'où on a compté et on ignore
+     le reste. Un repère par horodatage suffit, l'historique n'étant
+     qu'ajouté.
+
+   - Une impression ratée a quand même mangé du filament. On retire au
+     prorata de l'avancement : arrêtée à 40 %, 40 % du poids. */
+
+function appliquerConsos(consos) {
+  if (!Array.isArray(consos) || !consos.length) return;
+  const repere = DB.settings.consoJusqua || 0;
+  let dernier = repere;
+  let touche = false;
+  const orphelines = new Set();
+
+  consos.slice().sort((a, b) => (a.at || 0) - (b.at || 0)).forEach(c => {
+    const quand = c.at || 0;
+    if (quand <= repere) return;
+    if (quand > dernier) dernier = quand;
+
+    const grammes = grammesConsommes(c);
+    if (grammes <= 0) return;
+
+    const m = DB.machines.find(x =>
+      (x.name || '').trim().toLowerCase() === String(c.machine || '').trim().toLowerCase());
+    if (!m) {
+      /* Le relais nomme ses machines dans relais.json, l'app dans ses
+         réglages. Si les deux ne portent pas le même nom, rien ne se
+         déduit — et sans le dire, ça ressemble exactement au stock qui ne
+         se met jamais à jour. Donc on le dit. */
+      const nom = String(c.machine || '').trim();
+      if (nom) orphelines.add(nom);
+      return;
+    }
+    if (!m.filamentId) return;
+
+    /* une bobine dont on ne connaît pas le niveau ne se devine pas : on
+       ne va pas inventer un kilo pour pouvoir soustraire */
+    if (typeof m.restant !== 'number') return;
+
+    m.restant = Math.max(0, m.restant - grammes);
+    touche = true;
+  });
+
+  if (dernier > repere) {
+    DB.settings.consoJusqua = dernier;
+    touche = true;
+  }
+  const avant = (DB.settings.consoOrphelines || []).join('|');
+  const apres = Array.from(orphelines).sort();
+  if (apres.join('|') !== avant) {
+    DB.settings.consoOrphelines = apres;
+    touche = true;
+  }
+  if (touche) save();
+}
+
+/* Ce qu'une impression a réellement consommé, d'après ce que le relais en
+   dit. Terminée : le poids du plateau. Arrêtée en route : le prorata. */
+function grammesConsommes(c) {
+  const poids = Math.max(0, (c && c.grammes) || 0);
+  if (!poids) return 0;
+  if ((c.etat || '') === 'fini') return poids;
+  const pc = typeof c.pourcent === 'number' ? c.pourcent : -1;
+  if (pc < 0) return poids;        // on ne sait pas où elle s'est arrêtée
+  return Math.round(poids * Math.min(100, Math.max(0, pc)) / 100);
+}
+
 /* Vrai quand ce que le relevé raconte du Pi n'est plus d'actualité : le Pi
    se tait, donc ses dernières nouvelles sont périmées. L'écran s'en sert
    pour griser ces lignes au lieu de les présenter comme vraies. */
@@ -785,15 +859,6 @@ const PARC = [
     printer: { kind: 'bambu', host: '10.1.3.11', serial: '01P00C462500170', code: '' } }
 ];
 
-/* Octobre 2026 : les deux Creality sont passées sur le sous-réseau des
-   postes de travail. Le parc ci-dessus ne sert qu'aux installations
-   neuves — les machines déjà créées vivent dans les réglages du
-   téléphone, et c'est la migration qui les rattrape. */
-const DEMENAGEMENTS = {
-  '10.1.3.3': '10.1.2.57',
-  '10.1.3.2': '10.1.2.59'
-};
-
 /* Posé une seule fois. Complète les machines déjà créées plutôt que
    d'en ajouter en double, et ne touche jamais à un code déjà saisi. */
 function seedParc() {
@@ -816,7 +881,7 @@ function seedParc() {
     } else {
       DB.machines.push({
         id: uid(), name: def.name, model: def.model,
-        profileId: '', filamentId: '', status: 'idle',
+        filamentId: '', status: 'idle',
         timer: null, job: null,
         printer: Object.assign({}, def.printer)
       });
@@ -830,7 +895,6 @@ function seedParc() {
 
 function machineById(id) { return DB.machines.find(m => m.id === id) || null; }
 function spoolById(id) { return DB.spools.find(s => s.id === id) || null; }
-function profileById(id) { return DB.profiles.find(p => p.id === id) || null; }
 function orderById(id) { return DB.orders.find(o => o.id === id) || null; }
 
 function activeSpools() { return DB.spools.filter(s => !s.archived); }
@@ -840,8 +904,69 @@ function activeSpools() { return DB.spools.filter(s => !s.archived); }
    - open   : ce qui reste, en grammes, sur celle qui est entamée
    C'est ce qui permet d'enregistrer « 10 kg de noir » d'un coup. */
 
+/* ============================================================
+   La bobine qui est dans la machine
+   ============================================================
+
+   Avant, une machine pointait vers une référence du stock et la
+   consommation se retirait de l'« entamée » de cette référence. Ça ne
+   décrivait pas l'atelier : il y a quatre machines, chacune avec sa
+   bobine, et ces quatre bobines ne sont pas interchangeables.
+
+   Maintenant la machine porte ses propres grammes restants. Une bobine
+   neuve part à son poids nominal — un kilo sauf indication contraire — et
+   chaque impression terminée les lui retire. La réserve, elle, ne compte
+   plus que ce qui dort dans le placard.
+
+   `restant` absent veut dire « on ne sait pas » : ni zéro, ni un kilo. La
+   nuance compte, parce qu'afficher « 0 g » sur une bobine pleine ferait
+   racheter pour rien. */
+
+function tailleBobine(s) {
+  return (s && s.spoolSize) || 1000;
+}
+
+/* Les grammes restants sur la bobine de cette machine, ou null si elle ne
+   l'a jamais dit. */
+function restantMachine(m) {
+  if (!m || !m.filamentId) return null;
+  return typeof m.restant === 'number' ? Math.max(0, m.restant) : null;
+}
+
+/* « Cette bobine est neuve » : la machine repart au poids nominal, et la
+   bobine sort de la réserve puisqu'elle est allée dans la machine. */
+function bobineNeuve(m) {
+  const sp = spoolById(m && m.filamentId);
+  if (!sp) return null;
+  m.restant = tailleBobine(sp);
+  const prise = (sp.sealed || 0) > 0;
+  if (prise) sp.sealed = Math.max(0, (sp.sealed || 0) - 1);
+  save();
+  return { grammes: m.restant, prise: prise };
+}
+
+/* Ce que les machines portent, par référence : le stock doit le montrer,
+   sinon il annonce un placard vide alors qu'il y a quatre kilos sur les
+   plateaux. */
+function chargeesDe(refId) {
+  return DB.machines.filter(m => m.filamentId === refId
+                                 && restantMachine(m) !== null);
+}
+
+function totalChargeDe(refId) {
+  return chargeesDe(refId).reduce((t, m) => t + restantMachine(m), 0);
+}
+
+/* La réserve seule : ce qui dort dans le placard. */
 function spoolTotal(s) {
   return Math.max(0, s.sealed || 0) * (s.spoolSize || 1000) + Math.max(0, s.open || 0);
+}
+
+/* Tout ce qu'on a de cette référence, machines comprises. C'est ce chiffre
+   qui répond à « est-ce que j'en ai assez ? » et à « faut-il en racheter ? » :
+   quatre cents grammes sur un plateau sont quatre cents grammes qu'on a. */
+function spoolAvecMachines(s) {
+  return s ? spoolTotal(s) + totalChargeDe(s.id) : 0;
 }
 
 function spoolCount(s) {
@@ -854,7 +979,7 @@ function spoolLevel(s) {
   const open = s.open || 0;
   const sealed = s.sealed || 0;
 
-  if (spoolTotal(s) <= 0) return { key: 'empty', label: 'Vide', cls: 'bad', pct: 0 };
+  if (spoolAvecMachines(s) <= 0) return { key: 'empty', label: 'Vide', cls: 'bad', pct: 0 };
   if (open <= 0) return { key: 'sealed', label: 'Neuve', cls: 'ok', pct: 100 };
 
   const pct = (open / size) * 100;
@@ -868,9 +993,14 @@ function spoolLevel(s) {
 }
 
 /* à racheter : plus de bobine d'avance et l'entamée touche à sa fin */
+/* « À racheter » quand il ne reste plus de bobine neuve en réserve et que
+   tout ce qui traîne, entamé en placard comme chargé sur les machines,
+   descend sous le seuil. Sans les machines, l'alerte partait alors qu'il y
+   avait quatre kilos sur les plateaux. */
 function needsRestock(s) {
   return (s.sealed || 0) === 0 &&
-         (s.open || 0) < (s.spoolSize || 1000) * (DB.settings.lowThreshold / 100);
+         (s.open || 0) + totalChargeDe(s.id)
+           < (s.spoolSize || 1000) * (DB.settings.lowThreshold / 100);
 }
 
 /* ouvre une bobine neuve si besoin, puis retire les grammes demandés.
@@ -908,7 +1038,7 @@ function colorHexOf(name) {
 function stockFor(material, color) {
   return activeSpools()
     .filter(s => s.material === material && (!color || s.color === color))
-    .reduce((t, s) => t + spoolTotal(s), 0);
+    .reduce((t, s) => t + spoolAvecMachines(s), 0);
 }
 
 /* mémorisation du poids d'une commande : même contenu = même poids.

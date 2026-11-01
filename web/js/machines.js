@@ -29,7 +29,7 @@ function renderMachines() {
 
   const warn = nativeWarningBanner();
 
-  return warn + barreAtelier() + '<div class="stack">' +
+  return warn + bandeauServeur() + barreAtelier() + '<div class="stack">' +
     DB.machines.map(machineCard).join('') + '</div>';
 }
 
@@ -45,83 +45,52 @@ function renderMachines() {
    distance, si on y revient un jour, se fera par Moonraker et MQTT —
    logiciel, sans toucher au courant. */
 
-/* Le Pi, en une ligne.
+/* Le serveur, en un bandeau.
 
-   C'est la première chose à savoir quand plus rien ne répond : est-ce le Pi
-   qui est éteint, ou est-ce autre chose ? L'écran le disait seulement en
+   C'est la première chose à savoir quand plus rien ne répond : est-ce le
+   serveur qui est éteint, ou autre chose ? L'écran le disait seulement en
    creux — un partage « arrêté », un délai qui ne bougeait plus — et il
-   fallait deviner. Maintenant il le dit.
+   fallait deviner.
+
+   Un point coloré et une phrase, sans bouton. Il y avait un « répond-il ? »
+   qui allait le lui demander en direct : ça ne marchait qu'à l'atelier, et
+   la ligne dit déjà s'il est là. Un bouton qui double une information déjà
+   affichée est un bouton de trop.
 
    Vu de loin, la réponse est forcément datée : elle vaut ce que vaut le
-   dernier relevé, et la ligne le précise au lieu de faire comme si elle
-   était d'instant. À l'atelier, le bouton va chercher la vraie réponse. */
-function ligneStatutPi(sortie) {
+   dernier relevé, et le bandeau le précise au lieu de faire comme si elle
+   était d'instant. */
+function bandeauServeur() {
   const st = piStatut();
   if (!st) return '';
-  const id = sortie || 'pi-vivant-out';
-  return '<div class="kv"><span>Le Pi</span>' +
-      '<b class="mono" style="color:' + st.couleur + '">' + esc(st.dit) + '</b></div>' +
-    (st.detail
-      ? '<div class="hint" style="margin:-2px 0 8px">' + esc(st.detail) + '</div>'
-      : '<div class="sp"></div>') +
-    '<div class="hint" id="' + id + '">' + (PI_VIVANT_DIT[id] || '') + '</div>';
+  return '<div class="card tight" style="margin-bottom:10px;display:flex;' +
+      'align-items:center;gap:10px">' +
+    dot(st.couleur) +
+    '<div class="grow">' +
+      '<div style="font-size:14px;font-weight:600">Serveur — ' +
+        '<span style="color:' + st.couleur + '">' + esc(st.dit) + '</span></div>' +
+      (st.detail ? '<div class="card-meta">' + esc(st.detail) + '</div>' : '') +
+    '</div>' +
+  '</div>';
 }
 
-/* Ce que la dernière vérification directe a répondu, par emplacement : la
-   ligne apparaît sur deux écrans, et un redessin ne doit pas effacer la
-   réponse de l'autre. */
-const PI_VIVANT_DIT = {};
+/* Les lumières de chambre, pour tout le parc.
 
-/* La question posée au Pi, et non au canal. Instantanée à l'atelier,
-   impossible ailleurs — et dans ce cas elle le dit, au lieu de laisser
-   croire que le Pi est tombé. */
-function piVerifier(sortie) {
-  const id = sortie || 'pi-vivant-out';
-  const ecrire = html => {
-    PI_VIVANT_DIT[id] = html || '';
-    const o = $('#' + id);
-    if (o) o.innerHTML = PI_VIVANT_DIT[id];
-  };
-  ecrire('<span style="color:var(--txt-3)">On demande au Pi…</span>');
-  Relais.vivant()
-    .then(r => {
-      const v = r && typeof r === 'object' ? r : {};
-      if (v.ok) {
-        ecrire('<span style="color:var(--ok)">Le Pi répond' +
-          (v.ms !== undefined ? ' en ' + (v.ms | 0) + ' ms' : '') +
-          '. Il est allumé, et tu es sur le réseau de l\'atelier.</span>');
-        /* il vient de répondre : le relevé qu'on affiche à côté est
-           peut-être vieux, on va en relire un */
-        etatRelaisAuBesoin(true);
-      } else if (!v.adresse) {
-        ecrire('<span style="color:var(--txt-3)">Aucune adresse de relais réglée : ' +
-          'la vérification directe n\'est pas possible. Seul le relevé peut ' +
-          'répondre, et il a quelques minutes de retard.</span>');
-      } else {
-        ecrire('<span style="color:var(--txt-3)">Pas de réponse directe. ' +
-          'Hors du réseau de l\'atelier c\'est normal : fie-toi au relevé ' +
-          'au-dessus. Sur place, ça veut dire que le Pi est éteint ou que son ' +
-          'service ne tourne plus.</span>');
-      }
-    })
-    .catch(e => ecrire('<span style="color:var(--bad)">Échec — ' +
-      esc(e.message) + '</span>'));
-}
-
+   Elles étaient dans la même carte que l'état du serveur, ce qui mélangeait
+   deux choses sans rapport : « le serveur est en ligne » et « allume les
+   lumières ». Chacune sa carte. */
 function barreAtelier() {
   if (!Relais.ok() || !Relais.sujet()) return '';
   etatRelaisAuBesoin();
 
   return '<div class="card" style="margin-bottom:10px">' +
-    ligneStatutPi('pi-vivant-atelier') +
-    '<div class="btn-row" style="margin-bottom:10px">' +
-      '<button class="btn sm ghost" onclick="piVerifier(\'pi-vivant-atelier\')">' +
-        'Le Pi répond-il ?</button>' +
+    '<div class="spread" style="margin-bottom:9px">' +
+      '<div class="card-name" style="font-size:15px">Les lumières</div>' +
+      '<span class="card-meta">tout le parc</span>' +
     '</div>' +
-    '<div class="sec-title" style="margin:0 0 6px">Les lumières</div>' +
     '<div class="btn-row">' +
-      '<button class="btn sm" onclick="lumieresToutes(true)">Lumières allumées</button>' +
-      '<button class="btn sm" onclick="lumieresToutes(false)">Lumières éteintes</button>' +
+      '<button class="btn sm" onclick="lumieresToutes(true)">Allumer</button>' +
+      '<button class="btn sm ghost" onclick="lumieresToutes(false)">Éteindre</button>' +
     '</div>' +
     '<div class="hint" id="atelier-out" style="margin-top:8px">' + ATELIER_DIT + '</div>' +
   '</div>';
@@ -228,7 +197,6 @@ function suivreEtDire(ident, apresSucces, surRefus, dire) {
 
 function machineCard(m) {
   const sp = spoolById(m.filamentId);
-  const pr = profileById(m.profileId);
   const now = Date.now();
   let cls = 'card mach', clock = '', sub = '', actions = '';
 
@@ -401,10 +369,62 @@ function piloter(id, action) {
   }
 }
 
+/* La bobine chargée sur cette machine, et ce qu'il en reste.
+
+   Les grammes restants vivent sur la machine, pas sur la référence : il y
+   a quatre machines, chacune avec sa bobine, et elles ne sont pas
+   interchangeables. Chaque impression terminée les diminue toute seule.
+
+   « Neuve » est le geste qu'on fait en changeant physiquement la bobine :
+   la machine repart à son poids nominal et une bobine sort de la réserve.
+   Tant qu'on ne l'a jamais dit, le niveau reste inconnu — et c'est écrit,
+   plutôt que d'afficher un kilo qu'on aurait inventé. */
+function ligneFilament(m, sp) {
+  const reste = restantMachine(m);
+  const taille = tailleBobine(sp);
+  const pct = reste === null ? 0 : Math.min(100, (reste / taille) * 100);
+  const cls = reste === null ? ''
+    : pct < DB.settings.lowThreshold ? 'bad' : pct < 40 ? 'warn' : '';
+
+  return '<div class="fil-line">' +
+      (sp
+        ? dot(sp.colorHex) + '<span class="grow nowrap">' + esc(spoolLabel(sp)) + '</span>' +
+          (reste === null
+            ? '<span class="badge">niveau inconnu</span>'
+            : '<b class="mono" style="font-size:13px' +
+              (cls === 'bad' ? ';color:var(--bad)' : cls === 'warn' ? ';color:var(--warn)' : '') +
+              '">' + fmtG(reste) + '</b>')
+        : '<span class="grow muted">Aucun filament renseigné</span>') +
+      (sp ? '<button class="btn sm ghost" onclick="bobineNeuveSur(\'' + m.id +
+            '\')">Neuve</button>' : '') +
+      '<button class="btn sm ghost" onclick="loadFilament(\'' + m.id + '\')">Changer</button>' +
+    '</div>' +
+    (sp && reste !== null
+      ? '<div class="gauge"><i class="' + cls + '" style="width:' +
+        Math.max(2, pct).toFixed(0) + '%"></i></div>'
+      : '');
+}
+
+/* « Je viens de poser une bobine neuve. » */
+function bobineNeuveSur(id) {
+  const m = machineById(id);
+  const sp = spoolById(m && m.filamentId);
+  if (!m || !sp) return;
+  confirmSheet('Bobine neuve sur ' + m.name + ' ?',
+    'Elle repart à ' + fmtG(tailleBobine(sp)) + ' de ' + spoolLabel(sp) +
+    ((sp.sealed || 0) > 0
+      ? ', et une bobine neuve sort de la réserve — il en restera ' +
+        ((sp.sealed || 0) - 1) + '.'
+      : '. Ta réserve de cette référence est déjà à zéro, elle ne bougera pas.'),
+    'C\'est une neuve', () => {
+      const r = bobineNeuve(m);
+      render();
+      toast(r && r.prise ? 'Neuve posée, −1 en réserve' : 'Remise à ' + fmtG(r.grammes), 'ok');
+    });
+}
+
 /* enveloppe commune : en-tête, ligne filament, rangée d'actions */
 function machineShell(m, cls, clock, sub, actions, sp, live) {
-  const pr = profileById(m.profileId);
-  const lvl = sp ? spoolLevel(sp) : null;
   const err = (m.printer && m.printer.host) ? Printers.error(m.id) : '';
 
   return '<div class="' + cls + '">' +
@@ -419,7 +439,7 @@ function machineShell(m, cls, clock, sub, actions, sp, live) {
                   : ' <span class="badge ok" style="vertical-align:middle">en direct</span>')
             : '') +
         '</div>' +
-        '<div class="card-meta">' + esc(m.model || '—') + (pr ? ' · ' + esc(pr.name) : '') + '</div>' +
+        '<div class="card-meta">' + esc(m.model || '—') + '</div>' +
         sub +
       '</div>' +
       '<div style="text-align:right">' + clock + '</div>' +
@@ -436,13 +456,7 @@ function machineShell(m, cls, clock, sub, actions, sp, live) {
       : '') +
     panneLigne(m) +
     amsLine(live) +
-    '<div class="fil-line">' +
-      (sp
-        ? dot(sp.colorHex) + '<span class="grow nowrap">' + esc(spoolLabel(sp)) + '</span>' +
-          badge(lvl.cls, lvl.label)
-        : '<span class="grow muted">Aucun filament renseigné</span>') +
-      '<button class="btn sm ghost" onclick="loadFilament(\'' + m.id + '\')">Changer</button>' +
-    '</div>' +
+    ligneFilament(m, sp) +
     '<div class="row wrap" style="margin-top:12px">' + actions + boutonsAtelier(m) + '</div>' +
   '</div>';
 }
@@ -503,10 +517,6 @@ function editMachine(id) {
     '<div class="sub">Le filament chargé se change directement depuis la fiche machine.</div>' +
     '<label class="field"><span>Nom</span><input type="text" name="name" placeholder="K2 Plus" value="' + esc(m ? m.name : '') + '"></label>' +
     '<label class="field"><span>Modèle</span><input type="text" name="model" placeholder="Creality K2 Plus" value="' + esc(m ? m.model : '') + '"></label>' +
-    '<label class="field"><span>Profil d\'impression par défaut</span>' +
-      '<select name="profileId">' + selectOpts(DB.profiles, m ? m.profileId : '', p => p.name, p => p.id, 'Aucun') + '</select>' +
-    '</label>' +
-
     '<div class="sec-title">Liaison réseau</div>' +
     '<div class="hint" style="margin-bottom:10px">Renseignée, l\'app lit l\'avancement directement sur la machine et te notifie à la vraie fin, sans timer à saisir.</div>' +
     '<label class="field"><span>Marque</span>' +
@@ -575,12 +585,12 @@ function editMachine(id) {
         if (!v.name.trim()) { toast('Il faut un nom', 'bad'); return; }
         const printer = buildPrinter(chips(), v);
         if (m) {
-          m.name = v.name.trim(); m.model = v.model.trim(); m.profileId = v.profileId;
+          m.name = v.name.trim(); m.model = v.model.trim();
           m.printer = printer;
         } else {
           DB.machines.push({
             id: uid(), name: v.name.trim(), model: v.model.trim(),
-            profileId: v.profileId, filamentId: '', status: 'idle', timer: null,
+            filamentId: '', status: 'idle', timer: null,
             job: null, printer: printer
           });
         }
@@ -593,7 +603,7 @@ function editMachine(id) {
 function loadFilament(id) {
   const m = machineById(id);
   if (!m) return;
-  const list = activeSpools().filter(s => spoolTotal(s) > 0);
+  const list = activeSpools().filter(s => spoolAvecMachines(s) > 0);
   if (!list.length) {
     confirmSheet('Aucun filament en stock', 'Ajoute d\'abord une référence dans l\'onglet Stock.', 'Ajouter du filament', () => {
       go('stock'); editSpool();
@@ -602,8 +612,13 @@ function loadFilament(id) {
   }
   sheet(
     '<h2>Filament sur ' + esc(m.name) + '</h2>' +
-    '<div class="sub">Ce que tu renseignes ici sert au calcul de stock quand l\'impression est terminée.</div>' +
+    '<div class="sub">Les grammes restants sont retirés tout seuls à chaque impression terminée. Ils vivent sur la machine, pas sur la référence.</div>' +
     '<label class="field"><span>Bobine chargée</span>' + spoolSelect('filamentId', m.filamentId) + '</label>' +
+    '<label class="field"><span>Grammes restants</span>' +
+      '<input type="number" name="restant" inputmode="numeric" min="0" placeholder="1000" value="' +
+        (restantMachine(m) === null ? '' : restantMachine(m)) + '">' +
+      '<div class="hint">Laisse vide si tu ne sais pas — le niveau restera inconnu plutôt qu\'inventé. Pour une bobine qui sort de son sachet, le bouton « Neuve » fait le compte et la retire de la réserve.</div>' +
+    '</label>' +
     '<div class="sheet-actions">' +
       '<button class="btn ghost" data-x="no">Annuler</button>' +
       '<button class="btn primary" data-x="ok">Valider</button>' +
@@ -611,7 +626,12 @@ function loadFilament(id) {
     root => {
       $('[data-x=no]', root).onclick = closeSheet;
       $('[data-x=ok]', root).onclick = () => {
-        m.filamentId = formValues(root).filamentId;
+        const v = formValues(root);
+        const change = v.filamentId !== m.filamentId;
+        m.filamentId = v.filamentId;
+        const saisi = String(v.restant || '').trim();
+        if (saisi !== '') m.restant = Math.max(0, num(saisi));
+        else if (change) delete m.restant;   /* autre bobine, autre niveau */
         save(); closeSheet(); render(); toast('Filament mis à jour', 'ok');
       };
     }
@@ -753,7 +773,9 @@ function finishJob(id) {
     (sp
       ? '<label class="field"><span>Filament consommé</span>' +
           '<input type="number" name="grams" inputmode="numeric" placeholder="0" value="' + esc(guess) + '">' +
-          '<div class="hint">Déduit de ' + esc(spoolLabel(sp)) + ' — il reste ' + fmtG(spoolTotal(sp)) + '. Laisse vide si tu ne veux rien déduire.</div>' +
+          '<div class="hint">Retiré de la bobine qui est sur ' + esc(m.name) + ' — ' +
+            (restantMachine(m) === null ? 'son niveau est inconnu' : 'il y reste ' + fmtG(restantMachine(m))) +
+            '. Normalement le relais s\'en charge tout seul : ce champ ne sert que pour une impression qu\'il n\'a pas vue.</div>' +
         '</label>'
       : '<div class="warn-box">Aucun filament n\'est associé à cette machine, rien ne sera déduit du stock.</div><div class="sp"></div>'
     ) +
@@ -776,13 +798,16 @@ function finishJob(id) {
         const v = formValues(root);
         const g = num(v.grams);
         if (sp && g > 0) {
-          const r = consumeSpool(sp, g);
-          if (r.missing > 0) {
-            toast('Il manquait ' + fmtG(r.missing) + ' de ' + spoolLabel(sp), 'bad');
-          } else if (r.opened > 0) {
-            toast(r.opened > 1 ? r.opened + ' bobines entamées' : 'Nouvelle bobine entamée');
+          /* on retire de la bobine qui est dans la machine, pas de la
+             réserve : c'est elle qui a imprimé */
+          if (typeof m.restant === 'number') {
+            if (g > m.restant) {
+              toast('Il manquait ' + fmtG(g - m.restant) + ' sur la bobine de ' +
+                    m.name + ' — elle a dû être changée en route', 'bad');
+            }
+            m.restant = Math.max(0, m.restant - g);
           }
-          if (spoolTotal(sp) <= 0) toast(spoolLabel(sp) + ' est épuisé', 'bad');
+          if (spoolAvecMachines(sp) <= 0) toast(spoolLabel(sp) + ' est épuisé', 'bad');
           else if (needsRestock(sp)) toast(spoolLabel(sp) + ' : à racheter', 'bad');
         }
         if (m.job && m.job.orderId && g > 0) {

@@ -8,7 +8,7 @@
 
 function renderStock() {
   const list = activeSpools();
-  const total = list.reduce((t, s) => t + spoolTotal(s), 0);
+  const total = list.reduce((t, s) => t + spoolAvecMachines(s), 0);
   const spools = list.reduce((t, s) => t + spoolCount(s), 0);
   const restock = list.filter(needsRestock).length;
 
@@ -29,6 +29,10 @@ function renderStock() {
   }
 
   let out = '';
+
+  /* ---- ce qui est chargé sur les machines ---- */
+  out += blocOrphelines();
+  out += blocChargees();
 
   /* ---- ce que réclament les commandes en cours ---- */
   const needs = globalNeeds();
@@ -53,8 +57,8 @@ function renderStock() {
   list.forEach(s => { (byMat[s.material] = byMat[s.material] || []).push(s); });
 
   Object.keys(byMat).sort().forEach(mat => {
-    const refs = byMat[mat].sort((a, b) => spoolTotal(b) - spoolTotal(a));
-    const t = refs.reduce((x, s) => x + spoolTotal(s), 0);
+    const refs = byMat[mat].sort((a, b) => spoolAvecMachines(b) - spoolAvecMachines(a));
+    const t = refs.reduce((x, s) => x + spoolAvecMachines(s), 0);
     out += '<div class="sec-title">' + esc(mat) + ' <span class="norm">— ' + fmtG(t) + '</span></div>';
     out += '<div class="stack">' + refs.map(spoolCard).join('') + '</div>';
   });
@@ -69,9 +73,75 @@ function renderStock() {
   return out;
 }
 
+/* Les machines dont le relais parle et que l'app ne connaît pas.
+
+   Les noms viennent de deux endroits : relais.json sur le serveur, et les
+   réglages de l'app. S'ils ne concordent pas, les impressions sont bien
+   annoncées mais ne se déduisent de rien — et ça ressemble, à s'y
+   tromper, au stock qui ne se met jamais à jour tout seul. */
+function blocOrphelines() {
+  const noms = DB.settings.consoOrphelines || [];
+  if (!noms.length) return '';
+  return '<div class="warn-box" style="margin-bottom:12px">' +
+    'Le serveur annonce des impressions sur ' +
+    noms.map(n => '<b>' + esc(n) + '</b>').join(', ') +
+    ', qui ne correspond à aucune machine d\'ici. Leur stock ne peut pas se ' +
+    'mettre à jour : il faut le même nom dans l\'app et dans relais.json.' +
+    '</div>';
+}
+
+/* Les bobines qui sont dans les machines.
+
+   Elles manquaient à cet écran, et c'était la moitié du stock : quatre
+   machines chargées, c'est souvent trois ou quatre kilos qu'on ne voyait
+   nulle part. Le total en haut les compte désormais, et les alertes
+   « à racheter » aussi.
+
+   Chaque impression terminée les diminue toute seule, d'après le poids que
+   le trancheur avait prévu pour le plateau. */
+function blocChargees() {
+  const dessus = DB.machines.filter(m => m.filamentId && spoolById(m.filamentId));
+  if (!dessus.length) return '';
+
+  const connues = dessus.filter(m => restantMachine(m) !== null);
+  const total = connues.reduce((t, m) => t + restantMachine(m), 0);
+
+  let out = '<div class="sec-title">Sur les machines' +
+    (connues.length ? ' <span class="norm">— ' + fmtG(total) + '</span>' : '') +
+    '</div><div class="card tight">';
+
+  dessus.forEach((m, i) => {
+    const sp = spoolById(m.filamentId);
+    const reste = restantMachine(m);
+    const taille = tailleBobine(sp);
+    const pct = reste === null ? 0 : Math.min(100, (reste / taille) * 100);
+    const cls = reste === null ? ''
+      : pct < DB.settings.lowThreshold ? 'bad' : pct < 40 ? 'warn' : '';
+
+    out += '<div class="rowitem"' + (i ? '' : ' style="padding-top:0"') + '>' +
+      dot(sp.colorHex) +
+      '<div class="grow">' +
+        '<div class="t">' + esc(m.name) + '</div>' +
+        '<div class="s">' + esc(spoolLabel(sp)) + '</div>' +
+        (reste === null ? ''
+          : '<div class="gauge" style="margin-top:7px"><i class="' + cls +
+            '" style="width:' + Math.max(2, pct).toFixed(0) + '%"></i></div>') +
+      '</div>' +
+      (reste === null
+        ? badge('', 'inconnu')
+        : '<b class="mono" style="font-size:13px' +
+          (cls === 'bad' ? ';color:var(--bad)' : cls === 'warn' ? ';color:var(--warn)' : '') +
+          '">' + fmtG(reste) + '</b>') +
+    '</div>';
+  });
+
+  return out + '</div>';
+}
+
 function spoolCard(s) {
   const lvl = spoolLevel(s);
   const used = DB.machines.filter(m => m.filamentId === s.id).map(m => m.name);
+  const surMachines = totalChargeDe(s.id);
   const sealed = s.sealed || 0;
   const open = s.open || 0;
 
@@ -83,8 +153,15 @@ function spoolCard(s) {
     detail = '~' + fmtG(open) + ' sur la bobine entamée, aucune d\'avance';
   } else if (sealed > 0) {
     detail = sealed + ' bobine' + (sealed > 1 ? 's' : '') + ' neuve' + (sealed > 1 ? 's' : '') + ', aucune entamée';
+  } else if (surMachines > 0) {
+    detail = 'Rien en réserve';
   } else {
     detail = 'Plus rien en stock';
+  }
+  /* le gros chiffre de la carte compte les machines : la ligne de détail
+     doit donc dire d'où il vient, sinon il ne colle pas au placard */
+  if (surMachines > 0) {
+    detail += ' · ' + fmtG(surMachines) + ' sur les machines';
   }
 
   return '<div class="card tight">' +
@@ -100,7 +177,7 @@ function spoolCard(s) {
       '</div>' +
       '<div style="text-align:right">' +
         badge(lvl.cls, lvl.label) +
-        '<div class="card-meta mono" style="margin-top:5px">' + fmtG(spoolTotal(s)) + '</div>' +
+        '<div class="card-meta mono" style="margin-top:5px">' + fmtG(spoolAvecMachines(s)) + '</div>' +
       '</div>' +
     '</div>' +
     gauge(lvl.pct, lvl.cls) +
@@ -183,7 +260,7 @@ function quickLevel(id) {
 }
 
 function afterLevel(s) {
-  if (spoolTotal(s) <= 0) {
+  if (spoolAvecMachines(s) <= 0) {
     confirmSheet('Référence épuisée', spoolLabel(s) + ' — la ranger dans les archives ?', 'Archiver', () => {
       s.archived = true;
       DB.machines.forEach(m => { if (m.filamentId === s.id) m.filamentId = ''; });
@@ -265,7 +342,7 @@ function editSpool(id) {
         }
         if (s) {
           Object.assign(s, data);
-          if (spoolTotal(s) > 0) s.archived = false;
+          if (spoolAvecMachines(s) > 0) s.archived = false;
         } else {
           DB.spools.push(Object.assign({ id: uid(), archived: false, createdAt: Date.now() }, data));
         }
@@ -301,7 +378,7 @@ function restock(id) {
   if (!s) return;
   closeSheet();
   s.archived = false;
-  if (spoolTotal(s) <= 0) s.sealed = 1;
+  if (spoolAvecMachines(s) <= 0) s.sealed = 1;
   save(); render();
   editSpool(id);
 }

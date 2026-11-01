@@ -1232,6 +1232,51 @@ def main():
             json.dumps([plateau_de(rel3mf, 1), plateau_de(rel3mf, 2)],
                        ensure_ascii=False)[:200])
 
+    # --- le poids part dans le releve, pour que l'app tienne le stock ----
+    # Le stock vit sur le telephone, pas ici. Le relais ne peut que dire ce
+    # que l'impression a consomme ; sans ca il fallait taper les grammes a
+    # la main, et personne ne le faisait.
+    un_tour()
+    conso = [c for c in releve_courant(canal, sujet).get("consos", [])
+             if c.get("machine") == "P1S 1"]
+    verifie("le releve annonce le poids de l'impression terminee",
+            conso and conso[-1].get("grammes") == 61
+            and conso[-1].get("etat") == "fini",
+            json.dumps(conso[-1:], ensure_ascii=False)[:200])
+    verifie("avec de quoi retrouver la machine et l'avancement",
+            conso and conso[-1].get("at") and conso[-1].get("pourcent") is not None,
+            json.dumps(conso[-1:], ensure_ascii=False)[:200])
+
+    # --- une impression arretee en route --------------------------------
+    repartir()
+    biblio.CONSOS[:] = []
+    biblio.suivre(bib, {"p": etat_vu("pauldrons.gcode.3mf", "printing", 35,
+                                     prevu={"minutes": 95, "grammes": 61})})
+    biblio.suivre(bib, {"p": etat_vu("pauldrons.gcode.3mf", "failed", 35)})
+    rate = biblio.consos_publiques()
+    verifie("une impression ratee est annoncee avec son avancement",
+            rate and rate[-1].get("etat") == "échec"
+            and rate[-1].get("pourcent") == 35
+            and rate[-1].get("grammes") == 61,
+            json.dumps(rate[-1:], ensure_ascii=False)[:200])
+
+    # --- un plateau sans poids connu ------------------------------------
+    # Mieux vaut ne rien annoncer qu'annoncer zero : l'app ne doit pas
+    # retirer zero gramme et croire que c'est fait.
+    biblio.CONSOS[:] = []
+    sans = os.path.join(dossier, "p1s", "muet.gcode.3mf")
+    with zipfile.ZipFile(sans, "w") as z:
+        z.writestr("Metadata/plate_1.gcode", ";rien\n")
+    biblio._CACHE_PLATEAUX.clear()
+    repartir()
+    biblio.suivre(bib, {"p": etat_vu("muet.gcode.3mf", "printing", 2)})
+    biblio.suivre(bib, {"p": etat_vu("muet.gcode.3mf", "finished", 100)})
+    verifie("un plateau dont on ignore le poids n'annonce rien",
+            not biblio.consos_publiques(),
+            json.dumps(biblio.consos_publiques(), ensure_ascii=False)[:160])
+    os.remove(sans)
+    biblio._CACHE_PLATEAUX.clear()
+
     # --- l'autre plateau du meme fichier --------------------------------
     repartir()
     biblio.suivre(bib, {"p": etat_vu("pauldrons.gcode.3mf", "printing", 0,

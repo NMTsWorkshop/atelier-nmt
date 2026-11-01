@@ -360,9 +360,9 @@ function alerteDerive() {
   return '<div class="card tight" style="border-color:var(--bad)">' +
     '<div class="t">L\'horloge du relais a ' + fmtDurShort(ecart) +
       ' d\'écart</div>' +
-    '<div class="s">Le Pi est ' + (BIB_DERIVE < 0 ? 'en retard' : 'en avance') +
+    '<div class="s">Le serveur est ' + (BIB_DERIVE < 0 ? 'en retard' : 'en avance') +
       ' sur le téléphone. Les durées et les débits qu\'il annonce s\'en ' +
-      'ressentent. Sur le Pi : <code>sudo timedatectl set-ntp true</code>, ' +
+      'ressentent. Sur le serveur : <code>sudo timedatectl set-ntp true</code>, ' +
       'et vérifie que le réseau des machines laisse sortir le NTP.</div></div>';
 }
 

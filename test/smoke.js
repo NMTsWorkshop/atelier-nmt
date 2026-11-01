@@ -53,7 +53,7 @@ const errors = [];
          que le test vient d'écrire quand il recharge la page */
       if (!localStorage.getItem('nmt_atelier_v1')) {
         localStorage.setItem('nmt_atelier_v1', JSON.stringify({
-          machines: [], spools: [], profiles: [], orders: [], weights: {},
+          machines: [], spools: [], orders: [], weights: {},
           settings: { parcSeeded: 1 }
         }));
       }
@@ -69,7 +69,7 @@ const errors = [];
   };
 
   console.log('\n— navigation —');
-  for (const t of ['stock', 'biblio', 'orders', 'profiles', 'settings', 'machines']) {
+  for (const t of ['stock', 'biblio', 'orders', 'settings', 'machines']) {
     await step('onglet ' + t, async () => {
       await page.click(`#tabbar .tab[data-tab=${t}]`);
       await page.waitForTimeout(120);
@@ -166,18 +166,13 @@ const errors = [];
     if (!txt.includes('480 g')) throw new Error('besoin non calculé');
   });
 
-  console.log('\n— profil —');
-  await step('créer un profil', async () => {
-    await page.click('#tabbar .tab[data-tab=profiles]');
-    await page.click('#tb-actions .tb-btn.accent');
-    await page.waitForSelector('.sheet');
-    await page.fill('.sheet [name=name]', 'Casque PLA Matte fuzzy');
-    await page.fill('.sheet [name=layer]', '0.2');
-    await page.fill('.sheet [name=nozzle]', '0.4');
-    await page.fill('.sheet [name=infill]', '12');
-    await page.click('.sheet [data-x=ok]');
-    await page.waitForTimeout(200);
-    if (!(await page.textContent('#view')).includes('Casque PLA Matte fuzzy')) throw new Error('profil absent');
+  await step('l\'onglet Profils n\'existe plus', async () => {
+    const n = await page.evaluate(() =>
+      document.querySelectorAll('#tabbar .tab[data-tab=profiles]').length);
+    if (n !== 0) throw new Error('l\'onglet Profils est encore là');
+    if (typeof await page.evaluate(() => typeof renderProfiles) !== 'string'
+        || await page.evaluate(() => typeof renderProfiles) !== 'undefined')
+      throw new Error('renderProfiles traîne encore');
   });
 
   console.log('\n— timer —');
@@ -216,20 +211,51 @@ const errors = [];
   });
 
   console.log('\n— fin d\'impression —');
-  await step('terminer et déduire le filament', async () => {
-    const before = await page.evaluate(() => spoolTotal(DB.spools[0]));
+  await step('poser une bobine neuve retire une bobine de la réserve', async () => {
+    const avant = await page.evaluate(() => DB.spools[0].sealed);
+    await page.click('#view .btn:has-text("Neuve")');
+    await page.waitForSelector('.sheet [data-x=yes]');
+    await page.click('.sheet [data-x=yes]');
+    await page.waitForTimeout(250);
+    const vu = await page.evaluate(() => ({
+      restant: DB.machines[0].restant, sealed: DB.spools[0].sealed
+    }));
+    if (vu.restant !== 1000) throw new Error('la machine ne repart pas à 1 kg : ' + vu.restant);
+    if (vu.sealed !== avant - 1)
+      throw new Error('la réserve n\'a pas bougé : ' + avant + ' → ' + vu.sealed);
+  });
+
+  await step('terminer retire les grammes de la bobine de la machine', async () => {
+    const avant = await page.evaluate(() => DB.machines[0].restant);
     await page.click('#view .btn:has-text("Terminer")');
     await page.waitForSelector('.sheet');
     const val = await page.inputValue('.sheet [name=grams]');
     if (val !== '480') throw new Error('poids non pré-rempli (reçu "' + val + '")');
     await page.click('.sheet [data-x=ok]');
     await page.waitForTimeout(250);
-    const left = await page.evaluate(() => spoolTotal(DB.spools[0]));
-    if (left !== before - 480) throw new Error('déduction incorrecte : ' + before + ' → ' + left);
+    const reste = await page.evaluate(() => DB.machines[0].restant);
+    if (reste !== avant - 480)
+      throw new Error('déduction incorrecte : ' + avant + ' → ' + reste);
     const done = await page.evaluate(() => DB.orders[0].lines[0].done);
     if (!done) throw new Error('ligne de commande non soldée');
     const st = await page.evaluate(() => DB.orders[0].status);
     if (st !== 'done') throw new Error('commande non clôturée : ' + st);
+  });
+
+  await step('et le stock compte ce qui est sur les machines', async () => {
+    await page.click('#tabbar .tab[data-tab=stock]');
+    await page.waitForFunction(() => /Sur les machines/.test(
+      (document.getElementById('view') || {}).textContent || ''), null, { timeout: 5000 });
+    const txt = await page.textContent('#view');
+    if (!/520 g/.test(txt))
+      throw new Error('les grammes de la machine ne sont pas affichés : ' + txt.slice(0, 400));
+    const vu = await page.evaluate(() => ({
+      reserve: spoolTotal(DB.spools[0]),
+      tout: spoolAvecMachines(DB.spools[0])
+    }));
+    if (vu.tout !== vu.reserve + 520)
+      throw new Error('le total n\'inclut pas la machine : ' + JSON.stringify(vu));
+    await page.click('#tabbar .tab[data-tab=machines]');
   });
 
   console.log('\n— persistance —');
@@ -256,8 +282,11 @@ const errors = [];
       null, { timeout: 8000 });
     const n = await page.evaluate(() => DB.machines.length + '/' + DB.spools.length + '/' + DB.orders.length);
     if (n !== '1/2/1') throw new Error('données perdues : ' + n);
-    const kg = await page.evaluate(() => spoolTotal(DB.spools[0]));
-    if (kg !== 9160) throw new Error('stock mal relu : ' + kg);
+    const vu = await page.evaluate(() => ({
+      reserve: spoolTotal(DB.spools[0]), machine: DB.machines[0].restant
+    }));
+    if (vu.reserve !== 8640 || vu.machine !== 520)
+      throw new Error('stock mal relu : ' + JSON.stringify(vu));
   });
 
   console.log('\n— captures —');
@@ -1090,7 +1119,7 @@ const errors = [];
     });
   });
 
-  console.log('\n— le Pi est-il allumé ? —');
+  console.log('\n— le serveur est-il là ? —');
 
   /* La question que Nathan posait à voix haute chaque fois que quelque chose
      ne répondait plus. Vu de loin, la seule preuve de vie est le relevé : on
@@ -1107,63 +1136,59 @@ const errors = [];
     etatRelaisAuBesoin(true);
   }, [at, repos]);
 
+  /* le bandeau du serveur vit sur l'écran des machines : les réglages en
+     affichent une version avec majuscule, et on ne teste pas la casse */
+  const direEtVoir = async (at, repos) => {
+    await direLeReleve(at, repos);
+    await page.click('#tabbar .tab[data-tab=machines]');
+  };
+
   const texteVue = () => page.textContent('#view');
 
-  await step('un relevé frais dit que le Pi est allumé', async () => {
+  await step('un relevé frais dit que le serveur est allumé', async () => {
     await direLeReleve(Date.now() - 60000, 900);
-    await page.waitForFunction(() => /Le Pi/.test(
+    await page.click('#tabbar .tab[data-tab=machines]');
+    await page.waitForFunction(() => /Serveur/.test(
       (document.getElementById('view') || {}).textContent || ''), null, { timeout: 5000 });
     await page.waitForFunction(() => /allumé/.test(
       (document.getElementById('view') || {}).textContent || ''), null, { timeout: 5000 });
     const txt = await texteVue();
     if (!/relevé il y a/.test(txt))
       throw new Error('la réponse ne dit pas de quand elle date : ' + txt.slice(0, 300));
-    if (/date du dernier relevé/.test(txt))
-      throw new Error('un relevé d\'il y a une minute est présenté comme périmé');
+    if (!/Les lumières/.test(txt))
+      throw new Error('la carte des lumières a disparu');
+  });
+
+  await step('plus de bouton « répond-il ? », ni ici ni dans les réglages', async () => {
+    const n = await page.evaluate(() => document.querySelectorAll(
+      '[onclick*="piVerifier"]').length);
+    if (n !== 0) throw new Error(n + ' bouton(s) « répond-il » subsistent');
+    await page.click('#tabbar .tab[data-tab=settings]');
+    await page.waitForTimeout(250);
+    const m = await page.evaluate(() => document.querySelectorAll(
+      '[onclick*="piVerifier"]').length);
+    if (m !== 0) throw new Error('bouton « répond-il » encore dans les réglages');
+    const txt = await page.textContent('#view');
+    if (!/Serveur/.test(txt)) throw new Error('la section Serveur est absente des réglages');
+    if (/Redémarrer le Pi/.test(txt)) throw new Error('il reste un « Redémarrer le Pi »');
   });
 
   await step('un silence plus long que son rythme ne passe pas inaperçu', async () => {
-    await direLeReleve(Date.now() - 40 * 60000, 900);
+    await direEtVoir(Date.now() - 40 * 60000, 900);
     await page.waitForFunction(() => /silencieux depuis/.test(
       (document.getElementById('view') || {}).textContent || ''), null, { timeout: 5000 });
-    const txt = await texteVue();
-    if (!/date du dernier relevé/.test(txt))
-      throw new Error('l\'écran présente encore ses vieilles nouvelles comme vraies');
   });
 
   await step('et un silence qui dure est dit pour ce qu\'il est', async () => {
-    await direLeReleve(Date.now() - 6 * 3600000, 900);
+    await direEtVoir(Date.now() - 6 * 3600000, 900);
     await page.waitForFunction(() => /plus de nouvelles depuis/.test(
       (document.getElementById('view') || {}).textContent || ''), null, { timeout: 5000 });
   });
 
   await step('rien du tout sur le canal : éteint, ou coupé du réseau', async () => {
-    await direLeReleve(null, 900);
+    await direEtVoir(null, 900);
     await page.waitForFunction(() => /éteint, ou coupé du réseau/.test(
       (document.getElementById('view') || {}).textContent || ''), null, { timeout: 5000 });
-  });
-
-  await step('la question directe au Pi, quand on est à l\'atelier', async () => {
-    await page.evaluate(() => {
-      window.NMT.piVivant = (id) => setTimeout(() => window.NMTcb(id,
-        JSON.stringify({ ok: true, ms: 12, adresse: '10.1.2.60', jeton: true })), 10);
-    });
-    await page.click('button[onclick="piVerifier(\'pi-vivant-reglages\')"]');
-    await page.waitForFunction(() => /répond en 12 ms/.test(
-      (document.getElementById('pi-vivant-reglages') || {}).textContent || ''),
-      null, { timeout: 6000 });
-  });
-
-  await step('et hors de l\'atelier, elle ne crie pas à la panne', async () => {
-    await page.evaluate(() => {
-      window.NMT.piVivant = (id) => setTimeout(() => window.NMTcb(id,
-        JSON.stringify({ ok: false, adresse: '10.1.2.60',
-                         error: 'hors du réseau de l\'atelier' })), 10);
-      piVerifier('pi-vivant-reglages');
-    });
-    await page.waitForFunction(() => /c'est normal/.test(
-      (document.getElementById('pi-vivant-reglages') || {}).textContent || ''),
-      null, { timeout: 6000 });
   });
 
   console.log('\n— les lumières —');
@@ -1214,12 +1239,84 @@ const errors = [];
     if (n !== 0) throw new Error(n + ' bouton(s) de courant subsistent');
   });
 
+  console.log('\n— le stock se tient a jour tout seul —');
+
+  /* Le relais annonce les impressions conclues avec leur poids ; l'app les
+     retire de la bobine qui est dans la machine. Avant, il fallait taper les
+     grammes a la main, et le stock n'a jamais ete juste. */
+  const direConsos = (consos) => page.evaluate((consos) => {
+    window.NMT.relayEtat = (id) => setTimeout(() => window.NMTcb(id, JSON.stringify({
+      ok: true, at: Date.now(),
+      vitrine: {}, pi: { partage: 'actif', debout: 3600, repos: 900 },
+      consos: consos
+    })), 10);
+    etatRelaisAuBesoin(true);
+  }, consos);
+
+  await step('une impression terminée se retire toute seule', async () => {
+    await page.evaluate(() => {
+      DB.machines[0].restant = 800;
+      DB.settings.consoJusqua = 0;
+      save();
+    });
+    const nom = await page.evaluate(() => DB.machines[0].name);
+    await direConsos([{ at: 1000, machine: nom, fichier: 'casque.3mf',
+                        plateau: 1, grammes: 120, etat: 'fini', pourcent: 100 }]);
+    await page.waitForFunction(() => DB.machines[0].restant === 680,
+      null, { timeout: 5000 });
+  });
+
+  await step('et pas une seconde fois quand le relais la republie', async () => {
+    const nom = await page.evaluate(() => DB.machines[0].name);
+    await direConsos([{ at: 1000, machine: nom, fichier: 'casque.3mf',
+                        plateau: 1, grammes: 120, etat: 'fini', pourcent: 100 }]);
+    await page.waitForTimeout(400);
+    const reste = await page.evaluate(() => DB.machines[0].restant);
+    if (reste !== 680) throw new Error('comptée deux fois : ' + reste);
+  });
+
+  await step('une impression arrêtée en route compte au prorata', async () => {
+    const nom = await page.evaluate(() => DB.machines[0].name);
+    await direConsos([{ at: 2000, machine: nom, fichier: 'casque.3mf',
+                        plateau: 1, grammes: 200, etat: 'échec', pourcent: 40 }]);
+    await page.waitForFunction(() => DB.machines[0].restant === 600,
+      null, { timeout: 5000 });
+  });
+
+  await step('une bobine dont on ignore le niveau n\'est pas devinée', async () => {
+    await page.evaluate(() => { delete DB.machines[0].restant; save(); });
+    const nom = await page.evaluate(() => DB.machines[0].name);
+    await direConsos([{ at: 3000, machine: nom, fichier: 'casque.3mf',
+                        plateau: 1, grammes: 150, etat: 'fini', pourcent: 100 }]);
+    await page.waitForTimeout(400);
+    const vu = await page.evaluate(() => DB.machines[0].restant);
+    if (vu !== undefined) throw new Error('un niveau a été inventé : ' + vu);
+  });
+
+  await step('une machine que le relais ne connaît pas ne casse rien', async () => {
+    await page.evaluate(() => { DB.machines[0].restant = 500; save(); });
+    await direConsos([{ at: 4000, machine: 'Machine fantôme', fichier: 'x.3mf',
+                        plateau: 1, grammes: 90, etat: 'fini', pourcent: 100 }]);
+    await page.waitForTimeout(400);
+    const reste = await page.evaluate(() => DB.machines[0].restant);
+    if (reste !== 500) throw new Error('une autre bobine a été entamée : ' + reste);
+  });
+
+  await step('mais le stock le dit, au lieu de se taire', async () => {
+    await page.click('#tabbar .tab[data-tab=stock]');
+    await page.waitForFunction(() => /Machine fantôme/.test(
+      (document.getElementById('view') || {}).textContent || ''), null, { timeout: 5000 });
+    const txt = await page.textContent('#view');
+    if (!/relais\.json/.test(txt))
+      throw new Error('l\'écran ne dit pas quoi faire : ' + txt.slice(0, 400));
+    await page.click('#tabbar .tab[data-tab=machines]');
+  });
 
   await page.evaluate(() => {
     Biblio.cadence = { premier: 20000, ensuite: 60000, duree: 900000 };
   });
 
-  for (const t of ['machines', 'stock', 'biblio', 'orders', 'profiles']) {
+  for (const t of ['machines', 'stock', 'biblio', 'orders']) {
     await page.click(`#tabbar .tab[data-tab=${t}]`);
     await page.waitForTimeout(250);
     await page.screenshot({ path: OUT + '/' + t + '.png' });

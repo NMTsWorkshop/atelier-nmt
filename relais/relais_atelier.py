@@ -518,6 +518,12 @@ def publier(sujet, etats, envois=None):
         charge["pi"] = pi
     except Exception:
         pass
+    # Les dernières impressions conclues, avec leur poids : l'app en retire
+    # les grammes de la bobine chargée dans la machine. Le stock vit sur le
+    # téléphone, pas ici, et c'est le relevé qui le lui dit.
+    consos = bibliotheque.consos_publiques()
+    if consos:
+        charge["consos"] = consos
     corps = json.dumps(charge, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(SERVEUR + sujet, data=corps, method="POST")
     req.add_header("Content-Type", "application/json")

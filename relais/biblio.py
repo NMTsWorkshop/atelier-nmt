@@ -1669,6 +1669,46 @@ def adresse_locale():
 EN_COURS = {}
 
 
+def _grammes_plateau(biblio, chemin, plateau):
+    """Le poids annoncé par le trancheur pour ce plateau, 0 si on ne sait pas."""
+    try:
+        for p in plateaux(biblio.verifier(chemin)):
+            if int(p["idx"]) == int(plateau):
+                return int(p.get("grammes") or 0)
+    except Exception:
+        pass
+    return 0
+
+
+# Les dernières impressions conclues, avec leur poids. Elles voyagent dans
+# le relevé parce que c'est le seul message qui sort d'ici et arrive
+# partout : l'app en a besoin pour tenir le stock à jour, et le stock vit
+# sur le téléphone, pas ici.
+#
+# Dix suffisent. L'app retient jusqu'où elle a compté et ignore le reste,
+# donc en republier quelques-unes de trop ne fait rien de mal ; en perdre
+# une, en revanche, fait dériver le stock pour toujours.
+CONSOS = []
+GARDE_CONSOS = 10
+
+
+def noter_conso(ligne):
+    if not ligne.get("grammes"):
+        return
+    CONSOS.append({"at": int(ligne.get("fin") or time.time() * 1000),
+                   "machine": ligne.get("machine") or "",
+                   "fichier": ligne.get("fichier") or "",
+                   "plateau": ligne.get("plateau") or 1,
+                   "grammes": int(ligne["grammes"]),
+                   "etat": ligne.get("etat") or "",
+                   "pourcent": int(ligne.get("pourcent") or -1)})
+    del CONSOS[:-GARDE_CONSOS]
+
+
+def consos_publiques():
+    return list(CONSOS)
+
+
 def suivre(biblio, etats):
     """À appeler après chaque relevé. Renvoie les lignes ajoutées."""
     ajouts = []
@@ -1739,8 +1779,17 @@ def suivre(biblio, etats):
         if suivi.get("chemin"):
             ligne["chemin"] = suivi["chemin"]
             ligne["plateau"] = suivi.get("plateau")
+            # Le poids que ce plateau devait consommer. C'est ce qui permet à
+            # l'app de retirer les grammes de la bobine chargée dans la
+            # machine, sans que personne ait à les taper. Elle était la seule
+            # à pouvoir le faire, et elle ne le faisait jamais.
+            grammes = _grammes_plateau(biblio, suivi["chemin"],
+                                       suivi.get("plateau") or 1)
+            if grammes:
+                ligne["grammes"] = grammes
             conclure_plateau(biblio, suivi["chemin"], suivi.get("plateau") or 1,
                              issue, nom)
+            noter_conso(ligne)
         biblio.noter(ligne)
         ajouts.append(ligne)
         EN_COURS.pop(cle, None)

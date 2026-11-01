@@ -9,7 +9,6 @@ const VIEWS = {
   stock: renderStock,
   biblio: renderBiblio,
   orders: renderOrders,
-  profiles: renderProfiles,
   settings: renderSettings
 };
 

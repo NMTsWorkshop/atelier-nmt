@@ -236,6 +236,10 @@ public class Relay {
         out.put("vitrine", v == null ? new JSONObject() : v);
         JSONObject pi = releve.optJSONObject("pi");
         out.put("pi", pi == null ? new JSONObject() : pi);
+        /* les impressions conclues avec leur poids : l'app y retire les
+           grammes de la bobine chargee dans la machine */
+        org.json.JSONArray consos = releve.optJSONArray("consos");
+        out.put("consos", consos == null ? new org.json.JSONArray() : consos);
         return out;
     }
 

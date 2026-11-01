@@ -121,13 +121,13 @@ function selectOpts(items, current, labelFn, valFn, placeholder) {
 }
 
 function spoolSelect(name, current, material) {
-  let list = activeSpools().filter(s => spoolTotal(s) > 0);
+  let list = activeSpools().filter(s => spoolAvecMachines(s) > 0);
   if (material) {
     const same = list.filter(s => s.material === material);
     if (same.length) list = same;
   }
   return '<select name="' + name + '">' +
-    selectOpts(list, current, s => spoolLabel(s) + ' — ' + fmtG(spoolTotal(s)), s => s.id, 'Aucun') +
+    selectOpts(list, current, s => spoolLabel(s) + ' — ' + fmtG(spoolAvecMachines(s)), s => s.id, 'Aucun') +
     '</select>';
 }
 

@@ -136,21 +136,37 @@ Côté Bambu, **il n'est pas nécessaire de couper le cloud** : le MQTT local
 répond avec le seul code d'accès, vérifié sur P1S. Le téléphone doit être sur
 le même réseau que l'atelier.
 
-**Lumières et courant** — en haut de l'onglet Machines, une barre allume ou
-éteint l'éclairage de tout le parc d'un coup, et coupe ou rétablit le courant
-des machines. Chaque fiche a les mêmes boutons pour elle seule. L'éclairage
-passe par la machine elle-même ; le courant par les multiprises connectées.
-Le relais refuse de couper une machine qui imprime sans confirmation, et
-refuse toujours de couper ce qui l'alimente lui-même.
+**Les lumières** — en haut de l'onglet Machines, une carte allume ou éteint
+l'éclairage de chambre de tout le parc d'un coup ; chaque fiche a le même
+bouton pour elle seule. L'ordre passe par la machine elle-même : commande du
+firmware sur une Bambu, broche Klipper sur une Creality.
 
-**Le Pi** — Réglages → *Le Pi*. Quand le partage ne répond plus alors que la
-machine est allumée, « Relancer le partage » règle le cas sans rien
-interrompre d'autre ; « Relancer le relais » et « Redémarrer le Pi » sont là
-pour le reste. L'écran dit aussi si le partage tourne et depuis combien de
-temps la machine est debout. Rien de tout ça ne demande d'être à la maison.
+Le relais a aussi piloté le **courant** des machines par multiprises
+connectées. Ça n'existe plus : ces multiprises lâchaient leurs relais sous
+l'appel de courant d'un plateau chauffant, et les imprimantes sont
+maintenant sur une alimentation sans électronique. `relais/README.md` raconte
+le diagnostic.
 
-**Profils** — tes réglages habituels : matière, couche, buse, remplissage,
-températures, notes. Un profil peut être rattaché par défaut à une machine.
+**Le serveur** — un bandeau en haut de l'onglet Machines dit s'il est là, et
+de quand date la réponse. Réglages → *Serveur* ajoute l'état du partage de
+fichiers, depuis combien de temps il est debout, et trois gestes : relancer
+le partage — ce qui règle presque tous les cas sans rien interrompre
+d'autre —, relancer le relais, redémarrer le serveur. Rien de tout ça ne
+demande d'être à la maison.
+
+**Le stock se tient à jour tout seul.** Chaque machine porte les grammes
+restants de sa bobine. Le bouton « Neuve » la remet à son poids nominal et
+retire une bobine neuve de la réserve, puisqu'elle est allée dans la machine.
+Ensuite chaque impression terminée retire son poids toute seule : le relais
+annonce ce que le trancheur avait prévu pour le plateau, et l'app le déduit —
+y compris pour une impression lancée depuis le serveur ou depuis l'écran de
+la machine. Une impression arrêtée en route compte au prorata de son
+avancement. L'onglet Stock montre les deux : ce qui dort dans le placard, et
+ce qui est sur les machines.
+
+Une bobine dont le niveau n'a jamais été renseigné reste « inconnu » plutôt
+que de valoir un kilo inventé : rien ne s'en déduit tant que tu ne l'as pas
+dit.
 
 Tout est stocké sur le téléphone. Réglages → **Exporter** écrit une sauvegarde
 JSON dans les Téléchargements ; **Importer** la relit.
@@ -163,19 +179,17 @@ JSON dans les Téléchargements ; **Importer** la relit.
 web/                interface (HTML/CSS/JS, aucune dépendance)
   index.html
   css/app.css
-  js/store.js       données, persistance, calculs de stock
+  js/store.js       données, persistance, stock et déduction automatique
   js/ui.js          feuilles modales, toasts, sélecteurs
   js/machines.js    parc et timers
-  js/stock.js       bobines
+  js/stock.js       bobines, en réserve et sur les machines
   js/orders.js      commandes et synchro Shopify
-  js/profiles.js    profils d'impression
   js/settings.js    réglages, sauvegarde
   js/app.js         navigation, horloges
 app/                coque Android (Java, aucune dépendance)
   …/MainActivity.java   WebView + bouton retour
   …/Bridge.java         pont JS ↔ Android (alarmes, HTTP, fichiers)
   …/Timers.java         planification des alarmes
-  …/AlarmReceiver.java  notification de fin
   …/BootReceiver.java   replanification après redémarrage
   …/Printers.java       lecture Moonraker et Bambu, format commun
   …/BambuClient.java    MQTT local, lecture seule
