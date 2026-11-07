@@ -1388,6 +1388,32 @@ def main():
 
     biblio._CACHE_PLATEAUX.clear()
 
+    # === 13. la bibliotheque reste lisible hors de l'atelier ===========
+    # lots_biblio ne republie que si la bibliotheque a change. Comme le
+    # canal ne garde pas les messages longtemps, une bibliotheque stable
+    # finissait par en sortir : l'onglet Fichiers annoncait « relais
+    # injoignable » en deplacement alors que tout allait bien, et les
+    # machines continuaient d'arriver, ce qui rendait la panne
+    # incomprehensible.
+    biblio._PUBLIE["empreinte"] = None
+    premiers = biblio.lots_biblio(bib.index())
+    verifie("la bibliotheque se publie une premiere fois",
+            bool(premiers), str(len(premiers)))
+    verifie("et ne se republie pas tant qu'elle ne change pas",
+            biblio.lots_biblio(bib.index()) == [], "")
+    verifie("le canal n'est pas encore perime",
+            not biblio.publication_perimee(), str(biblio._PUBLIE["at"]))
+
+    # six heures plus tard
+    biblio._PUBLIE["at"] = int((time.time() - 7 * 3600) * 1000)
+    verifie("passe un certain temps, il faut republier meme sans changement",
+            biblio.publication_perimee(), str(biblio._PUBLIE["at"]))
+    biblio.oublier_publication()
+    verifie("et la republication redonne bien les memes lots",
+            bool(biblio.lots_biblio(bib.index())), "")
+    verifie("l'horloge de publication est remise a jour",
+            not biblio.publication_perimee(), str(biblio._PUBLIE["at"]))
+
     # === 6. la boucle survit à tout ce qui précède ======================
     verifie("la boucle principale n'est jamais tombée", True)
     verifie("aucun envoi resté bloqué en cours",

@@ -80,13 +80,22 @@ function renderBiblio() {
   }
 
   if (!BIB) {
-    setTop('Fichiers', 'Relais injoignable',
+    setTop('Fichiers', 'Rien à lire',
       '<button class="tb-btn" onclick="biblioRafraichir()">' + iconSync() + 'Réessayer</button>');
+    /* Le texte disait « la bibliothèque ne répond que sur le réseau de
+       l'atelier », ce qui est faux : le serveur la publie sur le canal et
+       elle se lit de partout. Quand elle manque quand même, c'est qu'elle
+       n'a pas été republiée depuis assez longtemps pour être sortie du
+       canal — et ça se voyait d'autant moins que les machines, elles,
+       continuaient d'arriver. */
     return '<div id="bib-envois"></div>' +
       '<div class="card"><div class="rowitem"><div class="grow">' +
       '<div class="t">' + esc(BIB_ERREUR) + '</div>' +
-      '<div class="s">La bibliothèque ne répond que sur le réseau de l\'atelier. ' +
-      'En déplacement, l\'état des machines reste visible, pas les fichiers.</div>' +
+      '<div class="s">Sur le réseau de l\'atelier, les fichiers viennent du ' +
+      'serveur en direct. Ailleurs, de ce qu\'il a publié sur le canal — et ' +
+      'le canal ne garde pas longtemps. Le serveur republie toutes les six ' +
+      'heures : si tu es en déplacement, réessaie plus tard. Les machines, ' +
+      'elles, restent visibles de toute façon.</div>' +
       '</div></div></div>';
   }
 

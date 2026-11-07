@@ -746,6 +746,11 @@ def main():
         # --- la bibliothèque, pour qu'elle soit lisible hors de l'atelier ---
         if c.get("sujet") and time.time() >= PUBLICATION["muet_jusqu_a"]:
             try:
+                # Republier avant que le canal ne l'oublie : sans ça, une
+                # bibliothèque qui ne change pas finit par disparaître et
+                # l'onglet Fichiers se vide hors de l'atelier.
+                if bibliotheque.publication_perimee():
+                    bibliotheque.oublier_publication()
                 lots = bibliotheque.lots_biblio(biblio.index())
                 for morceau in lots:
                     publier_corps(c["sujet"], morceau, "biblio")

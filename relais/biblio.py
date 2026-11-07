@@ -2045,6 +2045,30 @@ def lots_biblio(index, at=None):
             for i, m in enumerate(morceaux)]
 
 
+# Au-delà, la bibliothèque publiée a sans doute disparu du canal.
+#
+# ntfy ne garde pas les messages d'un sujet public bien longtemps —
+# quelques heures sur l'instance publique. Or `lots_biblio` ne republie que
+# lorsque la bibliothèque a changé. Une bibliothèque stable n'était donc
+# republiée jamais : au bout d'une demi-journée elle sortait du cache, et
+# l'onglet Fichiers annonçait « relais injoignable » hors de l'atelier
+# alors que tout allait bien. Les machines, elles, continuaient d'arriver
+# — leur relevé repart au moins tous les quarts d'heure — ce qui rendait
+# la panne incompréhensible : le relais répond, mais pas les fichiers.
+#
+# Six heures laisse deux republications dans la fenêtre de cache la plus
+# courte, et coûte quatre passages par jour là où le relevé en coûte
+# quatre-vingt-seize.
+PEREMPTION_PUBLICATION = 6 * 3600
+
+
+def publication_perimee():
+    """Vrai quand il est temps de republier la bibliothèque, même
+    inchangée, pour qu'elle reste lisible hors de l'atelier."""
+    quand = _PUBLIE.get("at") or 0
+    return (time.time() * 1000 - quand) > PEREMPTION_PUBLICATION * 1000
+
+
 def oublier_publication():
     """Force la republication au prochain tour — après un ordre appliqué,
     pour que l'app voie tout de suite le résultat de son geste."""
