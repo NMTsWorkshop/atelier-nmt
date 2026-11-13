@@ -611,9 +611,13 @@ function editMachine(id) {
               esc(r.state || '?') + (r.percent >= 0 ? ' · ' + r.percent + ' %' : '') +
               (r.file ? ' · ' + esc(r.file) : '') + '</span>';
           } else {
-            out.innerHTML = '<span style="color:var(--bad)">Échec — ' + esc((r && r.error) || 'sans réponse') + '</span>';
+            out.innerHTML = '<span style="color:var(--bad)">Échec — ' +
+              esc((r && r.error) || 'sans réponse') + '</span>' + pourquoiEchec(r && r.error);
           }
-        }).catch(e => { out.innerHTML = '<span style="color:var(--bad)">Échec — ' + esc(e.message) + '</span>'; });
+        }).catch(e => {
+          out.innerHTML = '<span style="color:var(--bad)">Échec — ' + esc(e.message) +
+            '</span>' + pourquoiEchec(e.message);
+        });
       };
 
       $('[data-x=no]', root).onclick = closeSheet;
@@ -945,6 +949,35 @@ function calculetteFin() {
   );
 }
 
+
+/* Ce que le message d'échec veut dire, quand il le dit sans le dire.
+
+   « Machine injoignable » envoie chercher un pare-feu ou une imprimante
+   éteinte. Mais l'adresse SOURCE du message en dit long : un téléphone en
+   4G se donne une adresse du bloc réservé à la continuité IPv4 (192.0.0.x),
+   et de là aucune adresse privée n'est joignable. Rien à réparer, il suffit
+   d'être sur le wifi de l'atelier. */
+function pourquoiEchec(message) {
+  const m = String(message || '');
+  if (/from \/192\.0\.0\./.test(m)) {
+    return '<div class="hint" style="margin-top:6px">Ton téléphone est en ' +
+      'données mobiles : <code>192.0.0.x</code> est l\'adresse qu\'Android se ' +
+      'donne en 4G. De là, une adresse <code>10.x</code> de l\'atelier est ' +
+      'inatteignable, quelle que soit la machine. Repasse sur le wifi de ' +
+      'l\'atelier et retente.</div>';
+  }
+  if (/from \/(169\.254\.|0\.0\.0\.0)/.test(m)) {
+    return '<div class="hint" style="margin-top:6px">Ton téléphone n\'a pas ' +
+      'd\'adresse valable sur le réseau : il n\'est connecté à aucun wifi, ou ' +
+      'le wifi n\'a pas fini de s\'établir.</div>';
+  }
+  if (/ECONNREFUSED|refused/i.test(m)) {
+    return '<div class="hint" style="margin-top:6px">La machine répond, mais ' +
+      'rien n\'écoute sur ce port : elle est bien là et joignable, c\'est son ' +
+      'service qui n\'est pas celui attendu.</div>';
+  }
+  return '';
+}
 
 /* assemble la liaison réseau depuis les champs de la fiche */
 function buildPrinter(chipVals, v) {

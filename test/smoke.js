@@ -1124,6 +1124,30 @@ const errors = [];
     });
   });
 
+  console.log('\n— pourquoi la liaison a échoué —');
+
+  /* « Machine injoignable » envoyait chercher un pare-feu alors que le
+     telephone etait simplement en 4G. L'adresse source du message le disait,
+     mais personne ne la lit. */
+  await step('un téléphone en 4G est reconnu comme tel', async () => {
+    const vu = await page.evaluate(() => pourquoiEchec(
+      'failed to connect to /10.1.3.24 (port 7125) from /192.0.0.8 (port 46140) after 6000ms'));
+    if (!/données mobiles/.test(vu))
+      throw new Error('la 4G n\'est pas reconnue : ' + vu);
+  });
+
+  await step('un wifi non établi aussi', async () => {
+    const vu = await page.evaluate(() => pourquoiEchec(
+      'failed to connect to /10.1.3.24 (port 7125) from /169.254.3.1 (port 1) after 6000ms'));
+    if (!/aucun wifi/.test(vu)) throw new Error('pas reconnu : ' + vu);
+  });
+
+  await step('et un vrai échec réseau reste un échec sans explication inventée', async () => {
+    const vu = await page.evaluate(() => pourquoiEchec(
+      'failed to connect to /10.1.3.24 (port 7125) from /10.1.2.40 (port 46140) after 6000ms'));
+    if (vu !== '') throw new Error('une explication a été inventée : ' + vu);
+  });
+
   console.log('\n— les familles de fichiers —');
 
   /* Une H2S parle Moonraker comme une K2 Plus, et son gcode n'a rien a
