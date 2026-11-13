@@ -1414,6 +1414,19 @@ def main():
     verifie("l'horloge de publication est remise a jour",
             not biblio.publication_perimee(), str(biblio._PUBLIE["at"]))
 
+    # === 14. la famille d'une machine ne se devine pas ==================
+    # Une H2S parle Moonraker comme une K2 Plus, et son gcode n'a rien a
+    # voir. Deviner la famille d'apres le protocole revenait a lui proposer
+    # les fichiers des K2, donc a imprimer n'importe quoi.
+    verifie("une famille declaree est respectee",
+            biblio.famille_de({"type": "moonraker", "famille": "h2s"}) == "h2s")
+    verifie("la casse et les espaces ne changent rien",
+            biblio.famille_de({"type": "moonraker", "famille": " H2S "}) == "h2s")
+    verifie("sans famille, moonraker vaut k2 — le parc historique",
+            biblio.famille_de({"type": "moonraker"}) == "k2")
+    verifie("et bambu vaut p1s",
+            biblio.famille_de({"type": "bambu"}) == "p1s")
+
     # === 6. la boucle survit à tout ce qui précède ======================
     verifie("la boucle principale n'est jamais tombée", True)
     verifie("aucun envoi resté bloqué en cours",

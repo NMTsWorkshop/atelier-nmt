@@ -41,7 +41,7 @@ journalctl -u relais-atelier@$USER -f                      # le service en direc
 |------------|-----------------------------------------------------------------|
 | `sujet`    | nom secret du canal ntfy ; le même dans les réglages de l'app     |
 | `periode`  | secondes entre deux relevés (60 par défaut, 30 minimum)           |
-| `machines` | `type` = `moonraker` (Creality) ou `bambu` ; `hote` = adresse IP  |
+| `machines` | `type` = `moonraker` (Creality) ou `bambu` ; `hote` = adresse IP ; `famille` = le dossier de gcodes, facultatif |
 | `marge_delai` | jours ajoutés au délai calculé (0 par défaut)                  |
 | `shopify`  | `domaine`, `jeton` d'écriture, `version` de l'API Admin           |
 
@@ -225,6 +225,29 @@ Les ordres partent **une machine après l'autre**, jamais les quatre d'un
 coup. Chaque ordre Bambu ouvre une session MQTT, et une P1S n'en accepte
 qu'un petit nombre à la fois : quatre connexions simultanées et elle
 décroche.
+
+## Ajouter une machine au parc
+
+`machines_regler.py` liste le parc et en ajoute une, sans ouvrir
+relais.json dans un éditeur — le fichier contient la clé Meross et le jeton
+de la boutique, et chaque passage dans nano est une occasion de casser le
+JSON ou d'élargir ses droits. Depuis le PC : `pi-20-machine.bat`.
+
+Il **interroge la machine** plutôt que de supposer ce qu'elle est : une
+réponse sur le port 7125 veut dire Moonraker et donne au passage la version
+de Klipper ; le port 8883 ouvert veut dire Bambu, et il faudra alors son
+numéro de série et son code d'accès LAN.
+
+La **famille** décide quels fichiers vont à cette machine, et c'est le
+réglage à ne pas rater. Deux machines de la même famille se partagent les
+gcodes, et deux machines différentes ne doivent surtout pas : une H2S parle
+Moonraker exactement comme une K2 Plus, et son gcode n'a rien à voir —
+volume, buses, plateau. Absente, la famille vaut `k2` pour une Moonraker et
+`p1s` pour une Bambu, ce qui ne convient qu'au parc historique.
+
+Le dossier de la bibliothèque se crée tout seul au démarrage suivant. La
+même machine doit aussi être déclarée dans l'app, avec la même famille,
+sinon elle ne saura pas à qui proposer les fichiers.
 
 ## Reconnaître une impression lancée sur la machine
 

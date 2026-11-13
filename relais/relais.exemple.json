@@ -7,8 +7,12 @@
     { "nom": "Bambu 1",    "type": "bambu", "hote": "10.1.3.11",
       "serie": "01P00C462500170", "code": "CODE-LAN" },
     { "nom": "Bambu 2",    "type": "bambu", "hote": "10.1.3.10",
-      "serie": "01P09C510800409", "code": "CODE-LAN" }
+      "serie": "01P09C510800409", "code": "CODE-LAN" },
+    { "nom": "H2S",        "type": "moonraker", "hote": "10.1.3.24",
+      "famille": "h2s" }
   ],
+
+  "//famille": "Le dossier de gcodes d'une machine. Deux machines de meme famille se partagent les fichiers, et deux machines differentes ne doivent surtout pas : une H2S parle Moonraker comme une K2 Plus, et son gcode n'a rien a voir. Absente, elle vaut k2 pour moonraker et p1s pour bambu.",
 
   "//": "Jours ajoutes au delai calcule, 0 pour n'en ajouter aucun.",
   "marge_delai": 0,

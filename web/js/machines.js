@@ -577,6 +577,14 @@ function editMachine(id) {
         '<div class="hint">Écran de l\'imprimante : Réglages → Réseau.</div>' +
       '</label>' +
     '</div>' +
+    '<label class="field"><span>Famille de fichiers</span>' +
+      '<input type="text" name="famille" autocapitalize="none" placeholder="k2, p1s, h2s…" value="' +
+        esc(pc.famille || '') + '">' +
+      '<div class="hint">Le dossier du serveur où sont rangés les gcodes de cette ' +
+        'machine. Deux machines de même famille se partagent les fichiers — et ' +
+        'deux machines différentes ne doivent surtout pas. Vide : « k2 » pour une ' +
+        'Creality, « p1s » pour une Bambu.</div>' +
+    '</label>' +
     '<button class="btn wide" style="margin-bottom:6px" data-x="probe">Tester la liaison</button>' +
     '<div id="probe-out" class="hint"></div>' +
 
@@ -944,6 +952,8 @@ function buildPrinter(chipVals, v) {
   const host = (v.host || '').trim();
   if (!kind || !host) return null;
   const p = { kind: kind, host: host };
+  const famille = (v.famille || '').trim().toLowerCase();
+  if (famille) p.famille = famille;
   if (kind === 'bambu') {
     p.serial = (v.serial || '').trim();
     p.code = (v.code || '').trim();

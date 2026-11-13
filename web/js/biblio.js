@@ -10,7 +10,8 @@
    mieux vaut une phrase claire qu'une roue qui tourne.
    ============================================================ */
 
-const FAMILLES = { k2: 'Creality K2 Plus', p1s: 'Bambu Lab P1S' };
+const FAMILLES = { k2: 'Creality K2 Plus', p1s: 'Bambu Lab P1S',
+                   h2s: 'Creality H2S' };
 
 let BIB = null;          // dernier index reçu
 let BIB_ERREUR = '';
@@ -197,7 +198,7 @@ function enteteCommande(c) {
 }
 
 function familleCourte(f) {
-  return { k2: 'K2', p1s: 'P1S' }[f] || String(f).toUpperCase();
+  return { k2: 'K2', p1s: 'P1S', h2s: 'H2S' }[f] || String(f).toUpperCase();
 }
 
 function biblioFiltreReste(v) {

@@ -811,10 +811,17 @@ const Biblio = {
     return prochain();
   },
 
-  /* la famille d'une machine décide quels fichiers lui vont */
+  /* La famille d'une machine décide quels fichiers lui vont.
+
+     Le protocole ne suffit pas à la dire. Une H2S parle Moonraker comme
+     une K2 Plus, et pourtant son gcode n'a rien à voir — volume, buses,
+     plateau. Deviner d'après le protocole revenait à lui proposer les
+     fichiers des K2, donc à imprimer n'importe quoi. La famille se déclare
+     donc, et le protocole ne sert que de défaut pour le parc historique. */
   famille(machine) {
     const p = machine && machine.printer;
     if (!p) return '';
+    if (p.famille) return String(p.famille).toLowerCase();
     return p.kind === 'moonraker' ? 'k2' : 'p1s';
   },
 
@@ -913,28 +920,59 @@ function fmtRemaining(min) {
    figurent pas ici et se saisissent une fois sur le téléphone. */
 
 const PARC = [
-  { name: 'K2 Plus 1', model: 'Creality K2 Plus',
+  { depuis: 1, name: 'K2 Plus 1', model: 'Creality K2 Plus',
     printer: { kind: 'moonraker', host: '10.1.2.57' } },
-  { name: 'K2 Plus 2', model: 'Creality K2 Plus',
+  { depuis: 1, name: 'K2 Plus 2', model: 'Creality K2 Plus',
     printer: { kind: 'moonraker', host: '10.1.2.59' } },
-  { name: 'P1S 1',     model: 'Bambu Lab P1S',
+  { depuis: 1, name: 'P1S 1',     model: 'Bambu Lab P1S',
     printer: { kind: 'bambu', host: '10.1.3.10', serial: '01P09C510800409', code: '' } },
-  { name: 'P1S 2',     model: 'Bambu Lab P1S',
-    printer: { kind: 'bambu', host: '10.1.3.11', serial: '01P00C462500170', code: '' } }
+  { depuis: 1, name: 'P1S 2',     model: 'Bambu Lab P1S',
+    printer: { kind: 'bambu', host: '10.1.3.11', serial: '01P00C462500170', code: '' } },
+  { depuis: 2, name: 'H2S',       model: 'Creality H2S',
+    printer: { kind: 'moonraker', host: '10.1.3.24', famille: 'h2s' } }
 ];
+
+/* À incrémenter en ajoutant une machine ci-dessus, avec le même numéro sur
+   son `depuis`.
+
+   Le parc n'était posé qu'une fois, à la première ouverture : une machine
+   ajoutée ici n'arrivait jamais sur un téléphone déjà installé, et il
+   fallait la ressaisir à la main. Maintenant un numéro plus grand
+   déclenche un passage de plus — mais seulement pour les entrées apparues
+   depuis, jamais pour tout le parc. Repasser tout le parc ressusciterait
+   une machine supprimée exprès, ce qui est pire que de la ressaisir. */
+const PARC_VERSION = 2;
 
 /* Posé une seule fois. Complète les machines déjà créées plutôt que
    d'en ajouter en double, et ne touche jamais à un code déjà saisi. */
 function seedParc() {
-  if (DB.settings.parcSeeded) return;
-  DB.settings.parcSeeded = Date.now();
+  const premier = !DB.settings.parcSeeded;
+  /* une installation d'avant ce mécanisme a vu la version 1 */
+  const dejaVu = premier ? 0 : (DB.settings.parcVersion || 1);
+  if (!premier && dejaVu >= PARC_VERSION) return;
+  if (premier) DB.settings.parcSeeded = Date.now();
+  DB.settings.parcVersion = PARC_VERSION;
 
   PARC.forEach(def => {
+    /* Hors première ouverture, on n'ajoute que ce qui est apparu depuis la
+       dernière fois : le reste a déjà été proposé une fois, et ce qui n'est
+       plus là n'y est plus pour une raison. */
+    if ((def.depuis || 1) <= dejaVu) return;
     const existing =
       DB.machines.find(m => m.printer && m.printer.host === def.printer.host) ||
       DB.machines.find(m => (m.name || '').trim().toLowerCase() === def.name.toLowerCase());
 
     if (existing) {
+      /* Au premier semis on aligne la machine sur le parc. Aux passages
+         suivants on ne touche plus à rien : une adresse corrigée à la main
+         ou un code LAN saisi ne doivent pas être écrasés par l'ajout d'une
+         autre machine. */
+      if (!premier) {
+        if (!existing.printer.famille && def.printer.famille) {
+          existing.printer.famille = def.printer.famille;
+        }
+        return;
+      }
       /* un code déjà saisi ne se perd pas — mais seulement s'il a
          encore un sens, c'est-à-dire sur une Bambu */
       const kept = (def.printer.kind === 'bambu' && existing.printer)

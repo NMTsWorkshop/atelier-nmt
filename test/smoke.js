@@ -54,7 +54,7 @@ const errors = [];
       if (!localStorage.getItem('nmt_atelier_v1')) {
         localStorage.setItem('nmt_atelier_v1', JSON.stringify({
           machines: [], spools: [], orders: [], weights: {}, ams: {},
-          settings: { parcSeeded: 1 }
+          settings: { parcSeeded: 1, parcVersion: 2 }
         }));
       }
     } catch (e) {}
@@ -1122,6 +1122,76 @@ const errors = [];
     await page.evaluate(() => {
       Biblio.cadence = { premier: 20000, ensuite: 60000, duree: 900000 };
     });
+  });
+
+  console.log('\n— les familles de fichiers —');
+
+  /* Une H2S parle Moonraker comme une K2 Plus, et son gcode n'a rien a
+     voir. L'app deduisait la famille du protocole : elle lui proposait donc
+     les fichiers des K2. */
+  await step('la famille déclarée l\'emporte sur le protocole', async () => {
+    const vu = await page.evaluate(() => [
+      Biblio.famille({ printer: { kind: 'moonraker', host: 'x', famille: 'h2s' } }),
+      Biblio.famille({ printer: { kind: 'moonraker', host: 'x' } }),
+      Biblio.famille({ printer: { kind: 'bambu', host: 'x' } })
+    ]);
+    if (vu[0] !== 'h2s' || vu[1] !== 'k2' || vu[2] !== 'p1s')
+      throw new Error('familles fausses : ' + JSON.stringify(vu));
+  });
+
+  await step('un fichier h2s ne part pas vers une K2', async () => {
+    const vu = await page.evaluate(() => {
+      DB.machines.push(
+        { id: 'mk2', name: 'K2 test', printer: { kind: 'moonraker', host: '1.1.1.1' } },
+        { id: 'mh2', name: 'H2S test',
+          printer: { kind: 'moonraker', host: '1.1.1.2', famille: 'h2s' } });
+      const pour = n => Biblio.destinataires(n).map(m => m.name);
+      const out = { h2s: pour('h2s'), k2: pour('k2') };
+      DB.machines = DB.machines.filter(m => m.id !== 'mk2' && m.id !== 'mh2');
+      return out;
+    });
+    if (vu.h2s.indexOf('H2S test') < 0)
+      throw new Error('la H2S ne reçoit pas ses propres fichiers : ' + JSON.stringify(vu));
+    if (vu.k2.indexOf('H2S test') >= 0)
+      throw new Error('la H2S reçoit les fichiers des K2 : ' + JSON.stringify(vu));
+    if (vu.h2s.indexOf('K2 test') >= 0)
+      throw new Error('une K2 reçoit les fichiers de la H2S : ' + JSON.stringify(vu));
+  });
+
+  await step('un parc déjà posé ne ressuscite pas une machine supprimée', async () => {
+    const vu = await page.evaluate(() => {
+      const avant = JSON.parse(JSON.stringify(DB));
+      DB.machines = [{ id: 'seul', name: 'La seule', status: 'idle', timer: null,
+                       job: null, printer: { kind: 'moonraker', host: '9.9.9.9' } }];
+      DB.settings.parcSeeded = 1;
+      DB.settings.parcVersion = 2;          /* a déjà tout vu */
+      seedParc();
+      const apres = DB.machines.map(m => m.name);
+      DB.machines = avant.machines;
+      DB.settings = avant.settings;
+      return apres;
+    });
+    if (vu.length !== 1 || vu[0] !== 'La seule')
+      throw new Error('le parc a été repassé en entier : ' + JSON.stringify(vu));
+  });
+
+  await step('mais une machine neuve du parc arrive quand même', async () => {
+    const vu = await page.evaluate(() => {
+      const avant = JSON.parse(JSON.stringify(DB));
+      DB.machines = [{ id: 'seul', name: 'La seule', status: 'idle', timer: null,
+                       job: null, printer: { kind: 'moonraker', host: '9.9.9.9' } }];
+      DB.settings.parcSeeded = 1;
+      delete DB.settings.parcVersion;       /* installation d'avant */
+      seedParc();
+      const apres = DB.machines.map(m => m.name);
+      DB.machines = avant.machines;
+      DB.settings = avant.settings;
+      return apres;
+    });
+    if (vu.indexOf('H2S') < 0)
+      throw new Error('la H2S n\'est pas arrivée : ' + JSON.stringify(vu));
+    if (vu.indexOf('K2 Plus 1') >= 0)
+      throw new Error('les anciennes sont revenues : ' + JSON.stringify(vu));
   });
 
   console.log('\n— le serveur est-il là ? —');
