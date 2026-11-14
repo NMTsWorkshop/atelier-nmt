@@ -42,11 +42,20 @@ Elle vient du serveur, pas d'un NTP. L'ecran n'a donc pas besoin d'Internet,
 et il ne peut pas afficher une heure fausse faute de synchronisation. Le
 fuseau de Lyon et sa regle d'heure d'ete sont dans `main.cpp`.
 
-## Aucun secret dans le binaire
+## Aucun secret dans ce depot
 
-Ni le wifi, ni l'adresse du serveur, ni son jeton. Tout est demande au
-premier demarrage, par un portail wifi, et garde dans la memoire de l'ecran.
-Le binaire peut donc vivre dans un depot public sans precaution.
+Le wifi de l'atelier est injecte a la compilation : `ecran-flash.ps1` le
+demande une fois, le garde sur le PC dans `%USERPROFILE%\ecran-wifi.txt`, et
+en fabrique un `nmt_secrets.h` local. Ce fichier n'est pas ici et ne peut pas
+y arriver — `.gitignore` le refuse.
+
+Sans ce fichier, le code compile quand meme : l'ecran retombe alors sur un
+portail wifi au premier demarrage. C'est aussi ce qui se passe si le mot de
+passe change ou si la box est eteinte au demarrage.
+
+L'adresse du serveur et son port ont des valeurs par defaut dans le code
+(10.1.2.60 et 8765) : ce ne sont pas des secrets, et ils se reglent par le
+portail si besoin.
 
 ## Compiler et flasher
 

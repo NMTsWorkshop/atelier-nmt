@@ -1,2 +1,4 @@
 test/stubs/ArduinoJson.h
 .pio/
+src/nmt_secrets.h
+include/nmt_secrets.h

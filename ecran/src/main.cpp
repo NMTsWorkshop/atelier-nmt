@@ -27,6 +27,14 @@
 #include "nmt_modele.h"
 #include "nmt_vue.h"
 
+// Les identifiants wifi sont injectes a la compilation par
+// ecran-flash.ps1, qui les lit sur le PC. Ils ne sont pas dans ce depot, qui
+// est public, et ils ne transitent nulle part : le fichier reste chez toi.
+// Sans ce fichier, l'ecran retombe sur le portail wifi.
+#if __has_include("nmt_secrets.h")
+#include "nmt_secrets.h"
+#endif
+
 static const char* PORTAIL = "Atelier NMT";
 static const uint32_t PERIODE_MS = 5000;
 
@@ -53,7 +61,11 @@ static bool portailOuvert = false;
 
 static void lireReglages() {
     reglages.begin("nmt", true);
+#ifdef NMT_SERVEUR
+    hote = reglages.getString("hote", NMT_SERVEUR);
+#else
     hote = reglages.getString("hote", "10.1.2.60");
+#endif
     port = reglages.getString("port", "8765");
     jeton = reglages.getString("jeton", "");
     reglages.end();
@@ -170,7 +182,30 @@ void setup() {
     // Rien n'est code en dur : ni le wifi, ni l'adresse du serveur. Le
     // binaire ne contient donc aucun secret, et peut vivre dans un depot
     // public sans precaution.
-    if (!wm.autoConnect(PORTAIL)) {
+    bool relie = false;
+#ifdef NMT_WIFI_SSID
+    // Connexion directe, sans rien demander a personne. L'ecran reste vivant
+    // pendant l'attente : une barre figee vingt secondes ressemble a une
+    // panne, et c'est ce qu'on cherche justement a ne jamais donner a voir.
+    nmt::plageTexte(vue, "Wifi", "Connexion a " NMT_WIFI_SSID "...");
+    lv_timer_handler();
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(NMT_WIFI_SSID, NMT_WIFI_PASS);
+    uint32_t limite = millis() + 20000;
+    while ((int32_t)(millis() - limite) < 0 && WiFi.status() != WL_CONNECTED) {
+        pt_loop_display();
+    }
+    relie = (WiFi.status() == WL_CONNECTED);
+    if (!relie) {
+        // Le mot de passe a change, ou la box est eteinte : on ne reste pas
+        // bloque la, le portail reprend la main.
+        nmt::plageTexte(vue, "Wifi introuvable",
+            "Impossible de joindre " NMT_WIFI_SSID ". On passe par le portail.");
+        lv_timer_handler();
+    }
+#endif
+
+    if (!relie && !wm.autoConnect(PORTAIL)) {
         portailOuvert = true;
         nmt::plageTexte(vue, "A regler",
             std::string("Connecte ton telephone au wifi « ") + PORTAIL +
